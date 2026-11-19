@@ -50,6 +50,7 @@ docs/acceptance/
 
 docs/design/
   README.md                Where the designs go.
+  phase-1.md               Phase 1 design: token mode.
 
 docs/agents/               Instructions for the agents (not for people).
   planner.md               The planner's playbook.

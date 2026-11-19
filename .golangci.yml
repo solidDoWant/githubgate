@@ -1,0 +1,43 @@
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+    - e2e
+    - live
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - forbidigo
+    - govet
+    - staticcheck
+    - wsl_v5
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # GitHub is reached only through maintained clients (the GitHub API
+        # client and the App authentication transport) and
+        # httputil.ReverseProxy (CLAUDE.md: no hand-written protocol code).
+        # Tests may use net/http directly, for example to fake or probe GitHub.
+        - pattern: ^http\.(Get|Post|PostForm|Head|NewRequest|NewRequestWithContext)$
+          pkg: ^net/http$
+          msg: reach GitHub through its maintained API client or httputil.ReverseProxy, not hand-written HTTP requests
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters: [forbidigo]
+      - path: ^test/
+        linters: [forbidigo]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/solidDoWant/githubgate

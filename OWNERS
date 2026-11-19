@@ -1,0 +1,4 @@
+# Senders whose pull requests Pipelines-as-Code runs CI for without an
+# /ok-to-test comment, besides the owner and collaborators: Renovate.
+approvers:
+  - infra-mk3-renovate-operator[bot]

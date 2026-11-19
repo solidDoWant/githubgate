@@ -1,0 +1,60 @@
+# -- Number of server replicas. Every replica serves requests.
+replicas: 3
+image:
+  # -- Server image repository.
+  repository: ghcr.io/soliddowant/githubgate
+  # -- Image tag. Defaults to the chart's appVersion.
+  tag: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+# -- Names of image pull Secrets.
+imagePullSecrets: []
+# -- Override the chart name used in resource names.
+nameOverride: ""
+# -- Override the full resource name.
+fullnameOverride: ""
+crds:
+  # -- Install the CRDs with the chart. Set to false when you manage them yourself.
+  install: true
+serviceAccount:
+  # -- Create the ServiceAccount.
+  create: true
+  # -- ServiceAccount name. Defaults to the full name.
+  name: ""
+  # -- Annotations for the ServiceAccount.
+  annotations: {}
+resources:
+  requests:
+    # -- CPU request. There is no CPU limit.
+    cpu: 100m
+    # -- Memory request.
+    memory: 128Mi
+  limits:
+    # -- Memory limit. Keep it equal to the memory request.
+    memory: 128Mi
+podSecurityContext:
+  # -- Run the pod as a non-root user.
+  runAsNonRoot: true
+  # -- User ID of the pod (the distroless nonroot user).
+  runAsUser: 65532
+  # -- Group ID of the pod.
+  runAsGroup: 65532
+  seccompProfile:
+    # -- Seccomp profile of the pod.
+    type: RuntimeDefault
+securityContext:
+  # -- Allow privilege escalation in the container.
+  allowPrivilegeEscalation: false
+  # -- Mount the container's root filesystem read-only.
+  readOnlyRootFilesystem: true
+  capabilities:
+    # -- Linux capabilities dropped from the container.
+    drop: ["ALL"]
+# -- Pod annotations.
+podAnnotations: {}
+# -- Node selector.
+nodeSelector: {}
+# -- Tolerations.
+tolerations: []
+# -- Affinity rules.
+affinity: {}

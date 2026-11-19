@@ -1,0 +1,14 @@
+# The e2e kind cluster. ImageVolume lets a pod mount the client image as a
+# volume, as the user guide sets it up.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+featureGates:
+  ImageVolume: true
+nodes:
+  - role: control-plane
+# Pull the cluster's images in parallel. The default pulls one at a time,
+# which is slow when every image comes through a registry proxy.
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    serializeImagePulls: false

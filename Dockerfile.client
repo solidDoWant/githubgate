@@ -1,0 +1,8 @@
+# The client image: only the static githubgate-client binary, mounted into
+# pods as an image volume. `make build-images` cross-compiles the binary for
+# each platform into build/images/<arch>/ first.
+FROM scratch
+
+ARG TARGETARCH
+COPY build/images/${TARGETARCH}/githubgate-client /githubgate-client
+ENTRYPOINT ["/githubgate-client"]

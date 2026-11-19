@@ -1,0 +1,178 @@
+package webhook
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	admissionv1 "k8s.io/api/admission/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+
+	githubgatev1alpha1 "github.com/solidDoWant/githubgate/api/v1alpha1"
+)
+
+type fakeInstallations map[types.NamespacedName]*githubgatev1alpha1.GitHubInstallation
+
+func (f fakeInstallations) GetInstallation(_ context.Context, name types.NamespacedName) (*githubgatev1alpha1.GitHubInstallation, error) {
+	return f[name], nil
+}
+
+func ceilingInstallation() *githubgatev1alpha1.GitHubInstallation {
+	return &githubgatev1alpha1.GitHubInstallation{
+		Spec: githubgatev1alpha1.GitHubInstallationSpec{
+			Ceiling: []githubgatev1alpha1.PermissionSet{{
+				Repositories: []githubgatev1alpha1.Repository{"app-*"},
+				Permissions:  map[string]githubgatev1alpha1.Level{"contents": "write", "issues": "read"},
+			}},
+		},
+	}
+}
+
+func review(t *testing.T, kind, namespace string, object any) *admissionv1.AdmissionResponse {
+	t.Helper()
+
+	raw, err := json.Marshal(object)
+	require.NoError(t, err)
+
+	body, err := json.Marshal(admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"},
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "u1",
+			Kind:      metav1.GroupVersionKind{Group: "githubgate.soliddowant.dev", Version: "v1alpha1", Kind: kind},
+			Namespace: namespace,
+			Operation: admissionv1.Create,
+			Object:    runtime.RawExtension{Raw: raw},
+		},
+	})
+	require.NoError(t, err)
+
+	handler := New([]string{"githubgate"}, fakeInstallations{
+		{Namespace: "githubgate", Name: "org"}: ceilingInstallation(),
+	})
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/validate", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var out admissionv1.AdmissionReview
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &out))
+	require.NotNil(t, out.Response)
+	assert.Equal(t, types.UID("u1"), out.Response.UID)
+
+	return out.Response
+}
+
+func policy(rule githubgatev1alpha1.AccessRule) *githubgatev1alpha1.GitHubAccessPolicy {
+	return &githubgatev1alpha1.GitHubAccessPolicy{
+		Spec: githubgatev1alpha1.GitHubAccessPolicySpec{Rules: []githubgatev1alpha1.AccessRule{rule}},
+	}
+}
+
+func rule(installation string, repos string, perms map[string]githubgatev1alpha1.Level) githubgatev1alpha1.AccessRule {
+	return githubgatev1alpha1.AccessRule{
+		Name:            "r",
+		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: "githubgate", Name: installation},
+		Repositories:    []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repos)},
+		Permissions:     perms,
+		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := map[string]struct {
+		kind      string
+		namespace string
+		object    any
+		allowed   bool
+		field     string
+	}{
+		"app in admin namespace": {
+			kind: "GitHubApp", namespace: "githubgate", object: &githubgatev1alpha1.GitHubApp{}, allowed: true,
+		},
+		"app outside admin namespaces": {
+			kind: "GitHubApp", namespace: "tenant", object: &githubgatev1alpha1.GitHubApp{}, field: "metadata.namespace",
+		},
+		"installation outside admin namespaces": {
+			kind: "GitHubInstallation", namespace: "tenant", object: ceilingInstallation(), field: "metadata.namespace",
+		},
+		"installation with unknown permission": {
+			kind: "GitHubInstallation", namespace: "githubgate",
+			object: &githubgatev1alpha1.GitHubInstallation{Spec: githubgatev1alpha1.GitHubInstallationSpec{
+				Ceiling: []githubgatev1alpha1.PermissionSet{{
+					Repositories: []githubgatev1alpha1.Repository{"*"},
+					Permissions:  map[string]githubgatev1alpha1.Level{"bogus": "read"},
+				}},
+			}},
+			field: "spec.ceiling[0].permissions[bogus]",
+		},
+		"installation with organization permission": {
+			kind: "GitHubInstallation", namespace: "githubgate",
+			object: &githubgatev1alpha1.GitHubInstallation{Spec: githubgatev1alpha1.GitHubInstallationSpec{
+				Ceiling: []githubgatev1alpha1.PermissionSet{{
+					Repositories: []githubgatev1alpha1.Repository{"*"},
+					Permissions:  map[string]githubgatev1alpha1.Level{"members": "read"},
+				}},
+			}},
+			field: "spec.ceiling[0].permissions[members]",
+		},
+		"installation with valid ceiling": {
+			kind: "GitHubInstallation", namespace: "githubgate", object: ceilingInstallation(), allowed: true,
+		},
+		"policy rule with unknown permission": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object: policy(rule("org", "app-1", map[string]githubgatev1alpha1.Level{"bogus": "read"})),
+			field:  "spec.rules[0].permissions[bogus]",
+		},
+		"policy rule with unknown level": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object: policy(rule("org", "app-1", map[string]githubgatev1alpha1.Level{"contents": "owner"})),
+			field:  "spec.rules[0].permissions[contents]",
+		},
+		"policy rule at the ceiling": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object:  policy(rule("org", "app-1", map[string]githubgatev1alpha1.Level{"contents": "write"})),
+			allowed: true,
+		},
+		"policy rule above the ceiling level": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object: policy(rule("org", "app-1", map[string]githubgatev1alpha1.Level{"issues": "write"})),
+			field:  "spec.rules[0]",
+		},
+		"policy rule outside ceiling repositories": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object: policy(rule("org", "other", map[string]githubgatev1alpha1.Level{"contents": "read"})),
+			field:  "spec.rules[0]",
+		},
+		"policy rule naming a missing installation": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object:  policy(rule("missing", "x", map[string]githubgatev1alpha1.Level{"contents": "write"})),
+			allowed: true,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			response := review(t, test.kind, test.namespace, test.object)
+			assert.Equal(t, test.allowed, response.Allowed)
+
+			if !test.allowed {
+				require.NotNil(t, response.Result)
+				assert.Contains(t, response.Result.Message, test.field)
+			}
+		})
+	}
+}
+
+func TestMalformedReviewIsRejected(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	New(nil, fakeInstallations{}).ServeHTTP(recorder,
+		httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/validate", bytes.NewReader([]byte("{"))))
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}

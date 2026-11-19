@@ -133,14 +133,6 @@ func (r *Registry) Client(app types.NamespacedName, credentials Credentials) (*A
 	return client, nil
 }
 
-// Forget drops the client of a deleted GitHubApp.
-func (r *Registry) Forget(app types.NamespacedName) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	delete(r.clients, app)
-}
-
 // AppClient calls GitHub as one App.
 type AppClient struct {
 	registry      *Registry

@@ -81,12 +81,12 @@ The snapshot never reads status. Each replica looks up installation ids itself (
 
   | GitHub answer | Caller gets | Status written | Retry/refresh |
   |---|---|---|---|
-  | `422` (repository not accessible, permission not granted) | `403 github_refused`, GitHub's message | — | no |
+  | `422` (repository not accessible, permission not granted) | `403 github_refused`, GitHub's message | none | no |
   | `401` on the JWT | `503 github_unavailable` | App `Ready=False, SecretInvalid` | no |
   | `403` installation suspended | `403 github_refused` | installation `Ready=False, InstallationSuspended` | no |
-  | `403`/`429` rate limit | `503 github_unavailable`, `Retry-After` passed on | — | no |
+  | `403`/`429` rate limit | `503 github_unavailable`, `Retry-After` passed on | none | no |
   | `404` from the token endpoint | after one id refresh, retried once; still `404` → `503 github_unavailable` | installation `InstallationNotFound` | refresh as above |
-  | `5xx`, network error, timeout | `503 github_unavailable` | — | no |
+  | `5xx`, network error, timeout | `503 github_unavailable` | none | no |
 - Rate limit: after each mint, one `GET /rate_limit` with the new token (doesn't count against the limit) updates `githubgate_github_rate_limit_remaining{installation}`; at most once a minute per installation.
 - Timeouts: 10 s per GitHub call.
 

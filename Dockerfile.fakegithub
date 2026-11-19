@@ -1,0 +1,12 @@
+# The fake GitHub image for e2e tests (never released). It needs git for
+# `git http-backend`, so it cannot use the distroless base.
+FROM mirror.gcr.io/library/debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
+
+ARG TARGETARCH
+RUN apt-get update \
+	&& apt-get install --no-install-recommends -y git \
+	&& rm -rf /var/lib/apt/lists/*
+COPY build/images/${TARGETARCH}/fakegithub /fakegithub
+USER 65532:65532
+ENV HOME=/tmp
+ENTRYPOINT ["/fakegithub"]

@@ -226,7 +226,7 @@ Each phase ends with a release the owner can deploy, and is done when its checkl
 
 ## 9. Repository layout
 
-`cmd/githubgate`, `cmd/githubgate-client`, `api/v1alpha1`, `internal/…`, `test/fakegithub`, `test/e2e`, `test/live`, `deploy/helm/githubgate`, `docs/`, `scripts/`, Kubebuilder-style codegen (`make generate`).
+`cmd/githubgate`, `cmd/githubgate-client`, `api/v1alpha1`, `internal/…`, `test/fakegithub`, `test/e2e`, `test/live`, `deploy/charts/githubgate`, `docs/`, `scripts/`, Kubebuilder-style codegen (`make generate`).
 
 ## 10. Documentation plan
 

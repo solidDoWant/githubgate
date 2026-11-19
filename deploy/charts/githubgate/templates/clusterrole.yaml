@@ -1,0 +1,42 @@
+# Generated from config/rbac/role.yaml by make generate; do not edit.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "githubgate.fullname" . }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - githubgate.soliddowant.dev
+  resources:
+  - githubaccesspolicies
+  - githubapps
+  - githubinstallations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - githubgate.soliddowant.dev
+  resources:
+  - githubaccesspolicies/status
+  - githubapps/status
+  - githubinstallations/status
+  verbs:
+  - get
+  - patch
+  - update

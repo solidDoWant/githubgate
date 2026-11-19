@@ -34,3 +34,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{- define "githubgate.adminNamespaces" -}}
+{{- if .Values.adminNamespaces }}{{ join "," .Values.adminNamespaces }}{{ else }}{{ .Release.Namespace }}{{ end }}
+{{- end }}

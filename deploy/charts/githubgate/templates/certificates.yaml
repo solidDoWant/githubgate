@@ -1,0 +1,81 @@
+{{- $fullname := include "githubgate.fullname" . }}
+{{- $caSecret := printf "%s-ca" $fullname }}
+{{- /* The CA is generated once and kept in a Secret, so upgrades keep it. */}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $caSecret }}
+{{- $caCert := "" }}
+{{- $caKey := "" }}
+{{- if and $existing $existing.data }}
+{{- $caCert = index $existing.data "tls.crt" | b64dec }}
+{{- $caKey = index $existing.data "tls.key" | b64dec }}
+{{- else }}
+{{- $ca := genCA (printf "%s-ca" $fullname) (int .Values.certificate.caDurationDays) }}
+{{- $caCert = $ca.Cert }}
+{{- $caKey = $ca.Key }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $caSecret }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+stringData:
+  tls.crt: {{ $caCert | quote }}
+  tls.key: {{ $caKey | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ $caSecret }}
+---
+# The CA clients trust, for mounting at /var/run/secrets/githubgate/ca.crt.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.certificate.caConfigMapName }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+data:
+  ca.crt: {{ $caCert | quote }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $fullname }}-tls
+  duration: {{ .Values.certificate.duration }}
+  renewBefore: {{ .Values.certificate.renewBefore }}
+  dnsNames:
+    - {{ $fullname }}.{{ .Release.Namespace }}.svc
+    - {{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ $fullname }}
+    kind: Issuer
+{{- if .Values.webhook.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-webhook
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $fullname }}-webhook-tls
+  duration: {{ .Values.certificate.duration }}
+  renewBefore: {{ .Values.certificate.renewBefore }}
+  dnsNames:
+    - {{ $fullname }}.{{ .Release.Namespace }}.svc
+    - {{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ $fullname }}
+    kind: Issuer
+{{- end }}

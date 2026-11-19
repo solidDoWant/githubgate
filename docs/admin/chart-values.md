@@ -8,11 +8,24 @@ For: admins who install githubgate with its Helm chart.
 |---|---|---|
 | `replicas` | `3` | Number of server replicas. Every replica serves requests. |
 | `image.repository` | `ghcr.io/soliddowant/githubgate` | Server image repository. |
-| `image.tag` | `""` | Image tag. Defaults to the chart's appVersion. |
+| `image.digest` | `""` | Image digest (`sha256:...`). When set, the image is pinned by digest and the tag is ignored. Set it in production. |
+| `image.tag` | `""` | Image tag. Defaults to the chart's appVersion. Used only when no digest is set. |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
 | `imagePullSecrets` | `[]` | Names of image pull Secrets. |
 | `nameOverride` | `""` | Override the chart name used in resource names. |
 | `fullnameOverride` | `""` | Override the full resource name. |
+| `adminNamespaces` | `[]` | Namespaces that may hold GitHubApp and GitHubInstallation objects, and whose Secrets githubgate may read. Defaults to the release namespace. |
+| `webhook.enabled` | `false` | Serve the validating admission webhook (needs cert-manager). |
+| `webhook.failurePolicy` | `Fail` | What the API server does when the webhook is unreachable. |
+| `certificate.caConfigMapName` | `githubgate-ca` | Name of the ConfigMap that publishes the CA for clients. |
+| `certificate.caDurationDays` | `3650` | Validity of the generated CA, in days. |
+| `certificate.duration` | `2160h` | Validity of the serving certificates. |
+| `certificate.renewBefore` | `720h` | How long before expiry cert-manager renews the serving certificates. |
+| `podDisruptionBudget.enabled` | `true` | Create a PodDisruptionBudget. |
+| `podDisruptionBudget.maxUnavailable` | `1` | Pods that may be down at once. |
+| `terminationGracePeriodSeconds` | `30` | Seconds githubgate has to shut down. |
+| `serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor. |
+| `serviceMonitor.interval` | `30s` | Scrape interval. |
 | `crds.install` | `true` | Install the CRDs with the chart. Set to false when you manage them yourself. |
 | `serviceAccount.create` | `true` | Create the ServiceAccount. |
 | `serviceAccount.name` | `""` | ServiceAccount name. Defaults to the full name. |

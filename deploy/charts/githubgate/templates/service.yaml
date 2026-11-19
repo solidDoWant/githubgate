@@ -10,8 +10,13 @@ spec:
     {{- include "githubgate.selectorLabels" . | nindent 4 }}
   ports:
     - name: https
-      port: 443
+      port: 8443
       targetPort: https
     - name: metrics
       port: 8080
       targetPort: health
+    {{- if .Values.webhook.enabled }}
+    - name: webhook
+      port: 9443
+      targetPort: webhook
+    {{- end }}

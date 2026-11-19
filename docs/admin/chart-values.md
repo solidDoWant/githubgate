@@ -8,7 +8,8 @@ For: admins who install githubgate with its Helm chart.
 |---|---|---|
 | `replicas` | `3` | Number of server replicas. Every replica serves requests. |
 | `image.repository` | `ghcr.io/soliddowant/githubgate` | Server image repository. |
-| `image.digest` | `""` | Image digest (`sha256:...`). Required: the chart refuses to render without it, so every image is pinned. |
+| `image.digest` | `""` | Image digest (`sha256:...`). When set, the image is pinned by digest and the tag is ignored. Set it in production. |
+| `image.tag` | `""` | Image tag. Defaults to the chart's appVersion. Used only when no digest is set. |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
 | `imagePullSecrets` | `[]` | Names of image pull Secrets. |
 | `nameOverride` | `""` | Override the chart name used in resource names. |

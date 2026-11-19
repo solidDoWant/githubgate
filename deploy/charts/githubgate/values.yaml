@@ -3,8 +3,10 @@ replicas: 3
 image:
   # -- Server image repository.
   repository: ghcr.io/soliddowant/githubgate
-  # -- Image digest (`sha256:...`). Required: the chart refuses to render without it, so every image is pinned.
+  # -- Image digest (`sha256:...`). When set, the image is pinned by digest and the tag is ignored. Set it in production.
   digest: ""
+  # -- Image tag. Defaults to the chart's appVersion. Used only when no digest is set.
+  tag: ""
   # -- Image pull policy.
   pullPolicy: IfNotPresent
 # -- Names of image pull Secrets.

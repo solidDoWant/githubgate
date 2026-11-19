@@ -1,26 +1,91 @@
 // Command githubgate-client is the githubgate client: the git credential
-// helper, the token command and the gh wrapper. For now it only prints its
-// version; the subcommands are built on top of this entry point.
+// helper, the token command, the gh wrapper and the git setup command.
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "0.0.0-dev"
 
+const usage = `usage: githubgate-client <command>
+
+commands:
+  token [--repo name] [--owner owner] [--permission name=level]... [--installation ns/name]
+  git-credential get|store|erase
+  gh [--repo owner/name] -- <gh args>
+  configure
+  version
+`
+
 func main() {
-	if err := run(os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "githubgate-client:", err)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	env := &environment{
+		stdin:  os.Stdin,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+		getenv: os.Getenv,
+		sleep:  sleepContext,
+	}
+
+	if err := run(ctx, env, os.Args[1:]); err != nil {
+		var exit exitError
+		if errors.As(err, &exit) {
+			os.Exit(int(exit))
+		}
+
+		_, _ = fmt.Fprintln(os.Stderr, "githubgate-client:", err)
+
 		os.Exit(1)
 	}
 }
 
-func run(stdout io.Writer) error {
-	_, err := fmt.Fprintf(stdout, "githubgate-client %s\n", version)
+// exitError carries the exit code of a wrapped command.
+type exitError int
 
-	return err
+func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+// environment is everything the client takes from the process, so tests can
+// replace it.
+type environment struct {
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+	getenv func(string) string
+	sleep  func(context.Context, int) error
+}
+
+func run(ctx context.Context, env *environment, args []string) error {
+	if len(args) == 0 {
+		_, _ = fmt.Fprint(env.stderr, usage)
+
+		return errors.New("a command is required")
+	}
+
+	switch args[0] {
+	case "version":
+		_, err := fmt.Fprintf(env.stdout, "githubgate-client %s\n", version)
+
+		return err
+	case "token":
+		return runToken(ctx, env, args[1:])
+	case "git-credential":
+		return runGitCredential(ctx, env, args[1:])
+	case "gh":
+		return runGH(ctx, env, args[1:])
+	case "configure":
+		return runConfigure(ctx, env)
+	default:
+		_, _ = fmt.Fprint(env.stderr, usage)
+
+		return fmt.Errorf("unknown command %q", args[0])
+	}
 }

@@ -9,6 +9,7 @@ cd "$(git rev-parse --show-toplevel)"
 tag="e2e"
 server_image="ghcr.io/soliddowant/githubgate:${tag}"
 client_image="ghcr.io/soliddowant/githubgate-client:${tag}"
+fake_image="ghcr.io/soliddowant/githubgate-fakegithub:${tag}"
 arch="$(go env GOARCH)"
 
 mkdir -p build/e2e
@@ -24,6 +25,8 @@ echo "e2e-images: building the images for linux/${arch}" >&2
 mkdir -p "build/images/${arch}"
 CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w -X main.version=${tag}" -o "build/images/${arch}/githubgate" ./cmd/githubgate
 CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w -X main.version=${tag}" -o "build/images/${arch}/githubgate-client" ./cmd/githubgate-client
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w" -o "build/images/${arch}/fakegithub" ./cmd/fakegithub
 docker buildx build --platform "linux/${arch}" --file Dockerfile --tag "$server_image" --load . >&2
 docker buildx build --platform "linux/${arch}" --file Dockerfile.client --tag "$client_image" --load . >&2
+docker buildx build --platform "linux/${arch}" --file Dockerfile.fakegithub --tag "$fake_image" --load . >&2
 echo "e2e-images: built" >&2

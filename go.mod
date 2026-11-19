@@ -3,6 +3,7 @@ module github.com/solidDoWant/githubgate
 go 1.26.11
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/stretchr/testify v1.12.1
 	k8s.io/apiextensions-apiserver v0.37.2
 	sigs.k8s.io/yaml v1.6.0

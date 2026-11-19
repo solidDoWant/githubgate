@@ -55,6 +55,15 @@
       matchStrings: ["(?<depName>(?:mirror\\.gcr\\.io|ghcr\\.io|quay\\.io)/[a-z0-9._/-]+):(?<currentValue>[A-Za-z0-9._-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
       datasourceTemplate: "docker",
     },
+    {
+      description: "The github/rest-api-description commit the permission catalogue is generated from",
+      customType: "regex",
+      managerFilePatterns: ["/^scripts/gen-permissions/main\\.go$/"],
+      matchStrings: ["renovate: depName=(?<depName>\\S+)\\nconst descriptionCommit = \"(?<currentDigest>[a-f0-9]{40})\""],
+      datasourceTemplate: "git-refs",
+      packageNameTemplate: "https://github.com/github/rest-api-description",
+      currentValueTemplate: "main",
+    },
   ],
 
   packageRules: [

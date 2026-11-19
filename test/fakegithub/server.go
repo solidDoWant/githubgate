@@ -163,6 +163,15 @@ func (s *Server) SuspendInstallation(id int64, suspended bool) error {
 	return nil
 }
 
+// DeleteInstallation removes an installation, as uninstalling the App does.
+// Reinstalling it later gives a new id.
+func (s *Server) DeleteInstallation(id int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.installations, id)
+}
+
 // CreateRepository creates a repository and its bare git repository, whose
 // default branch is main. Repositories are private unless public is set.
 func (s *Server) CreateRepository(owner, name string, public bool) error {

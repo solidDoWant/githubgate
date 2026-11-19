@@ -150,6 +150,7 @@ func Build(in Inputs) *Snapshot {
 	}
 
 	secrets := map[types.NamespacedName]*corev1.Secret{}
+
 	for index := range in.Secrets {
 		secret := &in.Secrets[index]
 		if admin(secret.Namespace) {

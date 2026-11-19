@@ -123,6 +123,7 @@ func TestWatcherCacheReadsSecretsOnlyInAdminNamespaces(t *testing.T) {
 
 	tenantSecret := corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: "tenant"}}
 	adminSecret := corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: adminNamespace, Name: "admin"}}
+
 	require.NoError(t, env.client.Create(ctx, &tenantSecret))
 	require.NoError(t, env.client.Create(ctx, &adminSecret))
 

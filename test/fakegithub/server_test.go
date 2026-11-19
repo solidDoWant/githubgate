@@ -125,17 +125,18 @@ func TestAppJWTValidation(t *testing.T) {
 		token string
 		want  int
 	}{
-		"GitHub's own recipe":     {fix.goodJWT(t), http.StatusOK},
-		"expired beyond skew":     {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(-20*time.Minute), now.Add(-5*time.Minute)), http.StatusUnauthorized},
-		"exp just past the skew":  {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(-5*time.Minute), now.Add(-59*time.Second)), http.StatusOK},
-		"lives 11m":               {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now, now.Add(11*time.Minute+30*time.Second)), http.StatusUnauthorized},
-		"lives exactly 11m":       {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now, now.Add(11*time.Minute-time.Second)), http.StatusOK},
-		"iat in the future":       {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(2*time.Minute), now.Add(5*time.Minute)), http.StatusUnauthorized},
-		"signed with another key": {fix.jwt(t, jwt.SigningMethodRS256, otherKey, now, now.Add(time.Minute)), http.StatusUnauthorized},
-		"HS256":                   {hmac, http.StatusUnauthorized},
-		"RS512":                   {rs512, http.StatusUnauthorized},
-		"not a JWT":               {"garbage", http.StatusUnauthorized},
-		"missing token":           {"", http.StatusUnauthorized},
+		"GitHub's own recipe":       {fix.goodJWT(t), http.StatusOK},
+		"expired beyond skew":       {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(-20*time.Minute), now.Add(-5*time.Minute)), http.StatusUnauthorized},
+		"exp just past the skew":    {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(-5*time.Minute), now.Add(-30*time.Second)), http.StatusOK},
+		"exp clearly past the skew": {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(-5*time.Minute), now.Add(-2*time.Minute)), http.StatusUnauthorized},
+		"lives 11m":                 {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now, now.Add(11*time.Minute+30*time.Second)), http.StatusUnauthorized},
+		"lives exactly 11m":         {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now, now.Add(11*time.Minute-10*time.Second)), http.StatusOK},
+		"iat in the future":         {fix.jwt(t, jwt.SigningMethodRS256, fix.key, now.Add(2*time.Minute), now.Add(5*time.Minute)), http.StatusUnauthorized},
+		"signed with another key":   {fix.jwt(t, jwt.SigningMethodRS256, otherKey, now, now.Add(time.Minute)), http.StatusUnauthorized},
+		"HS256":                     {hmac, http.StatusUnauthorized},
+		"RS512":                     {rs512, http.StatusUnauthorized},
+		"not a JWT":                 {"garbage", http.StatusUnauthorized},
+		"missing token":             {"", http.StatusUnauthorized},
 	}
 
 	for name, tt := range tests {

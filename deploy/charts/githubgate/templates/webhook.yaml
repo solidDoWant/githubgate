@@ -1,0 +1,27 @@
+{{- if .Values.webhook.enabled }}
+{{- $fullname := include "githubgate.fullname" . }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ $fullname }}-webhook
+webhooks:
+  - name: validate.githubgate.soliddowant.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ $fullname }}
+        namespace: {{ .Release.Namespace }}
+        port: 9443
+        path: /validate
+    rules:
+      - apiGroups: ["githubgate.soliddowant.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["githubapps", "githubinstallations", "githubaccesspolicies"]
+{{- end }}

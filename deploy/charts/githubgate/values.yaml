@@ -3,8 +3,8 @@ replicas: 3
 image:
   # -- Server image repository.
   repository: ghcr.io/soliddowant/githubgate
-  # -- Image tag. Defaults to the chart's appVersion.
-  tag: ""
+  # -- Image digest (`sha256:...`). Required: the chart refuses to render without it, so every image is pinned.
+  digest: ""
   # -- Image pull policy.
   pullPolicy: IfNotPresent
 # -- Names of image pull Secrets.
@@ -13,6 +13,34 @@ imagePullSecrets: []
 nameOverride: ""
 # -- Override the full resource name.
 fullnameOverride: ""
+# -- Namespaces that may hold GitHubApp and GitHubInstallation objects, and whose Secrets githubgate may read. Defaults to the release namespace.
+adminNamespaces: []
+webhook:
+  # -- Serve the validating admission webhook (needs cert-manager).
+  enabled: false
+  # -- What the API server does when the webhook is unreachable.
+  failurePolicy: Fail
+certificate:
+  # -- Name of the ConfigMap that publishes the CA for clients.
+  caConfigMapName: githubgate-ca
+  # -- Validity of the generated CA, in days.
+  caDurationDays: 3650
+  # -- Validity of the serving certificates.
+  duration: 2160h
+  # -- How long before expiry cert-manager renews the serving certificates.
+  renewBefore: 720h
+podDisruptionBudget:
+  # -- Create a PodDisruptionBudget.
+  enabled: true
+  # -- Pods that may be down at once.
+  maxUnavailable: 1
+# -- Seconds githubgate has to shut down.
+terminationGracePeriodSeconds: 30
+serviceMonitor:
+  # -- Create a Prometheus Operator ServiceMonitor.
+  enabled: false
+  # -- Scrape interval.
+  interval: 30s
 crds:
   # -- Install the CRDs with the chart. Set to false when you manage them yourself.
   install: true

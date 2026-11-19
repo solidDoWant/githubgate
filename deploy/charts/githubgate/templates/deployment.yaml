@@ -22,13 +22,23 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       serviceAccountName: {{ include "githubgate.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: githubgate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}@{{ required "image.digest is required: set it to the sha256 digest of the server image" .Values.image.digest }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --admin-namespaces={{ include "githubgate.adminNamespaces" . }}
+            - --tls-cert-file=/var/run/githubgate/tls/tls.crt
+            - --tls-key-file=/var/run/githubgate/tls/tls.key
+            - --leader-elect
+            {{- if .Values.webhook.enabled }}
+            - --webhook
+            - --webhook-cert-dir=/var/run/githubgate/webhook
+            {{- end }}
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -39,10 +49,40 @@ spec:
               containerPort: 8443
             - name: health
               containerPort: 8080
+            {{- if .Values.webhook.enabled }}
+            - name: webhook
+              containerPort: 9443
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/githubgate/tls
+              readOnly: true
+            {{- if .Values.webhook.enabled }}
+            - name: webhook-tls
+              mountPath: /var/run/githubgate/webhook
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ include "githubgate.fullname" . }}-tls
+        {{- if .Values.webhook.enabled }}
+        - name: webhook-tls
+          secret:
+            secretName: {{ include "githubgate.fullname" . }}-webhook-tls
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

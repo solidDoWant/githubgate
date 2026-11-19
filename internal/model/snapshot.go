@@ -290,7 +290,7 @@ func buildInstallation(object *githubgatev1alpha1.GitHubInstallation, snapshot *
 	}
 
 	for _, entry := range object.Spec.Ceiling {
-		installation.Ceiling = append(installation.Ceiling, grantOf(entry.Repositories, entry.Permissions))
+		installation.Ceiling = append(installation.Ceiling, GrantOf(entry.Repositories, entry.Permissions))
 	}
 
 	for _, entry := range object.Spec.Ceiling {
@@ -345,7 +345,7 @@ func buildPolicy(object *githubgatev1alpha1.GitHubAccessPolicy, snapshot *Snapsh
 		}
 
 		installation, _ := snapshot.Installation(reference(rule.InstallationRef, object.Namespace))
-		grant := grantOf(rule.Repositories, rule.Permissions)
+		grant := GrantOf(rule.Repositories, rule.Permissions)
 		accepted := &Rule{
 			Policy:       policy,
 			Name:         rule.Name,

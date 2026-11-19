@@ -65,7 +65,7 @@ func AcceptRule(policyNamespace string, rule githubgatev1alpha1.AccessRule, view
 		}
 	}
 
-	if !permissions.Contained(grantOf(rule.Repositories, rule.Permissions), installation.Ceiling) {
+	if !permissions.Contained(GrantOf(rule.Repositories, rule.Permissions), installation.Ceiling) {
 		return Acceptance{
 			Reason:  ReasonOutsideCeiling,
 			Message: fmt.Sprintf("the rule is outside the ceiling of GitHubInstallation %s", ref),
@@ -161,7 +161,8 @@ func invalidPermissionSet(repositories []githubgatev1alpha1.Repository, perms ma
 	return ""
 }
 
-func grantOf(repositories []githubgatev1alpha1.Repository, perms map[string]githubgatev1alpha1.Level) permissions.Grant {
+// GrantOf converts repository patterns and permissions to a Grant.
+func GrantOf(repositories []githubgatev1alpha1.Repository, perms map[string]githubgatev1alpha1.Level) permissions.Grant {
 	grant := permissions.Grant{
 		Repositories: make([]string, 0, len(repositories)),
 		Permissions:  make(map[string]permissions.Level, len(perms)),

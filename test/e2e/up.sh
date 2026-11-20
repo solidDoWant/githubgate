@@ -67,6 +67,8 @@ wait_for_images() {
 		log "image build failed"
 		exit 1
 	fi
+	# Print the build log on success too, so its step timings are visible.
+	cat "${E2E_IMAGES_LOG:-/dev/null}" >&2
 	log "images built"
 }
 
@@ -100,6 +102,7 @@ fi
 wait_for_images
 log "loading the images into kind"
 kind load docker-image "$server_image" "$client_image" "$fake_image" --name "$cluster" >&2
+log "images loaded into kind"
 if [[ "$preload" == 1 ]]; then
 	# kind load fails on multi-platform images from the Docker daemon's containerd
 	# store (it imports every platform, but the daemon holds only one). Import each

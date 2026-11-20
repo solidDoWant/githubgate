@@ -96,7 +96,10 @@ func run(ctx context.Context, stdin string, name string, args ...string) (string
 func (c cluster) kubectl(t *testing.T, stdin string, args ...string) string {
 	t.Helper()
 
+	start := time.Now()
 	out, err := c.tryKubectl(t.Context(), stdin, args...)
+
+	recordWait(commandLabel("kubectl", args), time.Since(start))
 	require.NoError(t, err, "kubectl %s: %s", strings.Join(args, " "), out)
 
 	return out
@@ -109,18 +112,24 @@ func (c cluster) tryKubectl(ctx context.Context, stdin string, args ...string) (
 func (c cluster) apply(t *testing.T, manifest string) {
 	t.Helper()
 
+	start := time.Now()
 	out, err := retryTransient(t.Context(), func() (string, error) {
 		return c.tryKubectl(t.Context(), manifest, "apply", "-f", "-")
 	})
+
+	recordWait("kubectl apply", time.Since(start))
 	require.NoError(t, err, "kubectl apply: %s", out)
 }
 
 func (c cluster) helm(t *testing.T, args ...string) {
 	t.Helper()
 
+	start := time.Now()
 	out, err := retryTransient(t.Context(), func() (string, error) {
 		return run(t.Context(), "", "helm", append([]string{"--kube-context", c.context}, args...)...)
 	})
+
+	recordWait(helmLabel(args), time.Since(start))
 	require.NoError(t, err, "helm %s: %s", strings.Join(args, " "), out)
 }
 
@@ -613,7 +622,7 @@ done`, request)
 			return n
 		}
 
-		require.Eventually(t, func() bool { return count("ok") >= 10 }, 2*time.Minute, time.Second)
+		eventually(t, "ten tokens served", func() bool { return count("ok") >= 10 }, 2*time.Minute, time.Second)
 
 		pods := strings.Fields(c.kubectl(t, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "-o", "jsonpath={.items[*].metadata.name}"))
 		require.Len(t, pods, 3, "the chart runs three replicas")
@@ -622,7 +631,7 @@ done`, request)
 
 		before := count("ok")
 
-		require.Eventually(t, func() bool {
+		eventually(t, "replacement pod ready", func() bool {
 			// Read the pods themselves: the deployment's status can lag behind the deletion.
 			out, _ := c.tryKubectl(ctx, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate",
 				"-o", `jsonpath={range .items[*]}{.metadata.name}={.metadata.deletionTimestamp}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`)
@@ -640,7 +649,7 @@ done`, request)
 
 			return true
 		}, 3*time.Minute, time.Second)
-		require.Eventually(t, func() bool { return count("ok") >= before+10 }, 2*time.Minute, time.Second)
+		eventually(t, "ten tokens served after pod deletion", func() bool { return count("ok") >= before+10 }, 2*time.Minute, time.Second)
 
 		_, err := c.exec(ctx, callerNamespace, pod, "touch /tmp/stop")
 		require.NoError(t, err)

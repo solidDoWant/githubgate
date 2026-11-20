@@ -32,7 +32,30 @@ func runIntercept(ctx context.Context, env *environment, args []string) error {
 	trustDir := flags.String("trust-dir", defaultTrustDir, "directory for the files the workload reads")
 	stateDir := flags.String("state-dir", defaultStateDir, "directory for the CA key")
 	baseBundle := flags.String("base-bundle", "", "PEM file of roots for bundle.crt (default: built-in roots)")
-	extraCA := flags.String("extra-ca", env.getenv("GITHUBGATE_INTERCEPT_EXTRA_CA"), "PEM text or @file appended to bundle.crt")
+	extraCAs := []string{}
+
+	if value := env.getenv("GITHUBGATE_INTERCEPT_EXTRA_CA"); value != "" {
+		extraCAs = append(extraCAs, value)
+	}
+
+	flags.Func("extra-ca", "PEM text or @file appended to bundle.crt; repeatable", func(value string) error {
+		extraCAs = append(extraCAs, value)
+
+		return nil
+	})
+
+	var joins []intercept.Join
+
+	flags.Func("join", "<container>/<VARIABLE>=<path>: write trust/join/<container>/<VARIABLE> as that file plus the pod CA; repeatable", func(value string) error {
+		join, err := intercept.ParseJoin(value)
+		if err != nil {
+			return err
+		}
+
+		joins = append(joins, join)
+
+		return nil
+	})
 	probe := flags.Bool("probe", false, "check that the interceptor is ready, then exit")
 
 	if err := flags.Parse(args); err != nil {
@@ -60,9 +83,15 @@ func runIntercept(ctx context.Context, env *environment, args []string) error {
 		return fmt.Errorf("--proxy-ca: %w", err)
 	}
 
-	extraPEM, err := pemValue(*extraCA)
-	if err != nil {
-		return fmt.Errorf("--extra-ca: %w", err)
+	var extraPEM []byte
+
+	for _, value := range extraCAs {
+		pemData, err := pemValue(value)
+		if err != nil {
+			return fmt.Errorf("--extra-ca: %w", err)
+		}
+
+		extraPEM = append(append(extraPEM, pemData...), '\n')
 	}
 
 	var base []byte
@@ -86,6 +115,7 @@ func runIntercept(ctx context.Context, env *environment, args []string) error {
 		StateDir:     *stateDir,
 		BaseBundle:   base,
 		ExtraCA:      extraPEM,
+		Joins:        joins,
 		Logger:       slog.New(slog.NewTextHandler(env.stderr, nil)),
 	})
 }

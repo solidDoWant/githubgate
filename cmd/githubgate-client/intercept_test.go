@@ -255,3 +255,17 @@ func (b *lockedBuffer) String() string {
 
 	return b.buffer.String()
 }
+
+func TestInterceptRejectsABadJoinAndReadsEveryExtraCA(t *testing.T) {
+	vars := map[string]string{"GITHUBGATE_INTERCEPT_PROXY_ADDRESS": "127.0.0.1:1", "GITHUBGATE_INTERCEPT_PROXY_CA": "x"}
+
+	_, _, err := runClient(t, vars, "", "intercept", "--join", "../x=/a", "--state-dir", t.TempDir(), "--trust-dir", t.TempDir())
+	require.ErrorContains(t, err, "-join")
+
+	// The proxy CA check comes first, so give a valid one and fail on the second extra CA.
+	_, proxyCA := githubHostsServer(t, http.NotFoundHandler())
+	vars["GITHUBGATE_INTERCEPT_PROXY_CA"] = string(proxyCA)
+
+	_, _, err = runClient(t, vars, "", "intercept", "--extra-ca", string(proxyCA), "--extra-ca", "@"+filepath.Join(t.TempDir(), "missing"), "--state-dir", t.TempDir(), "--trust-dir", t.TempDir())
+	require.ErrorContains(t, err, "--extra-ca")
+}

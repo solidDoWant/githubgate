@@ -21,6 +21,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -323,6 +325,7 @@ func Run(ctx context.Context, config Config) error {
 		injector = inject.New(inject.Config{
 			Image: config.InjectImage, ProxyAddress: config.InjectProxyAddress, Audience: config.Audience,
 			ProxyCAFile: config.InjectProxyCAFile, ExtraCAFile: config.InjectExtraCAFile,
+			Cluster: injectCluster{reader: manager.GetClient(), apiReader: manager.GetAPIReader()},
 		})
 		manager.GetWebhookServer().Register(injectPath, &admission.Webhook{Handler: injector})
 	}
@@ -485,6 +488,35 @@ func (r installationReader) GetInstallation(ctx context.Context, name types.Name
 
 // injectReady is the readiness check of the injection webhook: ready only
 // while the proxy CA file holds a certificate. Nil without the webhook.
+// injectCluster gives the injection webhook the namespaces from the manager's
+// cache and ConfigMaps straight from the API server, so no ConfigMap
+// informer runs cluster-wide.
+type injectCluster struct{ reader, apiReader client.Reader }
+
+func (c injectCluster) NamespaceAnnotations(ctx context.Context, name string) (map[string]string, error) {
+	var namespace corev1.Namespace
+	if err := c.reader.Get(ctx, types.NamespacedName{Name: name}, &namespace); err != nil {
+		return nil, err
+	}
+
+	return namespace.Annotations, nil
+}
+
+func (c injectCluster) ConfigMapHasKey(ctx context.Context, namespace, name, key string) (bool, error) {
+	var configMap corev1.ConfigMap
+	if err := c.apiReader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &configMap); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	_, found := configMap.Data[key]
+
+	return found, nil
+}
+
 func injectReady(injector *inject.Handler) func() bool {
 	if injector == nil {
 		return nil

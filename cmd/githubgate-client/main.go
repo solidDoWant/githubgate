@@ -24,7 +24,7 @@ commands:
   push [--proxy] [<remote> [<branch>]]
   configure [--proxy]
   intercept [--listen addr] [--proxy-address host:port] [--proxy-ca pem|@file] [--token-file path]
-            [--trust-dir dir] [--state-dir dir] [--base-bundle file] [--extra-ca pem|@file] [--probe]
+            [--trust-dir dir] [--state-dir dir] [--base-bundle file] [--extra-ca pem|@file]... [--join container/VAR=path]... [--probe]
   version
 `
 

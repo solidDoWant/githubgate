@@ -177,6 +177,9 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 
 	var failure error
 
+	// returned counts the serve goroutines that already finished.
+	returned := 0
+
 	select {
 	case <-ctx.Done():
 		s.draining.Store(true)
@@ -184,8 +187,11 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 		select {
 		case <-time.After(options.ShutdownDelay):
 		case failure = <-served:
+			returned++
 		}
 	case failure = <-served:
+		returned++
+
 		s.draining.Store(true)
 	}
 
@@ -195,6 +201,15 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 	err = nil
 	for _, server := range servers {
 		err = errors.Join(err, server.Shutdown(shutdownCtx))
+	}
+
+	// A serve goroutine that had not started when Shutdown ran returns
+	// ErrServerClosed as soon as it does, closing its listener. Wait for every
+	// one so no listener is open when Run returns.
+	for ; returned < len(servers); returned++ {
+		if result := <-served; failure == nil {
+			failure = result
+		}
 	}
 
 	stopWatching()

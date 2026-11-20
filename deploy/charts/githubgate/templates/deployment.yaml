@@ -40,8 +40,21 @@ spec:
             {{- end }}
             {{- if .Values.webhook.enabled }}
             - --webhook
+            {{- end }}
+            {{- if include "githubgate.webhookServer" . }}
             - --webhook-cert-dir=/var/run/githubgate/webhook
             - --webhook-port=9444
+            {{- end }}
+            {{- if .Values.inject.enabled }}
+            - --inject
+            - --inject-image={{ .Values.inject.image.repository }}@{{ required "inject.image.digest is required when inject.enabled is true" .Values.inject.image.digest }}
+            {{- with .Values.inject.proxyAddress }}
+            - --inject-proxy-address={{ . }}
+            {{- end }}
+            - --inject-proxy-ca-file=/var/run/githubgate/inject-proxy-ca/ca.crt
+            {{- if .Values.inject.extraCAConfigMap }}
+            - --inject-extra-ca-file=/var/run/githubgate/inject-extra-ca/ca.crt
+            {{- end }}
             {{- end }}
             {{- if .Values.proxy.enabled }}
             - --proxy
@@ -70,7 +83,7 @@ spec:
               containerPort: 8443
             - name: health
               containerPort: 8080
-            {{- if .Values.webhook.enabled }}
+            {{- if include "githubgate.webhookServer" . }}
             - name: webhook
               containerPort: 9444
             {{- end }}
@@ -90,10 +103,20 @@ spec:
             - name: tls
               mountPath: /var/run/githubgate/tls
               readOnly: true
-            {{- if .Values.webhook.enabled }}
+            {{- if include "githubgate.webhookServer" . }}
             - name: webhook-tls
               mountPath: /var/run/githubgate/webhook
               readOnly: true
+            {{- end }}
+            {{- if .Values.inject.enabled }}
+            - name: inject-proxy-ca
+              mountPath: /var/run/githubgate/inject-proxy-ca
+              readOnly: true
+            {{- if .Values.inject.extraCAConfigMap }}
+            - name: inject-extra-ca
+              mountPath: /var/run/githubgate/inject-extra-ca
+              readOnly: true
+            {{- end }}
             {{- end }}
             {{- if .Values.proxy.enabled }}
             - name: proxy-tls
@@ -113,10 +136,20 @@ spec:
         - name: tls
           secret:
             secretName: {{ include "githubgate.fullname" . }}-tls
-        {{- if .Values.webhook.enabled }}
+        {{- if include "githubgate.webhookServer" . }}
         - name: webhook-tls
           secret:
             secretName: {{ include "githubgate.fullname" . }}-webhook-tls
+        {{- end }}
+        {{- if .Values.inject.enabled }}
+        - name: inject-proxy-ca
+          configMap:
+            name: {{ required "inject.proxyCAConfigMap is required when inject.enabled is true" .Values.inject.proxyCAConfigMap }}
+        {{- if .Values.inject.extraCAConfigMap }}
+        - name: inject-extra-ca
+          configMap:
+            name: {{ .Values.inject.extraCAConfigMap }}
+        {{- end }}
         {{- end }}
         {{- if .Values.proxy.enabled }}
         - name: proxy-tls

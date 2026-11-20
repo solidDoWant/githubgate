@@ -18,6 +18,12 @@ For: admins who install githubgate with its Helm chart.
 | `githubBaseURL` | `""` | GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double. |
 | `webhook.enabled` | `false` | Serve the validating admission webhook (needs cert-manager). |
 | `webhook.failurePolicy` | `Fail` | What the API server does when the webhook is unreachable. |
+| `inject.enabled` | `false` | Serve the mutating admission webhook that adds the interceptor sidecar to pods in labelled namespaces (needs cert-manager, `proxy.enabled` and `inject.proxyCAConfigMap`). |
+| `inject.image.repository` | `ghcr.io/soliddowant/githubgate-client` | Client image repository. The injected sidecar runs it. |
+| `inject.image.digest` | `""` | Client image digest (`sha256:...`). Required when `inject.enabled` is true. |
+| `inject.proxyAddress` | `""` | Address pods use for the proxy. Empty means `githubgate-proxy.<release namespace>.svc:443`. |
+| `inject.proxyCAConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds the CA that signs the proxy certificate. Required when `inject.enabled` is true. |
+| `inject.extraCAConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds extra CA certificates for the injected pods. Empty means none. |
 | `proxy.enabled` | `false` | Serve proxy mode: a second TLS listener behind the `githubgate-proxy` Service (port 443). Needs cert-manager and `proxy.ca`. |
 | `proxy.clusterIP` | `""` | Fixed cluster IP of the `githubgate-proxy` Service, so pods can name it in `hostAliases`. Empty means the cluster picks one. |
 | `proxy.ca.name` | `""` | Name of the cert-manager Issuer or ClusterIssuer that signs the proxy certificate. Use the admin's name-constrained CA (permitted subtree `github.com`). Required when `proxy.enabled` is true. |

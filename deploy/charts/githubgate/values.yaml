@@ -24,6 +24,20 @@ webhook:
   enabled: false
   # -- What the API server does when the webhook is unreachable.
   failurePolicy: Fail
+inject:
+  # -- Serve the mutating admission webhook that adds the interceptor sidecar to pods in labelled namespaces (needs cert-manager, `proxy.enabled` and `inject.proxyCAConfigMap`).
+  enabled: false
+  image:
+    # -- Client image repository. The injected sidecar runs it.
+    repository: ghcr.io/soliddowant/githubgate-client
+    # -- Client image digest (`sha256:...`). Required when `inject.enabled` is true.
+    digest: ""
+  # -- Address pods use for the proxy. Empty means `githubgate-proxy.<release namespace>.svc:443`.
+  proxyAddress: ""
+  # -- Name of a ConfigMap in the release namespace whose `ca.crt` holds the CA that signs the proxy certificate. Required when `inject.enabled` is true.
+  proxyCAConfigMap: ""
+  # -- Name of a ConfigMap in the release namespace whose `ca.crt` holds extra CA certificates for the injected pods. Empty means none.
+  extraCAConfigMap: ""
 proxy:
   # -- Serve proxy mode: a second TLS listener behind the `githubgate-proxy` Service (port 443). Needs cert-manager and `proxy.ca`.
   enabled: false

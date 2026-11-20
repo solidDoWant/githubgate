@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepares the e2e environment on the kind cluster E2E_CLUSTER (default
 # githubgate-e2e, created with test/e2e/kind-config.yaml, ImageVolume on): the
-# server and client images built for the host architecture and loaded into
+# server, client and fake GitHub images built for the host architecture and loaded into
 # kind. The tests install the fake GitHub and the chart themselves, because the
 # chart needs its Secrets first. Prints the env file path; it holds the kube
 # context and the image names.
@@ -13,6 +13,7 @@ node_image="mirror.gcr.io/kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8c
 tag="e2e"
 server_image="ghcr.io/soliddowant/githubgate:${tag}"
 client_image="ghcr.io/soliddowant/githubgate-client:${tag}"
+fake_image="ghcr.io/soliddowant/githubgate-fakegithub:${tag}"
 env_file="build/e2e/${cluster}.env"
 mkdir -p build/e2e
 
@@ -98,7 +99,7 @@ if [[ -n "$cluster_pid" ]]; then
 fi
 wait_for_images
 log "loading the images into kind"
-kind load docker-image "$server_image" "$client_image" --name "$cluster" >&2
+kind load docker-image "$server_image" "$client_image" "$fake_image" --name "$cluster" >&2
 if [[ "$preload" == 1 ]]; then
 	# kind load fails on multi-platform images from the Docker daemon's containerd
 	# store (it imports every platform, but the daemon holds only one). Import each
@@ -121,6 +122,7 @@ E2E_CLUSTER=${cluster}
 E2E_KUBE_CONTEXT=kind-${cluster}
 E2E_SERVER_IMAGE=${server_image}
 E2E_CLIENT_IMAGE=${client_image}
+E2E_FAKE_IMAGE=${fake_image}
 ENV
 log "ready: ${env_file}"
 echo "$env_file"

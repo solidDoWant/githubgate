@@ -17,6 +17,8 @@ nameOverride: ""
 fullnameOverride: ""
 # -- Namespaces that may hold GitHubApp and GitHubInstallation objects, and whose Secrets githubgate may read. Defaults to the release namespace.
 adminNamespaces: []
+# -- GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double.
+githubBaseURL: ""
 webhook:
   # -- Serve the validating admission webhook (needs cert-manager).
   enabled: false

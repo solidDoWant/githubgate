@@ -15,6 +15,7 @@ For: admins who install githubgate with its Helm chart.
 | `nameOverride` | `""` | Override the chart name used in resource names. |
 | `fullnameOverride` | `""` | Override the full resource name. |
 | `adminNamespaces` | `[]` | Namespaces that may hold GitHubApp and GitHubInstallation objects, and whose Secrets githubgate may read. Defaults to the release namespace. |
+| `githubBaseURL` | `""` | GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double. |
 | `webhook.enabled` | `false` | Serve the validating admission webhook (needs cert-manager). |
 | `webhook.failurePolicy` | `Fail` | What the API server does when the webhook is unreachable. |
 | `certificate.caConfigMapName` | `githubgate-ca` | Name of the ConfigMap that publishes the CA for clients. |

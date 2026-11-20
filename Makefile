@@ -68,6 +68,19 @@ test: ## Run unit tests: Go (race detector; GO_TEST_JSON=file also writes the go
 	./scripts/release_test.sh
 	./scripts/ci/publish-release_test.sh
 
+# Fuzz targets run by test-fuzz, as package:FuzzName.
+FUZZ_TARGETS = \
+	./internal/proxy/graphql:FuzzClassify
+
+FUZZTIME ?= 30s
+
+.PHONY: test-fuzz
+test-fuzz: ## Run every fuzz target in FUZZ_TARGETS for FUZZTIME each (default 30s).
+	@for target in $(FUZZ_TARGETS); do \
+		echo "fuzzing $$target for $(FUZZTIME)"; \
+		go test -run '^$$' -fuzz "^$${target#*:}$$" -fuzztime $(FUZZTIME) "$${target%%:*}" || exit 1; \
+	done
+
 .PHONY: test-guard
 test-guard: ## Fail if HEAD deletes, unlists or skips a test named on a `Tests:` line of a checklist since its merge base with BASE (default origin/master; CI passes the PR labels).
 	./scripts/ci/test-guard.py --base $(or $(BASE),origin/master)

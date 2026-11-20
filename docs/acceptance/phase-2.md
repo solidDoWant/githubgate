@@ -25,7 +25,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 9. GraphQL queries work; a mutation in `denyMutations` is refused naming it; `gh pr create` (the `createPullRequest` mutation) works when allowed.
    Tests:
 10. A GraphQL request that can't be parsed, is a batch (JSON array), has several operations without `operationName`, or hides mutation fields behind fragments is refused.
-    Tests:
+    Tests: `internal/proxy/graphql: TestClassifyRefusesRequestsItCannotClassify`, `internal/proxy/graphql: TestClassifyReturnsTheOperationKindAndMutationNames`
 11. `git clone` and `git fetch` of an allowed repository work from a proxied pod after `githubgate-client configure --proxy`.
     Tests:
 12. With `pushRefs: [refs/heads/agent/**]`, pushing `agent/x` works, while pushing `master` or a tag is refused with git showing githubgate's message naming the ref, and nothing reaches GitHub.

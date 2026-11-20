@@ -104,6 +104,7 @@ func TestProxyRuleAcceptance(t *testing.T) {
 			assert.Equal(t, test.wantAccepted, decisions[0].Accepted, decisions[0].Message)
 
 			rules := snapshot.Rules(tenantNamespace, "ci-build")
+
 			if !test.wantAccepted {
 				assert.Equal(t, model.ReasonInvalidSpec, decisions[0].Reason)
 				assert.Contains(t, decisions[0].Message, test.wantMessage)

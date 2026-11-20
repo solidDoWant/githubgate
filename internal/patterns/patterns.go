@@ -1,5 +1,7 @@
 // Package patterns matches GitHub repository names against patterns where `*`
-// matches any run of characters, and decides pattern containment.
+// matches any run of characters, and decides pattern containment. It also
+// matches `/`-separated names (REST operation ids, GraphQL mutation names and
+// git refs) against segment patterns.
 package patterns
 
 import (

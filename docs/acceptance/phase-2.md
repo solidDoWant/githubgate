@@ -15,7 +15,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 4. A request for a repository the caller's proxy rules don't cover gets `403` naming the repository, and is never sent to GitHub.
    Tests:
 5. A rule with only `token.enabled` gives nothing through the proxy, and a rule with only `proxy.enabled` gives no token from `/v1/token`.
-   Tests:
+   Tests: `internal/server: TestTokenModeUsesOnlyRulesThatEnableIt/a rule with only proxy mode gives no token`
 6. With `denyOperations: [repos/create-release]`, creating a release is refused with `403` naming the operation, while commenting on an issue in the same repository works.
    Tests:
 7. With `allowOperations` set, only the listed REST operations work; any other is refused naming the operation.

@@ -100,31 +100,10 @@ spec:
           workspaces:
             - name: guard
               mountPath: /workspace/guard
-          volumes:
-            # githubgate's client, a static binary.
-            - name: githubgate-client
-              image:
-                # renovate: image
-                reference: ghcr.io/soliddowant/githubgate-client:0.3.1@sha256:0674f582a9fd5ecefe1d36811f415e5b9b9184b0b8923294a85fb6239504b468
-                pullPolicy: IfNotPresent
-            # The ServiceAccount token githubgate checks.
-            - name: githubgate-token
-              projected:
-                sources:
-                  - serviceAccountToken:
-                      audience: githubgate
-                      expirationSeconds: 600
-                      path: token
-            # githubgate's certificate chains to the cluster root CA, which
-            # Kyverno copies into every namespace.
-            - name: githubgate-ca
-              configMap:
-                name: root-ca-pub-cert
           steps:
             # Reads the labels when the run starts, so a /retest after the
-            # owner adds test-removal-approved picks it up. The only step with
-            # a GitHub token: it runs this script and nothing from the
-            # repository.
+            # owner adds test-removal-approved picks it up. It runs this script
+            # and nothing from the repository.
             - name: labels
               image: mirror.gcr.io/library/python:3.14.9@sha256:30a34d141e34b8fbedabecb8f86b3d49a62e348d8112ad3c1289f0b2b216ad3e
               computeResources:
@@ -133,32 +112,12 @@ spec:
                   memory: 256Mi
                 limits:
                   memory: 256Mi
-              env:
-                - name: GITHUBGATE_URL
-                  value: https://githubgate.ci.svc:8443
-                - name: GITHUBGATE_CA_FILE
-                  value: /etc/githubgate-ca/ca.crt
-              volumeMounts:
-                - name: githubgate-client
-                  mountPath: /opt/githubgate
-                - name: githubgate-token
-                  mountPath: /var/run/secrets/githubgate
-                - name: githubgate-ca
-                  mountPath: /etc/githubgate-ca
               script: |
                 #!/usr/bin/env python3
-                import json, subprocess, urllib.request
-                def github_token(*permissions):
-                    # A short-lived installation token from githubgate, for this
-                    # task's ServiceAccount (ci/project chart's policies). Kept in
-                    # memory only.
-                    args = ["/opt/githubgate/githubgate-client", "token", "--owner", "{{ repo_owner }}", "--repo", "{{ repo_name }}"]
-                    for permission in permissions:
-                        args += ["--permission", permission]
-                    return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+                import json, urllib.request
                 request = urllib.request.Request(
                     "https://api.github.com/repos/{{ repo_owner }}/{{ repo_name }}/issues/{{ pull_request_number }}/labels?per_page=100",
-                    headers={"Authorization": "Bearer " + github_token("pull_requests=read", "issues=read"), "Accept": "application/vnd.github+json"},
+                    headers={"Accept": "application/vnd.github+json"},
                 )
                 with urllib.request.urlopen(request, timeout=30) as response:
                     labels = [label["name"] for label in json.load(response)]
@@ -189,8 +148,8 @@ spec:
       # exits 0 after its stages ran, because a finally task cannot rely on
       # the results of a failed task. Gives every stage its own check run, so
       # the failing stage and its failure report show on the commit. Runs
-      # only this script with a GitHub token (from githubgate, as ci-report),
-      # never code from the repository.
+      # only this script with GitHub access (githubgate's interceptor, as
+      # ci-report), never code from the repository.
       - name: report
         params:
           - name: stages
@@ -199,26 +158,6 @@ spec:
           params:
             - name: stages
               type: string
-          volumes:
-            # githubgate's client, a static binary.
-            - name: githubgate-client
-              image:
-                # renovate: image
-                reference: ghcr.io/soliddowant/githubgate-client:0.3.1@sha256:0674f582a9fd5ecefe1d36811f415e5b9b9184b0b8923294a85fb6239504b468
-                pullPolicy: IfNotPresent
-            # The ServiceAccount token githubgate checks.
-            - name: githubgate-token
-              projected:
-                sources:
-                  - serviceAccountToken:
-                      audience: githubgate
-                      expirationSeconds: 600
-                      path: token
-            # githubgate's certificate chains to the cluster root CA, which
-            # Kyverno copies into every namespace.
-            - name: githubgate-ca
-              configMap:
-                name: root-ca-pub-cert
           steps:
             - name: report
               image: mirror.gcr.io/library/python:3.14.9@sha256:30a34d141e34b8fbedabecb8f86b3d49a62e348d8112ad3c1289f0b2b216ad3e
@@ -229,34 +168,15 @@ spec:
                 limits:
                   memory: 256Mi
               env:
-                - name: GITHUBGATE_URL
-                  value: https://githubgate.ci.svc:8443
-                - name: GITHUBGATE_CA_FILE
-                  value: /etc/githubgate-ca/ca.crt
                 # Through the environment, not the script text, so the
                 # result's content is never parsed as code.
                 - name: STAGES
                   value: $(params.stages)
                 - name: DETAILS_URL
                   value: https://tekton.echozulu.games/#/namespaces/$(context.pipelineRun.namespace)/pipelineruns/$(context.pipelineRun.name)
-              volumeMounts:
-                - name: githubgate-client
-                  mountPath: /opt/githubgate
-                - name: githubgate-token
-                  mountPath: /var/run/secrets/githubgate
-                - name: githubgate-ca
-                  mountPath: /etc/githubgate-ca
               script: |
                 #!/usr/bin/env python3
-                import datetime, json, os, subprocess, sys, urllib.request
-                def github_token(*permissions):
-                    # A short-lived installation token from githubgate, for this
-                    # task's ServiceAccount (ci/project chart's policies). Kept in
-                    # memory only.
-                    args = ["/opt/githubgate/githubgate-client", "token", "--owner", "{{ repo_owner }}", "--repo", "{{ repo_name }}"]
-                    for permission in permissions:
-                        args += ["--permission", permission]
-                    return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+                import datetime, json, os, sys, urllib.request
 
                 try:
                     stages = json.loads(os.environ.get("STAGES", ""))
@@ -265,12 +185,6 @@ spec:
                     sys.exit(1)
                 def iso(seconds):
                     return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                try:
-                    token = github_token("checks=write")
-                except subprocess.CalledProcessError as error:
-                    # No check runs, but the stages' results still decide the run.
-                    print(f"no GitHub token from githubgate: {error.stderr.strip()}", file=sys.stderr)
-                    token = None
                 failed = []
                 for stage in stages:
                     passed = stage["result"] == "passed"
@@ -288,13 +202,11 @@ spec:
                         "details_url": os.environ["DETAILS_URL"],
                         "output": {"title": title, "summary": title, "text": stage.get("report", "")},
                     }
-                    if token is None:
-                        continue
                     request = urllib.request.Request(
                         "https://api.github.com/repos/{{ repo_owner }}/{{ repo_name }}/check-runs",
                         data=json.dumps(body).encode(),
                         method="POST",
-                        headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json"},
+                        headers={"Accept": "application/vnd.github+json"},
                     )
                     # A check run GitHub does not accept is reported, not
                     # fatal: only a failed stage fails the run.

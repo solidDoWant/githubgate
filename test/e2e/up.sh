@@ -2,7 +2,7 @@
 # Prepares the e2e environment on the kind cluster E2E_CLUSTER (default
 # githubgate-e2e, created with test/e2e/kind-config.yaml, ImageVolume on): the
 # server, client and fake GitHub images built for the host architecture and loaded into
-# kind. The tests install the fake GitHub and the chart themselves, because the
+# kind, and cert-manager installed. The tests install the fake GitHub and the chart themselves, because the
 # chart needs its Secrets first. Prints the env file path; it holds the kube
 # context and the image names.
 set -euo pipefail
@@ -99,6 +99,21 @@ if [[ -n "$cluster_pid" ]]; then
 	cluster_pid=""
 	cat "$cluster_log" >&2
 fi
+
+# cert-manager needs none of our images, so install it in the background as
+# soon as the cluster is ready, while the images build. Without ci-kind-config
+# the nodes get their images by import, so that case installs it after the
+# import below.
+cert_manager_pid=""
+cert_manager_log="$work/cert-manager.log"
+install_cert_manager() {
+	log "installing cert-manager (in the background)"
+	E2E_KUBE_CONTEXT="kind-${cluster}" ./test/e2e/install-cert-manager.sh >"$cert_manager_log" 2>&1 &
+	cert_manager_pid=$!
+}
+if [[ "$preload" == 0 ]]; then install_cert_manager; fi
+trap 'stop_cluster; if [[ -n "$cert_manager_pid" ]]; then kill "$cert_manager_pid" 2>/dev/null || true; fi; rm -rf "$work"' EXIT
+
 wait_for_images
 log "loading the images into kind"
 kind load docker-image "$server_image" "$client_image" "$fake_image" --name "$cluster" >&2
@@ -119,6 +134,18 @@ if [[ "$preload" == 1 ]]; then
 	# shellcheck disable=SC2016 # $1 must expand in the child shell, not here
 	xargs -P 4 -I{} bash -c 'import_image "$1"' _ {} <"$work/images" >&2
 fi
+
+if [[ "$preload" == 1 ]]; then install_cert_manager; fi
+log "waiting for cert-manager"
+if ! wait "$cert_manager_pid"; then
+	cert_manager_pid=""
+	cat "$cert_manager_log" >&2
+	log "cert-manager install failed"
+	exit 1
+fi
+cert_manager_pid=""
+cat "$cert_manager_log" >&2
+log "cert-manager ready"
 
 cat >"$env_file" <<ENV
 E2E_CLUSTER=${cluster}

@@ -68,6 +68,18 @@ type RunOptions struct {
 	ReadTimeout    time.Duration
 	IdleTimeout    time.Duration
 	MaxConnections int
+
+	// Proxy, when set, receives the proxy's connections, served with TLS by
+	// ProxyHandler with ProxyTLS. The proxy has no read or write timeout,
+	// so long git transfers aren't cut off.
+	Proxy        net.Listener
+	ProxyHandler http.Handler
+	// ProxyTLS returns the proxy's TLS configuration from the certificate
+	// source its files are watched by.
+	ProxyTLS func(getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *tls.Config
+	// ProxyCertFile and ProxyKeyFile are the proxy's certificate and key,
+	// read again whenever they change.
+	ProxyCertFile, ProxyKeyFile string
 }
 
 // Run serves until ctx ends, then fails /readyz at once, keeps serving for
@@ -95,12 +107,27 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 		options.MaxConnections = maxConnections
 	}
 
+	var proxyWatcher *certwatcher.CertWatcher
+
+	if options.Proxy != nil {
+		if proxyWatcher, err = certwatcher.New(options.ProxyCertFile, options.ProxyKeyFile); err != nil {
+			return fmt.Errorf("loading the proxy's TLS certificate: %w", err)
+		}
+	}
+
 	watchCtx, stopWatching := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopWatching()
 
-	watchDone := make(chan error, 1)
+	watchDone := make(chan error, 2)
+	watchers := 1
 
 	go func() { watchDone <- watcher.Start(watchCtx) }()
+
+	if proxyWatcher != nil {
+		watchers++
+
+		go func() { watchDone <- proxyWatcher.Start(watchCtx) }()
+	}
 
 	api := &http.Server{
 		Handler:           s.Handler(),
@@ -116,10 +143,23 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 		IdleTimeout:       options.IdleTimeout,
 	}
 
-	served := make(chan error, 2)
+	servers := []*http.Server{api, health}
+	served := make(chan error, 3)
 
 	go func() { served <- api.ServeTLS(newLimitListener(options.API, options.MaxConnections), "", "") }()
 	go func() { served <- health.Serve(newLimitListener(options.Health, options.MaxConnections)) }()
+
+	if proxyWatcher != nil {
+		proxy := &http.Server{
+			Handler:           options.ProxyHandler,
+			ReadHeaderTimeout: readHeaderTimeout,
+			IdleTimeout:       options.IdleTimeout,
+			TLSConfig:         options.ProxyTLS(proxyWatcher.GetCertificate),
+		}
+		servers = append(servers, proxy)
+
+		go func() { served <- proxy.ServeTLS(newLimitListener(options.Proxy, options.MaxConnections), "", "") }()
+	}
 
 	var failure error
 
@@ -138,11 +178,16 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 
-	err = errors.Join(api.Shutdown(shutdownCtx), health.Shutdown(shutdownCtx))
+	err = nil
+	for _, server := range servers {
+		err = errors.Join(err, server.Shutdown(shutdownCtx))
+	}
 
 	stopWatching()
 
-	err = errors.Join(err, <-watchDone)
+	for range watchers {
+		err = errors.Join(err, <-watchDone)
+	}
 
 	if failure != nil && !errors.Is(failure, http.ErrServerClosed) {
 		return failure

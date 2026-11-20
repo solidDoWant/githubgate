@@ -11,7 +11,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 2. Nothing a proxied pod receives (bodies, headers, git output) contains an installation token, across the whole e2e suite.
    Tests:
 3. A request with no credential, an invalid ServiceAccount token, or a token with the wrong audience gets `401` and is never sent to GitHub.
-   Tests:
+   Tests: `internal/proxy: TestProxyRefusesUnauthenticatedRequestsWithoutForwarding`
 4. A request for a repository the caller's proxy rules don't cover gets `403` naming the repository, and is never sent to GitHub.
    Tests:
 5. A rule with only `token.enabled` gives nothing through the proxy, and a rule with only `proxy.enabled` gives no token from `/v1/token`.
@@ -21,7 +21,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 7. With `allowOperations` set, only the listed REST operations work; any other is refused naming the operation.
    Tests:
 8. A REST request that matches no operation in GitHub's API description is refused.
-   Tests:
+   Tests: `internal/proxy: TestProxyRefusesUnknownRESTOperations`
 9. GraphQL queries work; a mutation in `denyMutations` is refused naming it; `gh pr create` (the `createPullRequest` mutation) works when allowed.
    Tests:
 10. A GraphQL request that can't be parsed, is a batch (JSON array), has several operations without `operationName`, or hides mutation fields behind fragments is refused.
@@ -35,7 +35,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 14. Downloading a repository archive (a redirect to GitHub's storage) works from a proxied pod.
     Tests:
 15. The proxy serves certificates for exactly the three GitHub hosts; a TLS handshake for any other name fails.
-    Tests:
+    Tests: `internal/proxy: TestProxyServesCertificatesOnlyForTheGitHubHosts`, `internal/server: TestRunServesTheProxyWithItsOwnCertificate`
 16. Killing one of three replicas during a stream of proxied requests causes no failed request beyond the ones in flight.
     Tests:
 17. Every proxied request writes one audit line with namespace, ServiceAccount, repository, operation or mutation, refs for pushes, and the decision, and no token.

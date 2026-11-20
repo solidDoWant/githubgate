@@ -43,6 +43,9 @@ The chart sets these. You need them only to run githubgate yourself.
 - `--leader-elect`: only the elected replica writes status. Needs `POD_NAMESPACE`.
 - `--webhook`, `--webhook-cert-dir`, `--webhook-port`: serve the admission webhook at `/validate` (default port 9443).
 - `--api-address` (`:8443`), `--health-address` (`:8080`), `--github-base-url` (default: api.github.com).
+- `--proxy`: serve proxy mode on `--proxy-address` (default `:9443`). Proxy mode is not finished yet. For now githubgate checks and refuses each request, and sends nothing to GitHub.
+- `--proxy-tls-cert-file`, `--proxy-tls-key-file`: the certificate of the proxy. They are required with `--proxy`. The certificate must name `api.github.com`, `uploads.github.com` and `github.com`. The proxy refuses a TLS connection for any other name. githubgate reads the files again when they change.
+- The webhook and the proxy both use port 9443 by default. If you turn on both, set `--webhook-port` or `--proxy-address` to a different port.
 
 More pages:
 

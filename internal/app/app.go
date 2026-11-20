@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/solidDoWant/githubgate/internal/controller"
 	"github.com/solidDoWant/githubgate/internal/github"
 	"github.com/solidDoWant/githubgate/internal/model"
+	"github.com/solidDoWant/githubgate/internal/proxy"
 	"github.com/solidDoWant/githubgate/internal/server"
 	"github.com/solidDoWant/githubgate/internal/webhook"
 )
@@ -43,6 +45,7 @@ const (
 	leaderElectionID     = "githubgate.githubgate.soliddowant.dev"
 	webhookPath          = "/validate"
 	webhookPort          = 9443
+	defaultProxyAddress  = ":9443"
 	defaultShutdownDelay = 5 * time.Second
 )
 
@@ -60,14 +63,21 @@ type Config struct {
 	APIAddress      string
 	HealthAddress   string
 	GitHubBaseURL   string
+	// Proxy turns on proxy mode's listener on ProxyAddress, served with
+	// the certificate in ProxyCertFile and ProxyKeyFile.
+	Proxy         bool
+	ProxyAddress  string
+	ProxyCertFile string
+	ProxyKeyFile  string
 	// Namespace is the server's own namespace: the default admin namespace
 	// and where the leader lease lives.
 	Namespace string
 
 	// RestConfig is the cluster connection; the in-cluster or kubeconfig one when nil.
 	RestConfig *rest.Config
-	// API and Health replace the listeners opened on the addresses when set.
-	API, Health net.Listener
+	// API, Health and ProxyListener replace the listeners opened on the
+	// addresses when set.
+	API, Health, ProxyListener net.Listener
 	// Gatherer is where metrics are registered and what /metrics serves; a
 	// fresh registry when nil.
 	Gatherer Registry
@@ -98,6 +108,10 @@ func ParseFlags(args []string, getenv func(string) string) (Config, error) {
 	flags.DurationVar(&config.ShutdownDelay, "shutdown-delay", defaultShutdownDelay, "how long to keep serving after SIGTERM while /readyz fails")
 	flags.StringVar(&config.APIAddress, "api-address", ":8443", "address of the token API")
 	flags.StringVar(&config.HealthAddress, "health-address", ":8080", "address of /healthz, /readyz and /metrics")
+	flags.BoolVar(&config.Proxy, "proxy", false, "serve proxy mode")
+	flags.StringVar(&config.ProxyAddress, "proxy-address", defaultProxyAddress, "address of the proxy")
+	flags.StringVar(&config.ProxyCertFile, "proxy-tls-cert-file", "", "certificate of the proxy, for api.github.com, uploads.github.com and github.com")
+	flags.StringVar(&config.ProxyKeyFile, "proxy-tls-key-file", "", "private key of the proxy")
 	flags.StringVar(&config.GitHubBaseURL, "github-base-url", "", "GitHub REST API root (default api.github.com)")
 
 	if err := flags.Parse(args); err != nil {
@@ -127,6 +141,10 @@ func (c Config) validate() error {
 		return errors.New("--webhook needs --webhook-cert-dir")
 	case c.LeaderElect && c.Namespace == "":
 		return errors.New("--leader-elect needs POD_NAMESPACE")
+	case c.Proxy && (c.ProxyCertFile == "" || c.ProxyKeyFile == ""):
+		return errors.New("--proxy needs --proxy-tls-cert-file and --proxy-tls-key-file")
+	case c.Proxy && c.Webhook && c.ProxyListener == nil && samePort(c.ProxyAddress, c.WebhookPort):
+		return errors.New("--proxy-address and --webhook-port use the same port")
 	}
 
 	return nil
@@ -141,6 +159,12 @@ func Run(ctx context.Context, config Config) error {
 	// Fail before touching the cluster when the TLS files are unusable.
 	if _, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile); err != nil {
 		return fmt.Errorf("loading the TLS files %s and %s: %w", config.CertFile, config.KeyFile, err)
+	}
+
+	if config.Proxy {
+		if _, err := tls.LoadX509KeyPair(config.ProxyCertFile, config.ProxyKeyFile); err != nil {
+			return fmt.Errorf("loading the proxy's TLS files %s and %s: %w", config.ProxyCertFile, config.ProxyKeyFile, err)
+		}
 	}
 
 	restConfig := config.RestConfig
@@ -232,6 +256,21 @@ func Run(ctx context.Context, config Config) error {
 		Audit:         slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	})
 
+	runOptions := server.RunOptions{
+		API: api, Health: health, CertFile: config.CertFile, KeyFile: config.KeyFile,
+		ShutdownDelay: config.ShutdownDelay, Gatherer: gatherer,
+	}
+
+	if config.Proxy {
+		if runOptions.Proxy, err = proxyListener(config); err != nil {
+			return errors.Join(err, api.Close(), health.Close())
+		}
+
+		runOptions.ProxyHandler = proxy.NewHandler(proxy.Options{Authenticator: authenticator, Ready: store.Ready})
+		runOptions.ProxyTLS = proxy.TLSConfig
+		runOptions.ProxyCertFile, runOptions.ProxyKeyFile = config.ProxyCertFile, config.ProxyKeyFile
+	}
+
 	// The manager outlives the servers' shutdown delay, so the snapshot
 	// keeps updating while /readyz already fails.
 	managerCtx, stopManager := context.WithCancel(context.WithoutCancel(ctx))
@@ -241,10 +280,7 @@ func Run(ctx context.Context, config Config) error {
 	group.Go(func() error {
 		defer stopManager()
 
-		return srv.Run(groupCtx, server.RunOptions{
-			API: api, Health: health, CertFile: config.CertFile, KeyFile: config.KeyFile,
-			ShutdownDelay: config.ShutdownDelay, Gatherer: gatherer,
-		})
+		return srv.Run(groupCtx, runOptions)
 	})
 	group.Go(func() error {
 		err := manager.Start(managerCtx)
@@ -276,6 +312,26 @@ func listeners(config Config) (api, health net.Listener, err error) {
 	}
 
 	return api, health, nil
+}
+
+func proxyListener(config Config) (net.Listener, error) {
+	if config.ProxyListener != nil {
+		return config.ProxyListener, nil
+	}
+
+	listener, err := net.Listen("tcp", config.ProxyAddress)
+	if err != nil {
+		return nil, fmt.Errorf("listening on %s: %w", config.ProxyAddress, err)
+	}
+
+	return listener, nil
+}
+
+// samePort reports whether address listens on port.
+func samePort(address string, port int) bool {
+	_, value, err := net.SplitHostPort(address)
+
+	return err == nil && value == strconv.Itoa(port)
 }
 
 // installationReader gives the webhook the installations the manager's cache holds.

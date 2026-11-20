@@ -130,6 +130,7 @@ func Run(ctx context.Context, options Options) error {
 
 	go func() {
 		defer close(joinDone)
+
 		joined.run(joinCtx, options.JoinInterval, options.Logger)
 	}()
 

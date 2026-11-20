@@ -39,6 +39,6 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Live and docs
 
 14. **Live:** scenarios 1, 2 and 4 pass on github.com, with the interception, the proxy and the token API in-process.
-    Tests:
+    Tests: `test/live: TestLiveInterceptionAgainstGitHub`
 15. **Docs:** a user page shows how to opt a namespace in and what a pod then gets; an admin page shows how to turn the injection webhook on and how to use the NixOS module in a VM image.
     Tests:

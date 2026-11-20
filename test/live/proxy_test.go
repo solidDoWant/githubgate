@@ -47,6 +47,17 @@ type proxyEnv struct {
 func (l *liveEnv) startProxy(t *testing.T) proxyEnv {
 	t.Helper()
 
+	listener, caFile := l.serveProxy(t, "127.0.0.1:0", nil)
+
+	return l.tunnelTo(t, listener, caFile)
+}
+
+// serveProxy starts the in-process proxy on address with a certificate for the
+// GitHub hosts and returns its listener and the file holding its CA. observe,
+// when set, sees every request the proxy receives before it decides.
+func (l *liveEnv) serveProxy(t *testing.T, address string, observe func(*http.Request)) (net.Listener, string) {
+	t.Helper()
+
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
@@ -79,13 +90,21 @@ func (l *liveEnv) startProxy(t *testing.T) proxyEnv {
 	})
 	require.NoError(t, err)
 
-	handler := proxy.NewHandler(proxy.Options{
+	var handler http.Handler = proxy.NewHandler(proxy.Options{
 		Authenticator: recordingAuthenticator{},
 		Forwarder:     forwarder,
 		Audit:         slog.New(slog.NewJSONHandler(l.log, nil)),
 	})
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if observe != nil {
+		inner := handler
+		handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			observe(request)
+			inner.ServeHTTP(writer, request)
+		})
+	}
+
+	listener, err := net.Listen("tcp", address)
 	require.NoError(t, err)
 
 	proxyServer := &http.Server{
@@ -97,6 +116,13 @@ func (l *liveEnv) startProxy(t *testing.T) proxyEnv {
 	go func() { _ = proxyServer.ServeTLS(listener, "", "") }()
 
 	t.Cleanup(func() { _ = proxyServer.Close() })
+
+	return listener, caFile
+}
+
+// tunnelTo returns a CONNECT tunnel that sends every connection to listener.
+func (l *liveEnv) tunnelTo(t *testing.T, listener net.Listener, caFile string) proxyEnv {
+	t.Helper()
 
 	tunnel := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodConnect {

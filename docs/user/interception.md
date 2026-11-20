@@ -83,6 +83,10 @@ githubgate refuses to create a pod it cannot make safe. The error starts with `g
 
 If a pod is not created and the message says `injection isn't configured`, tell your admin. See [Set up interception](../admin/interception-setup.md).
 
+## Signed commits
+
+`git push` works with no setup, but its commits are not signed. To publish commits that GitHub signs, run `githubgate-client push --intercepted`. See [the client](client.md). Your rule needs `contents: write`, and the branch must match its `pushRefs`.
+
 ## What interception does not cover
 
 - A tool that resolves names without `/etc/hosts` does not reach the helper.

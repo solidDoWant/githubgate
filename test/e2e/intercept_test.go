@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -332,6 +333,41 @@ curl -sS -f -L -o /tmp/archive.tar -w 'archive status=%%{http_code} redirects=%%
 			assert.Contains(t, out, "release-asset-bytes")
 			assert.Contains(t, out, "archive status=200 redirects=1")
 		})
+	})
+
+	t.Run("githubgate-client push in an intercepted pod publishes inside pushRefs and refuses outside it", func(t *testing.T) {
+		c.startInterceptPod(t, interceptPod{
+			name: "signer", namespace: interceptNamespace,
+			spec: fmt.Sprintf("  volumes:\n    - name: client\n      image: {reference: %s, pullPolicy: IfNotPresent}\n", c.clientImage),
+			containers: []interceptContainer{{
+				name: "main", script: "sleep infinity",
+				extra: "      volumeMounts:\n        - {name: client, mountPath: /opt/client, readOnly: true}\n",
+			}},
+		})
+
+		out, err := c.exec(ctx, interceptNamespace, "signer", fmt.Sprintf(`export PATH=%s:$PATH GIT_TERMINAL_PROMPT=0
+set -e
+git config --global user.name e2e
+git config --global user.email e2e@example.com
+rm -rf /tmp/signer
+git clone -q https://github.com/%s/%s.git /tmp/signer
+cd /tmp/signer
+git checkout -q -b agent/signed-%d
+echo signed >signed.txt
+git add signed.txt
+git commit -q -m "signed through the interceptor"
+githubgate-client push --intercepted
+test "$(git ls-remote origin refs/heads/agent/signed-%d | cut -f1)" = "$(git rev-parse HEAD)"
+git checkout -q -b outside-%d
+echo outside >outside.txt
+git add outside.txt
+git commit -q -m "outside pushRefs"
+if githubgate-client push --intercepted 2>&1; then echo "published outside pushRefs"; exit 1; fi
+if [ -n "$(git ls-remote origin refs/heads/outside-%d)" ]; then echo "outside reached GitHub"; exit 1; fi
+`, path.Dir(clientBinary), owner, repository, run, run, run, run))
+		require.NoError(t, err, out)
+		assert.Contains(t, out, "published 1 commit(s)")
+		assert.Contains(t, out, "pushRefs")
 	})
 
 	t.Run("a credential the pod brings never reaches GitHub", func(t *testing.T) {

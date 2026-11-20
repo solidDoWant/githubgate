@@ -31,15 +31,28 @@ type changedFile struct {
 // runPush re-creates the local commits that the remote branch lacks through
 // the Git Database API, with no author or committer so GitHub signs them, and
 // moves the remote branch once without force. With --proxy the requests go
-// through the proxy with the ServiceAccount token.
+// through the proxy with the ServiceAccount token. With --intercepted the
+// requests go to the GitHub API host with no credential: the interceptor of
+// the pod adds the ServiceAccount token.
 func runPush(ctx context.Context, env *environment, args []string) error {
-	proxy := len(args) > 0 && args[0] == "--proxy"
-	if proxy {
+	var proxy, intercepted bool
+
+	for len(args) > 0 && (args[0] == "--proxy" || args[0] == "--intercepted") {
+		if args[0] == "--proxy" {
+			proxy = true
+		} else {
+			intercepted = true
+		}
+
 		args = args[1:]
 	}
 
+	if proxy && intercepted {
+		return errors.New("push: --proxy and --intercepted cannot be used together")
+	}
+
 	if len(args) > 2 {
-		return errors.New("usage: push [--proxy] [<remote> [<branch>]]")
+		return errors.New("usage: push [--proxy | --intercepted] [<remote> [<branch>]]")
 	}
 
 	remote := "origin"
@@ -103,7 +116,7 @@ func runPush(ctx context.Context, env *environment, args []string) error {
 		}
 	}
 
-	api, err := newGitHubAPI(ctx, env, owner, name, proxy)
+	api, err := newGitHubAPI(ctx, env, owner, name, proxy, intercepted)
 	if err != nil {
 		return err
 	}
@@ -326,7 +339,7 @@ type githubAPI struct {
 	token  string
 }
 
-func newGitHubAPI(ctx context.Context, env *environment, owner, name string, proxy bool) (*githubAPI, error) {
+func newGitHubAPI(ctx context.Context, env *environment, owner, name string, proxy, intercepted bool) (*githubAPI, error) {
 	root := env.getenv("GITHUBGATE_GITHUB_API_URL")
 	if root == "" {
 		root = "https://api.github.com"
@@ -340,6 +353,18 @@ func newGitHubAPI(ctx context.Context, env *environment, owner, name string, pro
 	api := &githubAPI{
 		root: strings.TrimSuffix(parsed.String(), "/"),
 		repo: "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name),
+	}
+
+	if intercepted {
+		// No credential is sent: the interceptor of the pod adds the
+		// ServiceAccount token. The default transport trusts the interceptor
+		// through SSL_CERT_FILE.
+		api.client = &http.Client{
+			Timeout:       requestTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
+
+		return api, nil
 	}
 
 	if proxy {
@@ -419,7 +444,10 @@ func (a *githubAPI) do(ctx context.Context, method, path string, body any, out a
 		return err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+a.token)
+	if a.token != "" {
+		req.Header.Set("Authorization", "Bearer "+a.token)
+	}
+
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 

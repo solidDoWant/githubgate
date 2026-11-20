@@ -174,3 +174,7 @@ The interceptor's variables are prefixed `GITHUBGATE_INTERCEPT_`. Phase 2's clie
 2. chart (flags, values, ConfigMaps, webhook config) and the e2e harness (needs 1)
 3. pod-level opt-in, the `listen` annotation and `IP_FREEBIND` (needs 1)
 4. docs, live
+
+## `push --intercepted`
+
+`githubgate-client push --intercepted` publishes signed commits from an intercepted pod. The workload chooses it explicitly; the client never guesses from the environment, so a wrong guess can't send a credential anywhere. The client sends the Git Database requests to `GITHUBGATE_GITHUB_API_URL` (default `https://api.github.com`) with **no `Authorization` header**, using the default HTTP client, which trusts the interceptor through `SSL_CERT_FILE`. The interceptor adds the ServiceAccount token and the proxy applies `pushRefs` to `git/create-ref` and `git/update-ref`. The client reads no ServiceAccount or installation token in this mode. `--intercepted` and `--proxy` exclude each other. Behaviour without the flag is unchanged.

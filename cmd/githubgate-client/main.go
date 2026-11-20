@@ -22,7 +22,7 @@ commands:
   token [--repo name] [--owner owner] [--permission name=level]... [--installation ns/name]
   git-credential [--proxy] get|store|erase
   gh [--repo owner/name | --proxy] -- <gh args>
-  push [--proxy] [<remote> [<branch>]]
+  push [--proxy | --intercepted] [<remote> [<branch>]]
   configure [--proxy]
   intercept [--listen addr] [--proxy-address host:port] [--proxy-ca pem|@file] [--token-file path]
             [--trust-dir dir] [--state-dir dir] [--base-bundle file] [--extra-ca pem|@file]... [--join container/VAR=path]... [--probe]

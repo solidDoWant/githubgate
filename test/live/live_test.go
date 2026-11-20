@@ -46,6 +46,7 @@ const (
 	buildAccount    = "ci-build"
 	releaseAccount  = "ci-release"
 	apiRoot         = "https://api.github.com"
+	clientBinary    = "githubgate-client"
 )
 
 // transcript is everything the test prints, token requests' answers and the
@@ -243,7 +244,7 @@ func setup(t *testing.T) *liveEnv {
 	live.bin = filepath.Join(live.tmp, "bin")
 	require.NoError(t, os.MkdirAll(live.bin, 0o700))
 
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(live.bin, "githubgate-client"), "github.com/solidDoWant/githubgate/cmd/githubgate-client")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(live.bin, clientBinary), "github.com/solidDoWant/githubgate/cmd/githubgate-client")
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, string(out))
 
@@ -278,6 +279,12 @@ func (l *liveEnv) env(account string) []string {
 func (l *liveEnv) run(t *testing.T, account, dir string, name string, args ...string) (string, error) {
 	t.Helper()
 
+	// exec resolves a bare name with the test process's PATH, not the
+	// command's, so the client built into the bin directory is named by path.
+	if name == clientBinary {
+		name = filepath.Join(l.bin, clientBinary)
+	}
+
 	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), name, args...)
 	cmd.Dir = dir
 	cmd.Env = l.env(account)
@@ -303,7 +310,7 @@ func (l *liveEnv) requestToken(t *testing.T, account string, body any) tokenResu
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, l.srv.URL+"/v1/token", bytes.NewReader(data))
+	request, err := http.NewRequestWithContext(context.WithoutCancel(t.Context()), http.MethodPost, l.srv.URL+"/v1/token", bytes.NewReader(data))
 	require.NoError(t, err)
 	request.Header.Set("Authorization", "Bearer "+tenantNamespace+"/"+account)
 
@@ -464,7 +471,7 @@ func TestLiveAgainstGitHub(t *testing.T) {
 	})
 
 	t.Run("git clone, fetch and push work after configure with no other setup", func(t *testing.T) {
-		_, err := live.run(t, buildAccount, live.tmp, "githubgate-client", "configure")
+		_, err := live.run(t, buildAccount, live.tmp, clientBinary, "configure")
 		require.NoError(t, err)
 
 		work := filepath.Join(live.tmp, "work")
@@ -497,7 +504,7 @@ func TestLiveAgainstGitHub(t *testing.T) {
 
 	t.Run("gh issue comment works through the client", func(t *testing.T) {
 		title := unique(t)
-		out, err := live.run(t, releaseAccount, live.tmp, "githubgate-client", "gh", "--repo", live.owner+"/"+live.repo, "--",
+		out, err := live.run(t, releaseAccount, live.tmp, clientBinary, "gh", "--repo", live.owner+"/"+live.repo, "--",
 			"issue", "create", "--repo", live.owner+"/"+live.repo, "--title", title, "--body", "githubgate live test")
 		require.NoError(t, err)
 
@@ -507,11 +514,11 @@ func TestLiveAgainstGitHub(t *testing.T) {
 
 		// Issues cannot be deleted, so the test closes the one it opened.
 		t.Cleanup(func() {
-			_, _ = live.run(t, releaseAccount, live.tmp, "githubgate-client", "gh", "--repo", live.owner+"/"+live.repo, "--",
+			_, _ = live.run(t, releaseAccount, live.tmp, clientBinary, "gh", "--repo", live.owner+"/"+live.repo, "--",
 				"issue", "close", issue)
 		})
 
-		_, err = live.run(t, releaseAccount, live.tmp, "githubgate-client", "gh", "--repo", live.owner+"/"+live.repo, "--",
+		_, err = live.run(t, releaseAccount, live.tmp, clientBinary, "gh", "--repo", live.owner+"/"+live.repo, "--",
 			"issue", "comment", issue, "--body", "githubgate live test comment")
 		require.NoError(t, err)
 	})

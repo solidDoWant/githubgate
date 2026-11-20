@@ -4,6 +4,11 @@
 #
 #   scripts/test-fuzz.sh package:FuzzName...
 #
+# Minimizing a new interesting input stops all workers from fuzzing and may
+# take up to 60 s by default, which is most of FUZZTIME. FUZZ_MINIMIZE_TIME
+# (2s) bounds it. A crashing input is still saved to testdata/fuzz, minimized
+# only as far as that time allows.
+#
 # Go's fuzz coordinator can time out on a stalled worker under CPU contention
 # ("context deadline exceeded") without finding a crash. A target that fails
 # that way and saved no failing input is run once more; any other failure
@@ -12,12 +17,13 @@ set -u
 
 fuzztime="${FUZZTIME:-30s}"
 workers="${FUZZ_PARALLEL:-4}"
+minimize="${FUZZ_MINIMIZE_TIME:-2s}"
 logdir=$(mktemp -d)
 trap 'rm -rf "$logdir"' EXIT
 
 run_target() {
 	local target="$1" log="$2"
-	go test -run '^$' -fuzz "^${target#*:}\$" -fuzztime "$fuzztime" -parallel "$workers" "${target%%:*}" >"$log" 2>&1
+	go test -run '^$' -fuzz "^${target#*:}\$" -fuzztime "$fuzztime" -parallel "$workers" -fuzzminimizetime "$minimize" "${target%%:*}" >"$log" 2>&1
 }
 
 fuzz_one() {

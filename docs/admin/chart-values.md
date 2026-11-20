@@ -23,6 +23,10 @@ For: admins who install githubgate with its Helm chart.
 | `proxy.ca.name` | `""` | Name of the cert-manager Issuer or ClusterIssuer that signs the proxy certificate. Use the admin's name-constrained CA (permitted subtree `github.com`). Required when `proxy.enabled` is true. |
 | `proxy.ca.kind` | `Issuer` | Kind of the issuer. |
 | `proxy.ca.group` | `cert-manager.io` | API group of the issuer. |
+| `proxy.upstreams.api` | `""` | Where proxied `api.github.com` requests go. Empty means `https://api.github.com`. |
+| `proxy.upstreams.uploads` | `""` | Where proxied `uploads.github.com` requests go. Empty means `https://uploads.github.com`. |
+| `proxy.upstreams.git` | `""` | Where proxied `github.com` git requests go. Empty means `https://github.com`. |
+| `proxy.upstreams.caConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds extra CA certificates the upstreams may use. Empty means only the system CAs. |
 | `certificate.caConfigMapName` | `githubgate-ca` | Name of the ConfigMap that publishes the CA for clients. |
 | `certificate.caDurationDays` | `3650` | Validity of the generated CA, in days. |
 | `certificate.duration` | `2160h` | Validity of the serving certificates. |
@@ -47,6 +51,6 @@ For: admins who install githubgate with its Helm chart.
 | `securityContext.readOnlyRootFilesystem` | `true` | Mount the container's root filesystem read-only. |
 | `securityContext.capabilities.drop` | `["ALL"]` | Linux capabilities dropped from the container. |
 | `podAnnotations` | `{}` | Pod annotations. |
-| `nodeSelector` | `{}` | Node selector. |
+| `hostAliases` | `[]` | Extra `/etc/hosts` entries for the server pods (pod `hostAliases`). |
 | `tolerations` | `[]` | Tolerations. |
 | `affinity` | `{}` | Affinity rules. |

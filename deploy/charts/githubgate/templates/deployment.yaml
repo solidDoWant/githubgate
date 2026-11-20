@@ -47,6 +47,18 @@ spec:
             - --proxy
             - --proxy-tls-cert-file=/var/run/githubgate/proxy/tls.crt
             - --proxy-tls-key-file=/var/run/githubgate/proxy/tls.key
+            {{- with .Values.proxy.upstreams.api }}
+            - --proxy-upstream-api={{ . }}
+            {{- end }}
+            {{- with .Values.proxy.upstreams.uploads }}
+            - --proxy-upstream-uploads={{ . }}
+            {{- end }}
+            {{- with .Values.proxy.upstreams.git }}
+            - --proxy-upstream-git={{ . }}
+            {{- end }}
+            {{- if .Values.proxy.upstreams.caConfigMap }}
+            - --proxy-upstream-ca-file=/var/run/githubgate/upstream-ca/ca.crt
+            {{- end }}
             {{- end }}
           env:
             - name: POD_NAMESPACE
@@ -87,6 +99,11 @@ spec:
             - name: proxy-tls
               mountPath: /var/run/githubgate/proxy
               readOnly: true
+            {{- if .Values.proxy.upstreams.caConfigMap }}
+            - name: upstream-ca
+              mountPath: /var/run/githubgate/upstream-ca
+              readOnly: true
+            {{- end }}
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -105,7 +122,16 @@ spec:
         - name: proxy-tls
           secret:
             secretName: {{ include "githubgate.fullname" . }}-proxy-tls
+        {{- if .Values.proxy.upstreams.caConfigMap }}
+        - name: upstream-ca
+          configMap:
+            name: {{ .Values.proxy.upstreams.caConfigMap }}
         {{- end }}
+        {{- end }}
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

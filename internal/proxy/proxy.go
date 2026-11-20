@@ -7,7 +7,9 @@ package proxy
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/solidDoWant/githubgate/internal/auth"
 )
@@ -43,6 +45,12 @@ type Options struct {
 	// Forwarder receives every classified request. When nil, classified
 	// requests are refused with 503, so nothing is ever forwarded.
 	Forwarder Forwarder
+	// Audit receives one line for each request the handler refuses itself;
+	// the Forwarder writes the line of the others. Discarded when nil.
+	Audit *slog.Logger
+	// Count, when set, is called once for each request the handler refuses
+	// itself, with the status the caller got.
+	Count func(decision string, status int)
 }
 
 // Handler serves the proxy.
@@ -52,12 +60,32 @@ type Handler struct {
 
 // NewHandler returns the proxy's handler.
 func NewHandler(options Options) *Handler {
+	if options.Audit == nil {
+		options.Audit = slog.New(slog.DiscardHandler)
+	}
+
 	return &Handler{options: options}
 }
 
 // ServeHTTP checks the Host, authenticates the caller and classifies the
 // request before handing it to the Forwarder.
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	started := time.Now()
+
+	var (
+		host   string
+		caller auth.Identity
+	)
+
+	writeRefusal := func(writer http.ResponseWriter, host string, graphQL bool, failure *refusal) {
+		writeRefusal(writer, host, graphQL, failure)
+		auditRefusal(request.Context(), h.options.Audit, started, caller, host, request, failure)
+
+		if h.options.Count != nil {
+			h.options.Count("refused", failure.status)
+		}
+	}
+
 	host, err := canonicalHost(request.Host)
 	if err != nil {
 		writeRefusal(writer, "", false, refuse(http.StatusMisdirectedRequest, codeMisdirected,
@@ -74,7 +102,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	caller, err := h.options.Authenticator.Authenticate(request.Context(), request)
+	caller, err = h.options.Authenticator.Authenticate(request.Context(), request)
 
 	switch {
 	case errors.Is(err, auth.ErrUnavailable):

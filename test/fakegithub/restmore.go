@@ -128,7 +128,12 @@ func (s *Server) handleArchive(format string) repoHandler {
 		raw := make([]byte, 8)
 		_, _ = rand.Read(raw)
 
-		target := fmt.Sprintf("%s/_storage/%s/%s/%s?format=%s&sig=%s", hostURL(request), owner, name, ref, format, hex.EncodeToString(raw))
+		base := hostURL(request)
+		if request.TLS != nil && request.Host == "api.github.com" {
+			base = "https://" + StorageHost
+		}
+
+		target := fmt.Sprintf("%s/_storage/%s/%s/%s?format=%s&sig=%s", base, owner, name, ref, format, hex.EncodeToString(raw))
 		http.Redirect(writer, request, target, http.StatusFound)
 	}
 }

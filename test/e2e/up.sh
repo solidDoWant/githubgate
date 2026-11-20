@@ -26,6 +26,11 @@ log() { echo "e2e-up: [+$((SECONDS - start))s] $*" >&2; }
 # The cluster needs nothing from the image builds and the builds need nothing
 # from the cluster, so create it in the background while the images build. Only
 # the image load needs both.
+# Prefixes each line with the seconds since the script started, so the log
+# shows where kind's own steps spend their time.
+timestamp_lines() {
+	while IFS= read -r line; do echo "[+$((SECONDS - start))s] $line"; done
+}
 ci_kind_config=/run/ci-kind/bin/ci-kind-config
 cluster_pid=""
 cluster_log="$work/cluster.log"
@@ -34,9 +39,9 @@ if ! kind get clusters 2>/dev/null | grep -qx "$cluster"; then
 	if [[ -x "$ci_kind_config" ]]; then
 		# ci-kind-config keeps each node's image store between builds, keyed by
 		# the cluster name, so it takes the name and image instead of kind.
-		{ "$ci_kind_config" --name "$cluster" --image "$node_image" test/e2e/kind-config.yaml | kind create cluster --config=- --wait 120s; } >"$cluster_log" 2>&1 &
+		{ "$ci_kind_config" --name "$cluster" --image "$node_image" test/e2e/kind-config.yaml | kind create cluster -v 1 --config=- --wait 120s; } 2>&1 | timestamp_lines >"$cluster_log" &
 	else
-		kind create cluster --name "$cluster" --image "$node_image" --config test/e2e/kind-config.yaml --wait 120s >"$cluster_log" 2>&1 &
+		kind create cluster -v 1 --name "$cluster" --image "$node_image" --config test/e2e/kind-config.yaml --wait 120s 2>&1 | timestamp_lines >"$cluster_log" &
 	fi
 	cluster_pid=$!
 fi

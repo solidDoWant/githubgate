@@ -191,17 +191,19 @@ for stage in $stages; do
 	*) other_stages="$other_stages $stage" ;;
 	esac
 done
-for stage in $other_stages; do
-	start_stage "$stage"
-done
+# The e2e stage goes first, so its kind cluster starts before the CPU-heavy
+# stages (race tests, fuzzers, linters) compete for the cores.
 if [ -n "$e2e_stages" ]; then
 	rm -f "$out/e2e-images.exit"
 	E2E_IMAGES_EXIT_FILE="$out/e2e-images.exit"
 	E2E_IMAGES_LOG="$out/e2e-images.log"
 	export E2E_IMAGES_EXIT_FILE E2E_IMAGES_LOG
-	start_stage e2e-images
 	for stage in $e2e_stages; do start_stage "$stage"; done
+	start_stage e2e-images
 fi
+for stage in $other_stages; do
+	start_stage "$stage"
+done
 echo "started after $(elapsed)s: $stages"
 
 # Prints each passed stage's log as one block as soon as it ends, and the

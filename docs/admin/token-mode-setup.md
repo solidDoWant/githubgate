@@ -6,13 +6,62 @@ This page walks through the setup: the chart, a GitHub App, its installation wit
 
 ## 1. Install githubgate
 
-Install the chart in the namespace that holds your admin objects. The chart creates a certificate authority (CA), a serving certificate (cert-manager is required) and a ConfigMap `githubgate-ca` that holds the CA for clients.
+Install the chart in the namespace that holds your admin objects.
 
 ```
 helm install githubgate deploy/charts/githubgate --namespace githubgate --create-namespace
 ```
 
 Set `adminNamespaces` to the namespaces where you will create `GitHubApp` and `GitHubInstallation` objects. The default is the release namespace. githubgate reads Secrets only there. It ignores these two kinds anywhere else. Set `webhook.enabled` to reject them at creation instead. See [chart values](chart-values.md).
+
+### Certificates
+
+githubgate serves TLS (encrypted HTTP) with certificates that it reads from Secrets. Each Secret holds `tls.crt` and `tls.key`. githubgate reads a Secret again when it changes. githubgate never makes a certificate itself. You choose one of two modes.
+
+In the default mode, `certManager.enabled: true`, cert-manager makes the certificates. You must install cert-manager first. The chart creates these objects:
+
+- A certificate authority (CA), as a cert-manager `Certificate` with its key in the Secret `<release name>-ca`. A CA is the certificate that signs the server certificates. Name constraints limit it to the names `githubgate.<namespace>.svc` and `githubgate.<namespace>.svc.cluster.local`.
+- The certificate of the token API, signed by that CA, in the Secret `<release name>-tls`.
+- The certificate of the webhook server, if a webhook is on. cert-manager's cainjector puts the CA in the `caBundle` of the webhook configurations.
+- The proxy certificate, if proxy mode is on. The issuer that you name in `proxy.ca` signs it. See [Set up proxy mode](proxy-mode-setup.md).
+
+No key or certificate is in the rendered manifests or in the Helm release.
+
+In the existing-Secret mode, `certManager.enabled: false`, you make each certificate and put it in a Secret in the release namespace. The chart then creates no Issuer, no `Certificate` and no Secret.
+
+```yaml
+certManager:
+  enabled: false
+tls:
+  existingSecret: githubgate-api-tls # tls.crt and tls.key for githubgate.<namespace>.svc
+webhook:
+  enabled: true
+  existingSecret: githubgate-webhook-tls
+  caBundle: LS0tLS1CRUdJTi... # base64 PEM of the CA that signs the webhook certificate
+proxy:
+  existingSecret: githubgate-proxy-tls # tls.crt, tls.key and ca.crt, when proxy.enabled is true
+```
+
+| Value | Meaning |
+|---|---|
+| `tls.existingSecret` | The Secret with the certificate of the token API. Required in this mode. |
+| `webhook.existingSecret` | The Secret with the certificate of the webhook server. Required when `webhook.enabled` or `inject.enabled` is true. |
+| `webhook.caBundle` | The CA of the webhook certificate, as base64 PEM. The chart puts it in `caBundle`. |
+| `webhook.annotations` | Annotations on the webhook configurations. Use it instead of `webhook.caBundle` if cert-manager's cainjector keeps `caBundle` current, for example `cert-manager.io/inject-ca-from: githubgate/my-webhook-certificate`. |
+| `proxy.existingSecret` | The Secret with the proxy certificate. Required when `proxy.enabled` is true. |
+
+In this mode, the chart needs `webhook.caBundle` or `webhook.annotations` for a webhook. Without one of them, the API server cannot trust the webhook, so the chart refuses to render. You can also give one Secret in the default mode, for example only `tls.existingSecret`. cert-manager then makes the other certificates.
+
+### Give the CA to clients
+
+Clients need the CA of the token API to trust githubgate. They mount it from a ConfigMap at `/var/run/secrets/githubgate/ca.crt`. You must put that ConfigMap in each client namespace, for example with trust-manager or Kyverno.
+
+- In the default mode, the CA is in the Secret `<release name>-ca`, key `ca.crt`. Copy only `ca.crt`. Do not copy `tls.key`.
+- In the existing-Secret mode, use the CA that signed `tls.existingSecret`.
+
+The chart can also create a ConfigMap with the CA in the release namespace. Set `certificate.caConfigMap.create: true` and put the CA as PEM in `certificate.caBundle`. The ConfigMap is named `githubgate-ca` (`certificate.caConfigMap.name`). The chart never fills it from a Secret.
+
+If the CA changes, update the ConfigMaps. Clients that already read the old CA must read the new one again, so restart them.
 
 ## 2. Create a GitHub App
 

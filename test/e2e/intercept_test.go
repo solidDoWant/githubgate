@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -52,18 +51,12 @@ func (c cluster) installBase(t *testing.T) {
 	c.configure(t)
 }
 
-// enableInjection turns the injection webhook on, with the proxy's CA and the
-// fake's test CA for the injected pods.
+// enableInjection turns the injection webhook on, with the proxy's CA (from
+// the proxy certificate's Secret) and the fake's test CA for the injected pods.
 func (c cluster) enableInjection(t *testing.T) {
 	t.Helper()
 
 	require.NotEmpty(t, c.clientDigest, "E2E_CLIENT_IMAGE_DIGEST is set by test/e2e/up.sh")
-
-	encoded := c.kubectl(t, "", "get", "secret", "proxy-ca-root", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
-	proxyCA, err := base64.StdEncoding.DecodeString(encoded)
-	require.NoError(t, err)
-
-	c.applyConfigMap(t, gateNamespace, "inject-proxy-ca", string(proxyCA))
 
 	repo, tag, _ := strings.Cut(c.serverImage, ":")
 	clientRepo, _ := splitImage(c.clientImage)
@@ -72,7 +65,6 @@ func (c cluster) enableInjection(t *testing.T) {
 		"--namespace", gateNamespace, "--reuse-values", "--set", "image.repository="+repo, "--set", "image.tag="+tag,
 		"--set", "inject.enabled=true",
 		"--set", "inject.image.repository="+clientRepo, "--set", "inject.image.digest="+c.clientDigest,
-		"--set", "inject.proxyCAConfigMap=inject-proxy-ca",
 		"--set", "inject.extraCAConfigMap=fake-github-ca",
 		"--wait", "--timeout", "4m")
 

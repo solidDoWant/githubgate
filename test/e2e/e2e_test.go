@@ -537,9 +537,13 @@ func TestTokenModeOnKind(t *testing.T) {
 
 	keyPEM := c.configure(t)
 
-	// The ca ConfigMap must exist in the callers' namespace before the pods start.
-	ca := c.kubectl(t, "", "get", "configmap", "githubgate-ca", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
-	c.kubectl(t, ca, "create", "configmap", "githubgate-ca", "-n", callerNamespace, "--from-file=ca.crt=/dev/stdin")
+	// The ca ConfigMap must exist in the callers' namespace before the pods
+	// start. cert-manager keeps the token API's CA in the Secret githubgate-ca;
+	// handing it to the clients is the admin's job.
+	encodedCA := c.kubectl(t, "", "get", "secret", "githubgate-ca", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
+	ca, err := base64.StdEncoding.DecodeString(encodedCA)
+	require.NoError(t, err)
+	c.kubectl(t, string(ca), "create", "configmap", "githubgate-ca", "-n", callerNamespace, "--from-file=ca.crt=/dev/stdin")
 
 	proxyCA := c.kubectl(t, "", "get", "secret", "proxy-ca-root", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
 	proxyCAPEM, err := base64.StdEncoding.DecodeString(proxyCA)

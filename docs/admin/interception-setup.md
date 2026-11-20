@@ -6,15 +6,14 @@ Interception lets pods and VMs use `gh`, `git` and `curl` with no setup. An inje
 
 ## Turn on the injection webhook
 
-1. Put the proxy CA certificate in a ConfigMap in the githubgate namespace, under `ca.crt`. It is the CA that signs the proxy certificate.
-2. Set the chart values. The webhook needs cert-manager and `proxy.enabled`.
+1. Make sure that the webhook can get the proxy CA, the CA that signs the proxy certificate. By default, the chart takes it from `ca.crt` in the Secret of the proxy certificate. cert-manager writes `ca.crt` for a `ca` issuer. If your Secret has no `ca.crt`, put the CA in a ConfigMap in the githubgate namespace, under `ca.crt`, and set `inject.proxyCAConfigMap`.
+2. Set the chart values. The webhook needs `proxy.enabled`. It also needs a certificate for the webhook server, from cert-manager or from `webhook.existingSecret` (see [Certificates](token-mode-setup.md#certificates)).
 
 ```yaml
 inject:
   enabled: true
   image:
     digest: sha256:... # the githubgate-client image digest
-  proxyCAConfigMap: githubgate-proxy-ca
 ```
 
 | Value | Meaning |
@@ -22,7 +21,7 @@ inject:
 | `inject.enabled` | Serve the injection webhook. |
 | `inject.image.digest` | Digest of the `githubgate-client` image that the helper runs. Required. |
 | `inject.proxyAddress` | The proxy address pods use. Default: `githubgate-proxy.<release namespace>.svc:443`. |
-| `inject.proxyCAConfigMap` | The ConfigMap with the proxy CA (`ca.crt`). Required. githubgate reads it again when it changes. |
+| `inject.proxyCAConfigMap` | A ConfigMap with the proxy CA (`ca.crt`). Default: `ca.crt` of the proxy Secret. githubgate reads the CA again when it changes. |
 | `inject.extraCAConfigMap` | A ConfigMap with extra CA certificates (`ca.crt`), for a private CA. Every injected pod trusts them. |
 
 The [chart values](chart-values.md) page lists all values.

@@ -136,16 +136,27 @@ spec:
       volumes:
         - name: tls
           secret:
-            secretName: {{ include "githubgate.fullname" . }}-tls
+            secretName: {{ include "githubgate.tlsSecret" . }}
         {{- if include "githubgate.webhookServer" . }}
         - name: webhook-tls
           secret:
-            secretName: {{ include "githubgate.fullname" . }}-webhook-tls
+            secretName: {{ include "githubgate.webhookSecret" . }}
         {{- end }}
         {{- if .Values.inject.enabled }}
         - name: inject-proxy-ca
+          {{- if .Values.inject.proxyCAConfigMap }}
           configMap:
-            name: {{ required "inject.proxyCAConfigMap is required when inject.enabled is true" .Values.inject.proxyCAConfigMap }}
+            name: {{ .Values.inject.proxyCAConfigMap }}
+          {{- else if .Values.proxy.enabled }}
+          # The CA that signs the proxy certificate, from the proxy's own Secret.
+          secret:
+            secretName: {{ include "githubgate.proxySecret" . }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+          {{- else }}
+          {{- fail "inject.enabled needs inject.proxyCAConfigMap or proxy.enabled" }}
+          {{- end }}
         {{- if .Values.inject.extraCAConfigMap }}
         - name: inject-extra-ca
           configMap:
@@ -155,7 +166,7 @@ spec:
         {{- if .Values.proxy.enabled }}
         - name: proxy-tls
           secret:
-            secretName: {{ include "githubgate.fullname" . }}-proxy-tls
+            secretName: {{ include "githubgate.proxySecret" . }}
         {{- if .Values.proxy.upstreams.caConfigMap }}
         - name: upstream-ca
           configMap:

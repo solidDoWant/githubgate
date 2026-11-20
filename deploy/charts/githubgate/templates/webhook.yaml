@@ -7,13 +7,16 @@ metadata:
   labels:
     {{- include "githubgate.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ $fullname }}-webhook
+    {{- include "githubgate.webhookAnnotations" . | nindent 4 }}
 webhooks:
   - name: validate.githubgate.soliddowant.dev
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: {{ .Values.webhook.failurePolicy }}
     clientConfig:
+      {{- with .Values.webhook.caBundle }}
+      caBundle: {{ . }}
+      {{- end }}
       service:
         name: {{ $fullname }}
         namespace: {{ .Release.Namespace }}

@@ -1,28 +1,44 @@
 {{- $fullname := include "githubgate.fullname" . }}
-{{- $caSecret := printf "%s-ca" $fullname }}
-{{- /* The CA is generated once and kept in a Secret, so upgrades keep it. */}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $caSecret }}
-{{- $caCert := "" }}
-{{- $caKey := "" }}
-{{- if and $existing $existing.data }}
-{{- $caCert = index $existing.data "tls.crt" | b64dec }}
-{{- $caKey = index $existing.data "tls.key" | b64dec }}
-{{- else }}
-{{- $ca := genCA (printf "%s-ca" $fullname) (int .Values.certificate.caDurationDays) }}
-{{- $caCert = $ca.Cert }}
-{{- $caKey = $ca.Key }}
-{{- end }}
+{{- $serviceNames := list (printf "%s.%s.svc" $fullname .Release.Namespace) (printf "%s.%s.svc.cluster.local" $fullname .Release.Namespace) }}
+{{- if .Values.certManager.enabled }}
+{{- $tlsManaged := not .Values.tls.existingSecret }}
+{{- $webhookManaged := and (include "githubgate.webhookServer" .) (include "githubgate.webhookCertManaged" .) }}
+{{- if or $tlsManaged $webhookManaged }}
+{{- /* cert-manager makes the CA and keeps its key in the Secret <fullname>-ca, so
+no key or certificate is in the rendered manifests or Helm's release record.
+The name constraints limit the CA to the Service names it signs. */}}
 ---
-apiVersion: v1
-kind: Secret
+apiVersion: cert-manager.io/v1
+kind: Issuer
 metadata:
-  name: {{ $caSecret }}
+  name: {{ $fullname }}-selfsigned
   labels:
     {{- include "githubgate.labels" . | nindent 4 }}
-type: kubernetes.io/tls
-stringData:
-  tls.crt: {{ $caCert | quote }}
-  tls.key: {{ $caKey | quote }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-ca
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ $fullname }}-ca
+  secretName: {{ $fullname }}-ca
+  duration: {{ .Values.certificate.caDuration }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  nameConstraints:
+    critical: true
+    permitted:
+      dnsDomains:
+        {{- toYaml $serviceNames | nindent 8 }}
+  issuerRef:
+    name: {{ $fullname }}-selfsigned
+    kind: Issuer
 ---
 apiVersion: cert-manager.io/v1
 kind: Issuer
@@ -32,17 +48,9 @@ metadata:
     {{- include "githubgate.labels" . | nindent 4 }}
 spec:
   ca:
-    secretName: {{ $caSecret }}
----
-# The CA clients trust, for mounting at /var/run/secrets/githubgate/ca.crt.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Values.certificate.caConfigMapName }}
-  labels:
-    {{- include "githubgate.labels" . | nindent 4 }}
-data:
-  ca.crt: {{ $caCert | quote }}
+    secretName: {{ $fullname }}-ca
+{{- end }}
+{{- if $tlsManaged }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -55,12 +63,12 @@ spec:
   duration: {{ .Values.certificate.duration }}
   renewBefore: {{ .Values.certificate.renewBefore }}
   dnsNames:
-    - {{ $fullname }}.{{ .Release.Namespace }}.svc
-    - {{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- toYaml $serviceNames | nindent 4 }}
   issuerRef:
     name: {{ $fullname }}
     kind: Issuer
-{{- if include "githubgate.webhookServer" . }}
+{{- end }}
+{{- if $webhookManaged }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -73,13 +81,12 @@ spec:
   duration: {{ .Values.certificate.duration }}
   renewBefore: {{ .Values.certificate.renewBefore }}
   dnsNames:
-    - {{ $fullname }}.{{ .Release.Namespace }}.svc
-    - {{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- toYaml $serviceNames | nindent 4 }}
   issuerRef:
     name: {{ $fullname }}
     kind: Issuer
 {{- end }}
-{{- if .Values.proxy.enabled }}
+{{- if and .Values.proxy.enabled (not .Values.proxy.existingSecret) }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -96,7 +103,20 @@ spec:
     - uploads.github.com
     - github.com
   issuerRef:
-    name: {{ required "proxy.ca.name is required when proxy.enabled is true" .Values.proxy.ca.name }}
+    name: {{ required "proxy.ca.name is required when cert-manager makes the proxy certificate" .Values.proxy.ca.name }}
     kind: {{ .Values.proxy.ca.kind }}
     group: {{ .Values.proxy.ca.group }}
+{{- end }}
+{{- end }}
+{{- if .Values.certificate.caConfigMap.create }}
+---
+# The token API's CA for clients, to mount at /var/run/secrets/githubgate/ca.crt.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.certificate.caConfigMap.name }}
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+data:
+  ca.crt: {{ required "certificate.caBundle is required when certificate.caConfigMap.create is true" .Values.certificate.caBundle | quote }}
 {{- end }}

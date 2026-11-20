@@ -153,6 +153,8 @@ A public read is allowed when one of the caller's proxy rules has `publicRead`. 
 
 **`proxy.webPaths`.** A `GET` or `HEAD` on `github.com` that is not git smart HTTP is classified as a web path (kind `web`). When one of the caller's proxy rules has `webPaths`, it is forwarded with no `Authorization` header and no cookie. The response comes back unchanged, redirects included, and the client follows them to hosts that interception does not redirect (`objects.githubusercontent.com`, `codeload.github.com`). A `401` from a web path is passed on. Without `webPaths`, a web path still gets `404`.
 
+**Fake GitHub.** The fake copies three behaviours of GitHub for these tests. Any installation token reads a public repository of any owner through REST and git fetch, which GitHub documents for GitHub Apps (public resources need no permission). A private repository of another owner answers `404`, because GitHub hides private repositories. `github.com/OWNER/REPO/releases/latest/download/ASSET` redirects to the storage host for a public repository. The fake also refuses that web path with `400` when it carries an `Authorization` header, which github.com does not do, so that a test proves no credential was sent. The operator confirms the first three against github.com with the live check.
+
 **Audit.** Each proxy audit line has an `access` field: `rules` (the rules' token), `public_read` (the public-read token, with `repositories` naming the repository read) or `web` (no credential). A refused request has an empty `access`.
 
 ## Names

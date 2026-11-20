@@ -281,3 +281,50 @@ func (s *Server) handleAssetStorage(writer http.ResponseWriter, request *http.Re
 
 	http.NotFound(writer, request)
 }
+
+// handleLatestReleaseDownload redirects a github.com release download of the
+// newest release to the storage host, like github.com does for a public
+// repository. Unlike github.com, it refuses any Authorization header with
+// 400, so a test proves that the request reached it with no credential.
+func (s *Server) handleLatestReleaseDownload(writer http.ResponseWriter, request *http.Request, owner, name, assetName string) {
+	if request.Header.Get("Authorization") != "" {
+		http.Error(writer, "fake GitHub: a web path got a credential", http.StatusBadRequest)
+
+		return
+	}
+
+	if !s.isPublic(owner, name) {
+		http.NotFound(writer, request)
+
+		return
+	}
+
+	s.mu.Lock()
+
+	var latest *Release
+
+	for key, release := range s.releases {
+		if strings.HasPrefix(key, owner+"/"+name+"#") && (latest == nil || release.ID > latest.ID) {
+			latest = release
+		}
+	}
+
+	id, found := int64(0), false
+	if latest != nil {
+		id, found = latest.AssetIDs[assetName]
+	}
+	s.mu.Unlock()
+
+	if !found {
+		http.NotFound(writer, request)
+
+		return
+	}
+
+	base := hostURL(request)
+	if request.TLS != nil && request.Host == "github.com" {
+		base = "https://" + StorageHost
+	}
+
+	http.Redirect(writer, request, fmt.Sprintf("%s/_storage_asset/%s/%s/%d", base, owner, name, id), http.StatusFound)
+}

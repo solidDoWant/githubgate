@@ -40,12 +40,16 @@ const (
 	owner           = "acme"
 	repository      = "project"
 	otherRepository = "private"
-	clientBinary    = "/opt/client/githubgate-client"
-	fakeAPI         = "http://fakegithub.fake.svc:8080"
-	gateNamespace   = "githubgate"
-	proxyIP         = "10.96.0.50" // pinned cluster IP of the githubgate-proxy Service, inside kind's default service range
-	fakeTLSIP       = "10.96.0.51" // pinned cluster IP of the fake's HTTPS Service, which githubgate's pods know as the GitHub hosts
-	callerNamespace = "ci"
+	// publicRepository is a public repository of owner; outsider is an
+	// owner no installation covers, with a public and a private repository.
+	publicRepository = "tools"
+	outsider         = "outsider"
+	clientBinary     = "/opt/client/githubgate-client"
+	fakeAPI          = "http://fakegithub.fake.svc:8080"
+	gateNamespace    = "githubgate"
+	proxyIP          = "10.96.0.50" // pinned cluster IP of the githubgate-proxy Service, inside kind's default service range
+	fakeTLSIP        = "10.96.0.51" // pinned cluster IP of the fake's HTTPS Service, which githubgate's pods know as the GitHub hosts
+	callerNamespace  = "ci"
 )
 
 type cluster struct {
@@ -337,6 +341,9 @@ func (c cluster) configure(t *testing.T) string {
 	}})
 	c.control(t, "/repositories", map[string]any{"owner": owner, "name": repository})
 	c.control(t, "/repositories", map[string]any{"owner": owner, "name": otherRepository})
+	c.control(t, "/repositories", map[string]any{"owner": owner, "name": publicRepository, "public": true})
+	c.control(t, "/repositories", map[string]any{"owner": outsider, "name": "public", "public": true})
+	c.control(t, "/repositories", map[string]any{"owner": outsider, "name": "secret"})
 
 	c.kubectl(t, keyPEM, "create", "secret", "generic", "app-key", "-n", gateNamespace, "--from-file=private-key.pem=/dev/stdin")
 	c.apply(t, fmt.Sprintf(`

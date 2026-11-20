@@ -1,5 +1,5 @@
 # The workload container of the interception live test: gh, git and curl on a
-# stock base. The client is mounted in at run time.
+# stock base. The client is copied in at run time.
 FROM mirror.gcr.io/library/debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
 
 RUN apt-get update \

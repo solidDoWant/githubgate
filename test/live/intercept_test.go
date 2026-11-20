@@ -21,6 +21,12 @@ const (
 	foreignCredential = "ghp_foreignCredentialThatMustNeverReachGitHub0000"
 	workloadWork      = "/work"
 	workloadTrust     = "/trust"
+
+	// dockerNetworkEnv, when set (for example container:<id>), is the network
+	// the workload joins; the proxy is then reached on 127.0.0.1.
+	dockerNetworkEnv = "GITHUBGATE_LIVE_DOCKER_NETWORK"
+	interceptListen  = "127.43.0.1:443"
+	proxyHostName    = "githubgate-proxy.invalid"
 )
 
 // workload is a container that runs the interceptor and the tools of a pod.
@@ -62,7 +68,7 @@ func docker(t *testing.T, args ...string) (string, error) {
 
 // startWorkload builds the workload image, starts a container for account and
 // starts the interceptor in it. It returns once the interceptor's probe passes.
-func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener string, proxyCA string) *workload {
+func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener string, proxyCA string, network string) *workload {
 	t.Helper()
 
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -97,27 +103,28 @@ func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener stri
 	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", image).Run() })
 
 	name := "githubgate-live-" + unique(t)
-	text, err = docker(t, "run", "-d", "--name", name,
-		"--add-host", "api.github.com:127.0.0.1",
-		"--add-host", "uploads.github.com:127.0.0.1",
-		"--add-host", "github.com:127.0.0.1",
-		"--add-host", "githubgate-proxy.invalid:host-gateway",
-		"-v", work+":"+workloadWork+":ro",
-		image, "sleep", "infinity")
+	text, err = docker(t, workloadRunArgs(name, image, network)...)
 	require.NoError(t, err, text)
 
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 
+	// Nothing is bind mounted: the daemon may not see this machine's paths.
+	text, err = docker(t, "exec", name, "mkdir", "-p", workloadWork)
+	require.NoError(t, err, text)
+
+	for _, file := range []string{clientBinary, "token", "proxy-ca.crt"} {
+		text, err = docker(t, "cp", filepath.Join(work, file), name+":"+workloadWork+"/"+file)
+		require.NoError(t, err, text)
+	}
+
+	// --add-host would resolve on the daemon's side too; /etc/hosts is edited in the container.
+	text, err = docker(t, "exec", name, "sh", "-c", "echo '"+hostsEntry()+"' >> /etc/hosts")
+	require.NoError(t, err, text)
+
 	_, port, ok := strings.Cut(proxyListener, ":")
 	require.True(t, ok)
 
-	text, err = docker(t, "exec", "-d", name, workloadWork+"/"+clientBinary, "intercept",
-		"--listen", "127.0.0.1:443",
-		"--proxy-address", "githubgate-proxy.invalid:"+port,
-		"--proxy-ca", "@"+workloadWork+"/proxy-ca.crt",
-		"--token-file", workloadWork+"/token",
-		"--trust-dir", workloadTrust,
-		"--state-dir", "/state")
+	text, err = docker(t, interceptExecArgs(name, network, port)...)
 	require.NoError(t, err, text)
 
 	w := &workload{name: name, live: l}
@@ -155,12 +162,13 @@ func (w *workload) run(t *testing.T, dir, name string, args ...string) (string, 
 
 func TestLiveInterceptionAgainstGitHub(t *testing.T) {
 	live := setup(t)
+	network := os.Getenv(dockerNetworkEnv)
 	seen := &authorizations{}
-	listener, caFile := live.serveProxy(t, "0.0.0.0:0", seen.observe)
+	listener, caFile := live.serveProxy(t, proxyListenAddress(network), seen.observe)
 	slug := live.owner + "/" + live.repo
 	cloneURL := "https://github.com/" + slug + ".git"
 
-	box := live.startWorkload(t, pushAccount, listener.Addr().String(), caFile)
+	box := live.startWorkload(t, pushAccount, listener.Addr().String(), caFile, network)
 
 	_, err := box.run(t, "/tmp", "mkdir", "-p", "/tmp/home")
 	require.NoError(t, err)

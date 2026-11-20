@@ -447,7 +447,7 @@ func mutate(pod *corev1.Pod, config Config, listen netip.AddrPort, proxyCA, extr
 
 // prepare adds the no-proxy hosts, the trust variables and the trust mount.
 func prepare(container *corev1.Container, joins []join) {
-	if hasEnv(container, proxyVars...) {
+	if hasEnv(container, proxyVars...) || len(container.EnvFrom) > 0 {
 		for _, name := range noProxyVars {
 			addNoProxy(container, name)
 		}
@@ -502,7 +502,15 @@ func addNoProxy(container *corev1.Container, name string) {
 		return
 	}
 
-	container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: strings.Join(githubHosts, ",")})
+	value := strings.Join(githubHosts, ",")
+	if len(container.EnvFrom) > 0 {
+		// Kubelet resolves envFrom before env and expands $(NO_PROXY) from it, so
+		// a value from a ConfigMap or Secret is kept without reading it. Undefined,
+		// the literal stays as a pattern that matches no host.
+		value = "$(NO_PROXY)," + value
+	}
+
+	container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: value})
 }
 
 func volumes(config Config, extraConfigMap string) []corev1.Volume {

@@ -178,6 +178,40 @@ func TestDecideAllowsOnlyWhatAllowingRulesGive(t *testing.T) {
 			expectedMessage: []string{`"repos/create-deployment"`, "pushRefs"},
 		},
 		{
+			name:  "publishing a draft release without tag_name is refused under pushRefs because its tag can't be checked",
+			rules: []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
+			request: func() proxy.Decided {
+				request := rest("repos/update-release", "acme", "foo")
+				request.PublishesRelease = true
+
+				return request
+			}(),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: []string{`"repos/update-release"`, "pushRefs"},
+		},
+		{
+			name:                 "updating a release without tag_name that doesn't publish it is allowed under pushRefs",
+			rules:                []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
+			request:              rest("repos/update-release", "acme", "foo"),
+			expectedInstallation: app1Installation,
+			expectedRepositories: []string{"foo"},
+			expectedPermissions:  write("contents"),
+		},
+		{
+			name:  "publishing a draft release without tag_name is allowed without pushRefs",
+			rules: []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"))},
+			request: func() proxy.Decided {
+				request := rest("repos/update-release", "acme", "foo")
+				request.PublishesRelease = true
+
+				return request
+			}(),
+			expectedInstallation: app1Installation,
+			expectedRepositories: []string{"foo"},
+			expectedPermissions:  write("contents"),
+		},
+		{
 			name:            "the createDeployment mutation is refused under pushRefs",
 			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, contentsAndDeployments(), pushRefs("refs/heads/agent/**"))},
 			request:         mutation("createDeployment"),

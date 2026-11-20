@@ -366,7 +366,11 @@ func readRESTRefs(request *http.Request, decided Decided) (Decided, *refusal) {
 
 		switch {
 		case !present && prefix != "":
-			// A release without tag_name writes no tag.
+			// A release update without tag_name writes no tag, unless it
+			// publishes a draft: GitHub then creates the draft's tag. Any
+			// draft value other than true may publish it.
+			draft, hasDraft := object["draft"]
+			decided.PublishesRelease = decided.Operation == "repos/update-release" && hasDraft && draft != true
 		case !isString:
 			decided.RefsUnknown = true
 		default:

@@ -4,5 +4,7 @@
 FROM scratch
 
 ARG TARGETARCH
+# Links the ghcr.io package to this repository (its visibility and README).
+LABEL org.opencontainers.image.source="https://github.com/solidDoWant/githubgate"
 COPY build/images/${TARGETARCH}/githubgate-client /githubgate-client
 ENTRYPOINT ["/githubgate-client"]

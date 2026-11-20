@@ -47,7 +47,7 @@ Flags, with environment equivalents (names differ from phase 2's client on purpo
 4. Writes to `--trust-dir`, each atomically (write, then rename): `ca.crt` (the pod CA only) and `bundle.crt` (`--base-bundle` + `--extra-ca` + the pod CA), mode `0444`; then a `ready` file.
 5. Listens.
 
-**`--probe`** (the startup probe, an `exec` probe so it runs in the pod's network namespace): exits 0 only if `ready` exists and a TLS dial to the `--listen` address with SNI `api.github.com` verifies against `ca.crt`.
+**`--probe`** (the startup probe, an `exec` probe so it runs in the pod's network namespace): exits 0 only if `ready` exists (written after the listener is bound and the leaf certificate is in place) and, for a **loopback** `--listen` address, a TLS dial to it with SNI `api.github.com` verifies against `ca.crt`. For a non-loopback address the dial is skipped: a KubeVirt launcher pod's guest gateway appears only after virt-launcher starts, which kubelet does only after this probe passes, so dialling it would deadlock the pod. The `ready` file alone shows the same code path has bound and is serving. The webhook sets the startup probe's `timeoutSeconds` to 10, longer than the probe's own 5 s dial timeout.
 
 **Per request** (HTTP/1.1 and HTTP/2):
 - TLS SNI must be one of the three hosts (the handshake fails otherwise). `Host`, canonicalised with the proxy's rules (lower-case, `:443` allowed, no trailing dot), decides the upstream and must be one of the three (else `421`); it may differ from SNI (HTTP/2 connection reuse across the leaf's names).

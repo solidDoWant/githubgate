@@ -439,13 +439,26 @@ spec:
       proxy:
         enabled: true
         pushRefs: [refs/heads/agent/**]
+---
+apiVersion: githubgate.soliddowant.dev/v1alpha1
+kind: GitHubAccessPolicy
+metadata: {name: ci-vm, namespace: %[2]s}
+spec:
+  serviceAccounts: [ci-vm]
+  rules:
+    - name: proxy
+      installationRef: {namespace: %[1]s, name: acme}
+      repositories: [%[5]s]
+      permissions: {contents: write}
+      proxy:
+        enabled: true
 `, gateNamespace, callerNamespace, appID, owner, repository))
 
 	for _, kind := range []string{"githubapp/e2e", "githubinstallation/acme"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", gateNamespace, kind, "--timeout=2m")
 	}
 
-	for _, policy := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited", "ci-proxied-push"} {
+	for _, policy := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited", "ci-proxied-push", "ci-vm"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", callerNamespace, "githubaccesspolicy/"+policy, "--timeout=2m")
 	}
 
@@ -985,6 +998,10 @@ if [ -n "$(git ls-remote origin refs/heads/outside)" ]; then echo "outside reach
 
 		assert.Contains(t, out, "published 1 commit(s) to agent/signed")
 		assert.Contains(t, out, `ref "refs/heads/outside" is outside pushRefs`)
+	})
+
+	t.Run("a VM workspace configured by the NixOS module reaches the proxy with gh, git and curl", func(t *testing.T) {
+		c.vmWorkspaceScenarios(ctx, t)
 	})
 
 	t.Run("killing a replica during a stream of proxied requests fails no request beyond the one in flight", func(t *testing.T) {

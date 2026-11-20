@@ -90,6 +90,10 @@ type Server struct {
 	tokens        []IssuedToken
 	tokenLifetime time.Duration
 	jwts          []string
+	signed        map[string]bool
+	releases      map[string]*Release
+	pulls         map[string][]PullRequest
+	nextID        int64
 }
 
 // New returns a Server that keeps bare repositories under gitRoot (a new
@@ -110,6 +114,10 @@ func New(gitRoot string) (*Server, error) {
 		installations: map[int64]*Installation{},
 		repos:         map[string]*Repository{},
 		tokenLifetime: defaultTokenLifetime,
+		signed:        map[string]bool{},
+		releases:      map[string]*Release{},
+		pulls:         map[string][]PullRequest{},
+		nextID:        100,
 	}, nil
 }
 
@@ -277,7 +285,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /app/installations/{id}/access_tokens", s.handleAccessTokens)
 	mux.HandleFunc("GET /rate_limit", s.withToken(nil, s.handleRateLimit))
 	mux.HandleFunc("GET /repos/{owner}/{repo}", s.withToken(&need{perm: "metadata", level: "read"}, s.handleGetRepo))
-	mux.HandleFunc("POST /repos/{owner}/{repo}/releases", s.withToken(&need{perm: "contents", level: "write"}, s.handleCreateRelease))
+	contentsWrite := &need{perm: "contents", level: "write"}
+	contentsRead := &need{perm: "contents", level: "read"}
+
+	mux.HandleFunc("POST /repos/{owner}/{repo}/releases", s.withToken(contentsWrite, s.handleCreateRelease))
+	mux.HandleFunc("POST /repos/{owner}/{repo}/releases/{id}/assets", s.withToken(contentsWrite, s.handleUploadReleaseAsset))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/tarball/{ref...}", s.withToken(contentsRead, s.handleArchive("tar")))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/zipball/{ref...}", s.withToken(contentsRead, s.handleArchive("zip")))
+	mux.HandleFunc("GET /_storage/{owner}/{repo}/{ref...}", s.handleStorage)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/git/blobs", s.withToken(contentsWrite, s.handleCreateBlob))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/blobs/{sha}", s.withToken(contentsRead, s.handleGetBlob))
+	mux.HandleFunc("POST /repos/{owner}/{repo}/git/trees", s.withToken(contentsWrite, s.handleCreateTree))
+	mux.HandleFunc("POST /repos/{owner}/{repo}/git/commits", s.withToken(contentsWrite, s.handleCreateCommit))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/commits/{sha}", s.withToken(contentsRead, s.handleGetCommit))
+	mux.HandleFunc("POST /repos/{owner}/{repo}/git/refs", s.withToken(contentsWrite, s.handleCreateRef))
+	mux.HandleFunc("PATCH /repos/{owner}/{repo}/git/refs/{ref...}", s.withToken(contentsWrite, s.handleUpdateRef))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/{ref...}", s.withToken(contentsRead, s.handleGetRef))
+	mux.HandleFunc("POST /graphql", s.withToken(nil, s.handleGraphQL))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", s.withToken(&need{perm: "issues", level: "write"}, s.handleIssueComment))
 	mux.HandleFunc("/{owner}/{repo}/", s.handleGit)
 

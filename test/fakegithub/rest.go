@@ -342,20 +342,6 @@ func (s *Server) handleGetRepo(writer http.ResponseWriter, request *http.Request
 	writeJSON(writer, http.StatusOK, map[string]any{"name": name, "full_name": owner + "/" + name, "private": repo.Private})
 }
 
-func (s *Server) handleCreateRelease(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
-	var body struct {
-		TagName string `json:"tag_name"`
-		Name    string `json:"name"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 1<<20)).Decode(&body); err != nil || body.TagName == "" {
-		writeJSONError(writer, http.StatusUnprocessableEntity, "Validation Failed")
-
-		return
-	}
-
-	writeJSON(writer, http.StatusCreated, map[string]any{"id": 1, "tag_name": body.TagName, "name": body.Name})
-}
-
 func (s *Server) handleIssueComment(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
 	var body struct {
 		Body string `json:"body"`

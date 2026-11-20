@@ -575,6 +575,7 @@ func sidecar(config Config, listen netip.AddrPort, proxyCA, extraCA, extraConfig
 		StartupProbe: &corev1.Probe{
 			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: probe}},
 			PeriodSeconds:    1,
+			TimeoutSeconds:   10,
 			FailureThreshold: 30,
 		},
 		SecurityContext: &corev1.SecurityContext{

@@ -33,11 +33,11 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 13. Uploading a release asset through `uploads.github.com` follows the same operation rules as the API.
     Tests: `test/e2e: TestTokenModeOnKind/a release asset upload follows the same operation rules as the API`, `internal/proxy: TestProxyRefusesRequestsOutsideTheRulesWithoutForwarding/a release asset upload outside allowOperations`
 14. Downloading a repository archive (a redirect to GitHub's storage) works from a proxied pod.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/downloading a repository archive through its redirect to GitHub's storage works from a proxied pod`
 15. The proxy serves certificates for exactly the three GitHub hosts; a TLS handshake for any other name fails.
     Tests: `internal/proxy: TestProxyServesCertificatesOnlyForTheGitHubHosts`, `internal/server: TestRunServesTheProxyWithItsOwnCertificate`
 16. Killing one of three replicas during a stream of proxied requests causes no failed request beyond the ones in flight.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/killing a replica during a stream of proxied requests fails no request beyond the one in flight`
 17. Every proxied request writes one audit line with namespace, ServiceAccount, repository, operation or mutation, refs for pushes, and the decision, and no token.
     Tests: `test/e2e: TestTokenModeOnKind/every proxied request writes one audit line without a token`, `internal/proxy: TestProxyWritesOneAuditLinePerRequest`
 

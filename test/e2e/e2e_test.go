@@ -460,7 +460,9 @@ func (c cluster) startCallerPod(t *testing.T, name string, proxied bool) {
 
 	extraSpec, extraMount, extraVolume := "", "", ""
 	if proxied {
-		extraSpec = fmt.Sprintf("  hostAliases:\n    - ip: %s\n      hostnames: [api.github.com, uploads.github.com, github.com]\n", proxyIP)
+		// GitHub's archive storage host is not proxied: it reaches the fake directly.
+		extraSpec = fmt.Sprintf("  hostAliases:\n    - ip: %s\n      hostnames: [api.github.com, uploads.github.com, github.com]\n    - ip: %s\n      hostnames: [%s]\n",
+			proxyIP, fakeTLSIP, fakegithub.StorageHost)
 		extraMount = "        - {name: proxy-ca, mountPath: /var/run/secrets/githubgate-proxy, readOnly: true}\n"
 		extraVolume = "    - name: proxy-ca\n      configMap: {name: githubgate-proxy-ca}\n"
 	}
@@ -567,21 +569,25 @@ curl -s -o /dev/null -w '%%{http_code}' -X POST -H "Authorization: token ${token
 		require.Error(t, err, "the proxy's certificate must not verify without the proxy CA: %s", out)
 	})
 
-	t.Run("killing a replica during a stream of token requests fails no request beyond the one in flight", func(t *testing.T) {
+	// killDuringStream runs request in a loop in pod, force-deletes one of
+	// the three replicas, and expects at most the request in flight to fail.
+	killDuringStream := func(t *testing.T, pod, request string) {
+		t.Helper()
+
 		stream := fmt.Sprintf(`rm -f /tmp/stop /tmp/results /tmp/errors
 while [ ! -e /tmp/stop ]; do
-  if %s token --repo %s >/dev/null 2>>/tmp/errors; then echo ok >>/tmp/results; else echo fail >>/tmp/results; fi
-done`, clientBinary, repository)
+  if %s >/dev/null 2>>/tmp/errors; then echo ok >>/tmp/results; else echo fail >>/tmp/results; fi
+done`, request)
 
 		streamDone := make(chan error, 1)
 
 		go func() {
-			_, err := c.exec(ctx, callerNamespace, "ci-release", stream)
+			_, err := c.exec(ctx, callerNamespace, pod, stream)
 			streamDone <- err
 		}()
 
 		count := func(word string) int {
-			out, _ := c.exec(ctx, callerNamespace, "ci-release", fmt.Sprintf("grep -c %s /tmp/results || true", word))
+			out, _ := c.exec(ctx, callerNamespace, pod, fmt.Sprintf("grep -c %s /tmp/results || true", word))
 
 			var n int
 
@@ -608,14 +614,18 @@ done`, clientBinary, repository)
 		}, 3*time.Minute, time.Second)
 		require.Eventually(t, func() bool { return count("ok") >= before+10 }, 2*time.Minute, time.Second)
 
-		_, err := c.exec(ctx, callerNamespace, "ci-release", "touch /tmp/stop")
+		_, err := c.exec(ctx, callerNamespace, pod, "touch /tmp/stop")
 		require.NoError(t, err)
 		require.NoError(t, <-streamDone)
 
 		failures := count("fail")
-		out, _ := c.exec(ctx, callerNamespace, "ci-release", "cat /tmp/errors")
+		out, _ := c.exec(ctx, callerNamespace, pod, "cat /tmp/errors")
 		clientOutput = append(clientOutput, out)
 		assert.LessOrEqual(t, failures, 1, "at most the request in flight may fail; errors: %s", out)
+	}
+
+	t.Run("killing a replica during a stream of token requests fails no request beyond the one in flight", func(t *testing.T) {
+		killDuringStream(t, "ci-release", fmt.Sprintf("%s token --repo %s", clientBinary, repository))
 	})
 
 	// This runs before the git subtests: the ServiceAccount has no cached token
@@ -852,7 +862,32 @@ curl -sS -X POST -H "Authorization: token ${token}" -d '{"tag_name":"asset-v1"}'
 		assert.Contains(t, out, "repos/upload-release-asset")
 	})
 
+	t.Run("killing a replica during a stream of proxied requests fails no request beyond the one in flight", func(t *testing.T) {
+		killDuringStream(t, "ci-proxied", fmt.Sprintf(
+			`curl -sSf --cacert /var/run/secrets/githubgate-proxy/ca.crt -H "Authorization: token $(cat /var/run/secrets/githubgate/token)" https://api.github.com/repos/%s/%s`,
+			owner, repository))
+	})
+
+	t.Run("downloading a repository archive through its redirect to GitHub's storage works from a proxied pod", func(t *testing.T) {
+		// The storage host is GitHub itself, trusted through the system CAs
+		// there; here it is the fake, trusted through its test CA.
+		fakeCA := c.kubectl(t, "", "exec", "-n", "fake", "deploy/fakegithub", "--", "cat", "/tmp/fake-ca.crt")
+
+		out := proxied(t, "ci-proxied", fmt.Sprintf(`cat "$PROXY_CA" >/tmp/ca-bundle.crt
+cat >>/tmp/ca-bundle.crt <<'PEM'
+%s
+PEM
+curl -sSfL --cacert /tmp/ca-bundle.crt -H "Authorization: token $SA_TOKEN" -o /tmp/archive.tar -w 'status=%%{http_code} redirects=%%{num_redirects}' https://api.github.com/repos/%s/%s/tarball/main
+`, strings.TrimSpace(fakeCA), owner, repository))
+
+		assert.Contains(t, out, "status=200 redirects=1")
+	})
+
 	t.Run("every proxied request writes one audit line without a token", func(t *testing.T) {
+		// Its own request: a replica killed earlier took its log with it.
+		out := proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, repository), `{"tag_name":"audit-v1"}`))
+		require.Contains(t, out, "status=403")
+
 		logs := c.kubectl(t, "", "logs", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "--all-containers", "--tail=-1")
 
 		found := false

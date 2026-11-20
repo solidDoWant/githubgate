@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"slices"
 	"time"
 )
 
@@ -16,6 +17,11 @@ import (
 // the fake serves in e2e: the REST and GraphQL API, release asset uploads and
 // git over HTTPS.
 var GitHubHosts = []string{"api.github.com", "uploads.github.com", "github.com"}
+
+// StorageHost is where archive redirects point when the fake is served
+// under GitHub's names, as GitHub redirects archives to codeload.github.com,
+// a host the proxy doesn't serve. The fake's certificate names it too.
+const StorageHost = "codeload.github.com"
 
 // TestCA is a throwaway certificate authority that signs the fake's server
 // certificate. Everything comes from the standard library.
@@ -91,7 +97,7 @@ func (ca *TestCA) ServerCertificate(hosts ...string) (tls.Certificate, error) {
 
 // TLSConfig serves the three GitHub host names with a certificate from the CA.
 func (ca *TestCA) TLSConfig() (*tls.Config, error) {
-	cert, err := ca.ServerCertificate(GitHubHosts...)
+	cert, err := ca.ServerCertificate(append(slices.Clone(GitHubHosts), StorageHost)...)
 	if err != nil {
 		return nil, err
 	}

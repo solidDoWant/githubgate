@@ -9,40 +9,40 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 2. A ServiceAccount not named by any policy in its namespace is refused (`403`) with a message naming its namespace and ServiceAccount; nothing is minted.
    Tests: `internal/server: TestRefusedRequestsMintNothing/ServiceAccount named by no policy`
 3. Asking for a repository the policy doesn't cover is refused, and the message names the repository.
-   Tests:
+   Tests: `internal/server: TestRefusedRequestsMintNothing/repository outside the policy`, `internal/resolve: TestResolve/a repository the policy doesn't cover is refused, naming the repository`
 4. Asking for a permission, or a higher level, than the policy gives is refused, and the message names the permission.
-   Tests:
+   Tests: `internal/server: TestRefusedRequestsMintNothing/permission above the policy`, `internal/resolve: TestResolve/a higher level than the policy gives is refused, naming the permission`, `internal/resolve: TestResolve/a permission the policy doesn't give is refused, naming the permission`
 5. Asking for two repositories with different grants and no permissions gets only the permissions both repositories are given.
-   Tests:
+   Tests: `internal/resolve: TestResolve/two repositories with different grants and no permissions get only what both are given, at the lower level`, `internal/resolve: TestResolve/repositories that share no permission are refused`, `internal/server: TestRefusedRequestsMintNothing/repositories that share no permission`
 6. With no repositories named, the token covers exactly the repositories the caller's rules name exactly; with only glob rules, the request is refused asking for repositories.
-   Tests:
+   Tests: `internal/resolve: TestResolve/with no repositories named the token covers the repositories the rules name exactly`, `internal/resolve: TestResolve/with no repositories named and only glob rules the request is refused asking for repositories`
 7. A PR-pipeline ServiceAccount (`ci-build`, `contents: read`) can clone but can't create a release; the release ServiceAccount (`ci-release`, `contents: write`) in the same namespace can.
-   Tests:
+   Tests: `internal/resolve: TestResolve/a pull-request ServiceAccount can't get the write access a release needs`, `internal/resolve: TestResolve/the release ServiceAccount in the same namespace gets write access`
 8. A policy in namespace `ci-a` that names repository `b` is not accepted when the installation's ceiling doesn't admit it, and `ci-a` gets nothing on `b`.
-   Tests:
+   Tests: `internal/server: TestRulesThePolicyCannotUseGrantNothing/a rule outside the installation's ceiling grants nothing`, `internal/model: TestRuleAcceptance/a repository outside the ceiling is outside the ceiling`
 9. A policy can't use another namespace's ServiceAccount: a token from `ci-b`'s ServiceAccount gets nothing from `ci-a`'s policy.
-   Tests:
+   Tests: `internal/resolve: TestResolve/a ServiceAccount of another namespace gets nothing from a policy naming the same ServiceAccount name`, `internal/server: TestRulesThePolicyCannotUseGrantNothing/a ServiceAccount of another namespace gets nothing from the policy`
 10. A token with the wrong audience, an expired token, or a token of a deleted ServiceAccount (after the 30-second cache) is refused with `401`.
-    Tests:
+    Tests: `internal/server: TestRefusedRequestsMintNothing/invalid credential`, `internal/server: TestRefusedRequestsMintNothing/no credential`, `internal/auth: TestTokenReviewAuthenticatorRejectsTokensTheAPIServerRefuses/expired token`, `internal/auth: TestTokenReviewAuthenticatorRejectsTokensTheAPIServerRefuses/wrong audience`, `internal/auth: TestTokenReviewAuthenticatorRefusesDeletedServiceAccountAfterCacheExpiry`
 11. Two Apps installed on the same owner: a caller allowed through both must name the installation (`409` otherwise); a caller allowed through one gets a token from that one.
-    Tests:
+    Tests: `internal/resolve: TestResolve/a caller allowed through two installations of one owner must name the installation`, `internal/resolve: TestResolve/a caller allowed through two installations gets a token from the one it names`, `internal/resolve: TestResolve/a caller allowed through one of two installations of an owner gets a token from that one`
 12. Repeated requests within the token's lifetime reuse a cached token (one mint at the fake GitHub); a token near expiry is replaced.
     Tests: `internal/server: TestRepeatedRequestsReuseTheCachedTokenUntilItHasUnderTenMinutesLeft`, `internal/server: TestOneReplicaMintsOnceForRepeatedRequests`
 
 ## Policies and status
 
 13. A rule outside its installation's ceiling shows `Accepted=False, reason=OutsideCeiling` in the policy's status; the other rules still work.
-    Tests:
+    Tests: `internal/model: TestRuleOutsideCeilingLeavesOtherRulesInForce`, `internal/server: TestRulesThePolicyCannotUseGrantNothing/a rule inside the ceiling still works when another rule is outside it`, `internal/resolve: TestResolve/a rule outside the ceiling grants nothing while the caller's other rules still work`, `internal/controller: TestStatusOfAppsInstallationsAndPolicies/a policy reports each rule and Ready=False while a rule is not accepted`
 14. A policy referencing an installation whose `allowedNamespaces` doesn't admit its namespace shows `NotAllowed` and grants nothing.
-    Tests:
+    Tests: `internal/model: TestRuleAcceptance/an installation that doesn't admit the policy's namespace is not allowed`, `internal/server: TestRulesThePolicyCannotUseGrantNothing/an installation that doesn't admit the policy's namespace grants nothing`
 15. A `GitHubApp` or `GitHubInstallation` created outside the admin namespaces is rejected by the webhook and, with the webhook off, ignored and never used.
     Tests:
 16. A `GitHubApp` whose App ID can come inline or from a Secret works either way; one whose key Secret is missing or not a valid RSA key is `Ready=False` with `SecretUnavailable` or `SecretInvalid`; requests through it fail closed with `503`, and fixing the Secret makes it work without a restart.
-    Tests:
+    Tests: `internal/controller: TestStatusOfAppsInstallationsAndPolicies/an App with a missing or invalid key Secret recovers without a restart`, `internal/controller: TestStatusOfAppsInstallationsAndPolicies/an App ID inline or from a Secret reaches Ready`, `internal/server: TestAppWithABrokenKeySecretFailsClosedUntilTheSecretIsFixed`
 17. A `GitHubInstallation` for an owner the App isn't installed on is `Ready=False, reason=InstallationNotFound`.
     Tests: `internal/controller: TestStatusOfAppsInstallationsAndPolicies/an installation on an owner the App is not installed on is InstallationNotFound`
 18. Changing a policy (removing a repository) refuses new tokens for that repository within seconds, without a restart.
-    Tests:
+    Tests: `internal/server: TestRemovedGrantIsRefusedEvenWithACachedToken`, `internal/model: TestWatcherRebuildsTheSnapshotWhenAPolicyChanges`
 19. The webhook rejects unknown permission names or levels, and a rule outside its installation's ceiling, with a message naming the field; the CRD rejects a rule with no mode enabled.
     Tests:
 

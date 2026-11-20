@@ -532,3 +532,70 @@ func TestBodyLimitIs64KiB(t *testing.T) {
 	assert.Equal(t, "invalid_request", got.err.Error)
 	assert.Contains(t, got.err.Message, "larger than")
 }
+
+func TestRulesThePolicyCannotUseGrantNothing(t *testing.T) {
+	tests := []struct {
+		name   string
+		caller string
+		modify func(inputs *model.Inputs)
+		body   string
+		status int
+	}{
+		{
+			name:   "a rule outside the installation's ceiling grants nothing",
+			caller: caller,
+			modify: func(inputs *model.Inputs) {
+				inputs.Installations[0].Spec.Ceiling = []githubgatev1alpha1.PermissionSet{{
+					Repositories: []githubgatev1alpha1.Repository{"foo"},
+					Permissions:  map[string]githubgatev1alpha1.Level{"contents": "write"},
+				}}
+			},
+			body:   `{"repositories": ["bar"]}`,
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "a rule inside the ceiling still works when another rule is outside it",
+			caller: caller,
+			modify: func(inputs *model.Inputs) {
+				inputs.Installations[0].Spec.Ceiling = []githubgatev1alpha1.PermissionSet{{
+					Repositories: []githubgatev1alpha1.Repository{"foo"},
+					Permissions:  map[string]githubgatev1alpha1.Level{"contents": "write"},
+				}}
+			},
+			body:   `{"repositories": ["foo"]}`,
+			status: http.StatusOK,
+		},
+		{
+			name:   "an installation that doesn't admit the policy's namespace grants nothing",
+			caller: caller,
+			modify: func(inputs *model.Inputs) {
+				inputs.Installations[0].Spec.AllowedNamespaces = githubgatev1alpha1.AllowedNamespaces{Names: []string{"ci-other"}}
+			},
+			body:   `{"repositories": ["foo"]}`,
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "a ServiceAccount of another namespace gets nothing from the policy",
+			caller: "ci-b/ci-build",
+			body:   `{"repositories": ["foo"]}`,
+			status: http.StatusForbidden,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+
+			if test.modify != nil {
+				test.modify(&f.inputs)
+				f.rebuild()
+			}
+
+			got := f.request(t, test.caller, test.body)
+			assert.Equal(t, test.status, got.status, got.err.Message)
+
+			if test.status != http.StatusOK {
+				assert.Empty(t, f.fake.MintLog())
+			}
+		})
+	}
+}

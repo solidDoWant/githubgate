@@ -5,9 +5,9 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Tokens
 
 1. A ServiceAccount named by a policy asks for a token for one allowed repository and gets one whose repositories and permissions (as reported by the fake GitHub) are exactly those the policy gives.
-   Tests:
+   Tests: `internal/server: TestAllowedRequestReturnsTheTokenWithGitHubsRepositoriesAndPermissions`
 2. A ServiceAccount not named by any policy in its namespace is refused (`403`) with a message naming its namespace and ServiceAccount; nothing is minted.
-   Tests:
+   Tests: `internal/server: TestRefusedRequestsMintNothing/ServiceAccount named by no policy`
 3. Asking for a repository the policy doesn't cover is refused, and the message names the repository.
    Tests:
 4. Asking for a permission, or a higher level, than the policy gives is refused, and the message names the permission.
@@ -27,7 +27,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 11. Two Apps installed on the same owner: a caller allowed through both must name the installation (`409` otherwise); a caller allowed through one gets a token from that one.
     Tests:
 12. Repeated requests within the token's lifetime reuse a cached token (one mint at the fake GitHub); a token near expiry is replaced.
-    Tests:
+    Tests: `internal/server: TestRepeatedRequestsReuseTheCachedTokenUntilItHasUnderTenMinutesLeft`, `internal/server: TestOneReplicaMintsOnceForRepeatedRequests`
 
 ## Policies and status
 
@@ -66,9 +66,9 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 26. No key or token appears in logs, events, status, metrics or error messages across the whole e2e suite (checked by searching the collected output for every key and token used).
     Tests:
 27. Every request writes one audit line with namespace, ServiceAccount, installation, repositories, permissions and decision.
-    Tests:
+    Tests: `internal/server: TestEveryRequestWritesOneAuditLineWithoutTheToken`
 28. Metrics show requests by decision and the GitHub rate-limit remaining per installation.
-    Tests:
+    Tests: `internal/server: TestMetricsCountRequestsByDecision`, `internal/github: TestMintUpdatesTheRateLimitGaugeAtMostOnceAMinute`
 29. **Live:** against the owner's test App, scenarios 1, 4, 7 and 20 pass on github.com.
     Tests:
 30. **Docs:** a user page shows how to use GitHub from a Tekton task and from a Coder workspace; an admin page shows how to create an App, its installation, a ceiling and a policy.

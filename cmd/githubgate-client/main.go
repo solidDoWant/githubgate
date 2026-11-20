@@ -62,6 +62,8 @@ type environment struct {
 	stderr io.Writer
 	getenv func(string) string
 	sleep  func(context.Context, int) error
+	// lookupHost resolves a host name; nil means the system resolver.
+	lookupHost func(context.Context, string) ([]string, error)
 }
 
 func run(ctx context.Context, env *environment, args []string) error {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -139,28 +142,157 @@ func TestConfigureProxySetsTheProxyHelperAndOnlyTheProxyCA(t *testing.T) {
 	assert.Equal(t, vars["GITHUBGATE_PROXY_CA_FILE"]+"\n", gitConfig("--get-all", sslCAInfoKey))
 }
 
-func TestGHProxyRunsGHWithTheServiceAccountTokenAndOnlyTheProxyCA(t *testing.T) {
+// runClientWithHosts runs the client with a fake name resolver.
+func runClientWithHosts(t *testing.T, vars map[string]string, hosts map[string][]string, args ...string) (string, error) {
+	t.Helper()
+
+	var stdout bytes.Buffer
+
+	env := &environment{
+		stdin:  strings.NewReader(""),
+		stdout: &stdout,
+		stderr: &bytes.Buffer{},
+		getenv: func(key string) string { return vars[key] },
+		sleep:  func(context.Context, int) error { return nil },
+		lookupHost: func(_ context.Context, host string) ([]string, error) {
+			return hosts[host], nil
+		},
+	}
+
+	err := run(t.Context(), env, args)
+
+	return stdout.String(), err
+}
+
+func pemFile(t *testing.T, der []byte) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "system.crt")
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+
+	return path
+}
+
+func TestGHProxyTrustsTheProxyCAAndTheSystemCAsAndSendsTheServiceAccountToken(t *testing.T) {
 	server := httptest.NewTLSServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 
 	api, vars := proxyEnvelope(t, server.Certificate().Raw)
 
+	systemCA := otherCA(t)
+	vars["SSL_CERT_FILE"] = pemFile(t, systemCA)
+	vars["GITHUBGATE_PROXY_ADDRESS"] = "10.96.0.50"
+
+	hosts := map[string][]string{}
+	for _, host := range proxiedHosts {
+		hosts[host] = []string{"10.96.0.50"}
+	}
+
 	bin := t.TempDir()
-	stub := "#!/bin/sh\necho \"$GH_TOKEN|$SSL_CERT_FILE|$(ls -A \"$SSL_CERT_DIR\" | wc -l)|$*\"\n"
+	// The stub reports the token and whether the bundle holds both CAs.
+	stub := "#!/bin/sh\necho \"$GH_TOKEN|$(grep -c 'BEGIN CERTIFICATE' \"$SSL_CERT_FILE\")|$(grep -c \"$(sed -n 2p \"$GITHUBGATE_PROXY_CA_FILE\")\" \"$SSL_CERT_FILE\")|$(grep -c \"$(sed -n 2p \"$SYSTEM_CA\")\" \"$SSL_CERT_FILE\")|$*\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(stub), 0o700))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GH_TOKEN", "")
-	t.Setenv("SSL_CERT_DIR", "/etc/ssl/certs")
+	t.Setenv("GITHUBGATE_PROXY_CA_FILE", vars["GITHUBGATE_PROXY_CA_FILE"])
+	t.Setenv("SYSTEM_CA", vars["SSL_CERT_FILE"])
 
-	out, _, err := runClient(t, vars, "", "gh", "--proxy", "--", "api", "repos/acme/foo")
+	out, err := runClientWithHosts(t, vars, hosts, "gh", "--proxy", "--", "release", "download", "v1", "--archive=tar.gz")
 	require.NoError(t, err)
-	assert.Equal(t, "sa-one|"+vars["GITHUBGATE_PROXY_CA_FILE"]+"|0|api repos/acme/foo\n", out)
+	assert.Equal(t, "sa-one|2|1|1|release download v1 --archive=tar.gz\n", out)
 	assert.Zero(t, api.calls())
 
 	vars["GITHUBGATE_PROXY_CA_FILE"] = filepath.Join(t.TempDir(), "missing.crt")
-	out, _, err = runClient(t, vars, "", "gh", "--proxy", "--", "api", "repos/acme/foo")
+	out, err = runClientWithHosts(t, vars, hosts, "gh", "--proxy", "--", "api", "repos/acme/foo")
 	require.Error(t, err, "gh does not run without the proxy CA")
 	assert.Empty(t, out)
+}
+
+func TestGHProxyRefusesWhenAGitHubNameDoesNotPointAtTheProxy(t *testing.T) {
+	proxyHosts := func() map[string][]string {
+		hosts := map[string][]string{"proxy.svc": {"10.96.0.50"}}
+		for _, host := range proxiedHosts {
+			hosts[host] = []string{"10.96.0.50"}
+		}
+
+		return hosts
+	}
+
+	tests := map[string]struct {
+		vars    map[string]string
+		hosts   func() map[string][]string
+		wantErr string
+	}{
+		"api.github.com resolves to the real GitHub": {
+			vars: map[string]string{"GITHUBGATE_PROXY_ADDRESS": "10.96.0.50"},
+			hosts: func() map[string][]string {
+				hosts := proxyHosts()
+				hosts["api.github.com"] = []string{"140.82.112.5"}
+
+				return hosts
+			},
+			wantErr: "api.github.com",
+		},
+		"one of two addresses of github.com is not the proxy": {
+			vars: map[string]string{"GITHUBGATE_PROXY_ADDRESS": "10.96.0.50"},
+			hosts: func() map[string][]string {
+				hosts := proxyHosts()
+				hosts["github.com"] = []string{"10.96.0.50", "140.82.112.3"}
+
+				return hosts
+			},
+			wantErr: "github.com",
+		},
+		"uploads.github.com does not resolve": {
+			vars: map[string]string{"GITHUBGATE_PROXY_ADDRESS": "10.96.0.50"},
+			hosts: func() map[string][]string {
+				hosts := proxyHosts()
+				delete(hosts, "uploads.github.com")
+
+				return hosts
+			},
+			wantErr: "uploads.github.com",
+		},
+		"neither proxy address nor host is set": {
+			vars:    map[string]string{},
+			hosts:   proxyHosts,
+			wantErr: "GITHUBGATE_PROXY_ADDRESS",
+		},
+		"the proxy host is found by name": {
+			vars: map[string]string{"GITHUBGATE_PROXY_HOST": "proxy.svc"},
+			hosts: func() map[string][]string {
+				hosts := proxyHosts()
+				hosts["github.com"] = []string{"140.82.112.3"}
+
+				return hosts
+			},
+			wantErr: "github.com",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.NotFoundHandler())
+			t.Cleanup(server.Close)
+
+			_, vars := proxyEnvelope(t, server.Certificate().Raw)
+			vars["SSL_CERT_FILE"] = pemFile(t, otherCA(t))
+
+			for key, value := range test.vars {
+				vars[key] = value
+			}
+
+			bin := t.TempDir()
+			marker := filepath.Join(bin, "ran")
+			stub := "#!/bin/sh\ntouch " + marker + "\n"
+			require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(stub), 0o700))
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			_, err := runClientWithHosts(t, vars, test.hosts(), "gh", "--proxy", "--", "api", "x")
+			require.ErrorContains(t, err, test.wantErr)
+			assert.NoFileExists(t, marker, "gh must not run, so no token is sent")
+		})
+	}
 }
 
 // otherCA is a self-signed certificate that signed nothing the tests serve.

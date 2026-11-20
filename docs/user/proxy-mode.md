@@ -36,6 +36,9 @@ spec:
   containers:
     - name: work
       image: your-image-with-git-gh-and-githubgate-client
+      env:
+        - name: GITHUBGATE_PROXY_ADDRESS
+          value: 10.96.0.50 # the same cluster IP as in hostAliases
       volumeMounts:
         - name: githubgate-token
           mountPath: /var/run/secrets/githubgate
@@ -57,6 +60,8 @@ spec:
 ```
 
 The client trusts only the proxy CA file for GitHub, so a request that reaches the real github.com by mistake fails and your token does not leave the pod. To use another path, set `GITHUBGATE_PROXY_CA_FILE`.
+
+`gh --proxy` also trusts the system roots, so that it can follow GitHub's redirects to its download hosts. To keep your token safe, it first checks that the three GitHub names point at the proxy. Set `GITHUBGATE_PROXY_ADDRESS` in the pod to the same cluster IP as in `hostAliases`, or set `GITHUBGATE_PROXY_HOST` to the name of the proxy Service. Without the `hostAliases`, `gh --proxy` stops before it sends the token.
 
 ## Use git and gh
 

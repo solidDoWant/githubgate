@@ -111,6 +111,9 @@ type liveEnv struct {
 	gitPath string
 	store   *model.Store
 	api     *server.Server
+	// proxyAudit holds only the in-process proxy's audit lines, apart from
+	// the transcript, so a failure can print exactly what the proxy logged.
+	proxyAudit *transcript
 }
 
 // recordingAuthenticator takes the caller from the credential "ns/sa", so the
@@ -231,6 +234,7 @@ func setup(t *testing.T) *liveEnv {
 	live := &liveEnv{
 		appID: appID, keyPEM: keyPEM, owner: owner, repo: repo,
 		log: &transcript{tokens: map[string]bool{}}, tmp: t.TempDir(),
+		proxyAudit: &transcript{tokens: map[string]bool{}},
 	}
 
 	// The token API runs in-process on a snapshot built from the test's own

@@ -86,14 +86,14 @@ func (l *liveEnv) serveProxy(t *testing.T, address string, observe func(*http.Re
 		},
 		Tokens:    l.api,
 		Upstreams: proxy.DefaultUpstreams(),
-		Audit:     slog.New(slog.NewJSONHandler(l.log, nil)),
+		Audit:     slog.New(slog.NewJSONHandler(io.MultiWriter(l.log, l.proxyAudit), nil)),
 	})
 	require.NoError(t, err)
 
 	var handler http.Handler = proxy.NewHandler(proxy.Options{
 		Authenticator: recordingAuthenticator{},
 		Forwarder:     forwarder,
-		Audit:         slog.New(slog.NewJSONHandler(l.log, nil)),
+		Audit:         slog.New(slog.NewJSONHandler(io.MultiWriter(l.log, l.proxyAudit), nil)),
 	})
 
 	if observe != nil {

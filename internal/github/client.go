@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
-	gogithub "github.com/google/go-github/v92/github"
+	gogithub "github.com/google/go-github/v93/github"
 	"golang.org/x/sync/singleflight"
 	"k8s.io/apimachinery/pkg/types"
 )

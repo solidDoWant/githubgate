@@ -25,7 +25,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 9. The pod's first GitHub request succeeds: the interception is ready before the pod's own containers start.
    Tests:
 10. A pod keeps working past its ServiceAccount token's rotation: requests after the projected token is replaced use the new token.
-    Tests:
+    Tests: `cmd/githubgate-client: TestInterceptSendsTheRotatedServiceAccountTokenOnTheNextRequest`
 11. The private key of a pod's interception certificate never appears in any Kubernetes object, event or log.
     Tests:
 12. A pod with several containers and init containers (as a Tekton TaskRun pod has) is intercepted in every container that runs after the interception starts.

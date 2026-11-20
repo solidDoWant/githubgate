@@ -12,6 +12,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+
+	"github.com/solidDoWant/githubgate/internal/progress"
 )
 
 const (
@@ -169,7 +171,7 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 		servers = append(servers, proxy)
 
 		go func() {
-			served <- proxy.ServeTLS(newLimitListener(newProgressListener(options.Proxy, options.ProxyProgressTimeout), options.MaxConnections), "", "")
+			served <- proxy.ServeTLS(newLimitListener(progress.NewListener(options.Proxy, options.ProxyProgressTimeout), options.MaxConnections), "", "")
 		}()
 	}
 

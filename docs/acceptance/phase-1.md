@@ -40,7 +40,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 16. A `GitHubApp` whose App ID can come inline or from a Secret works either way; one whose key Secret is missing or not a valid RSA key is `Ready=False` with `SecretUnavailable` or `SecretInvalid`; requests through it fail closed with `503`, and fixing the Secret makes it work without a restart.
     Tests:
 17. A `GitHubInstallation` for an owner the App isn't installed on is `Ready=False, reason=InstallationNotFound`.
-    Tests:
+    Tests: `internal/controller: TestStatusOfAppsInstallationsAndPolicies/an installation on an owner the App is not installed on is InstallationNotFound`
 18. Changing a policy (removing a repository) refuses new tokens for that repository within seconds, without a restart.
     Tests:
 19. The webhook rejects unknown permission names or levels, and a rule outside its installation's ceiling, with a message naming the field; the CRD rejects a rule with no mode enabled.

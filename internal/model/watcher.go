@@ -111,7 +111,20 @@ func (w *Watcher) Start(ctx context.Context) error {
 }
 
 func (w *Watcher) rebuild(ctx context.Context) error {
-	in := Inputs{AdminNamespaces: w.AdminNamespaces}
+	in, err := ReadInputs(ctx, w.Cache, w.AdminNamespaces)
+	if err != nil {
+		return err
+	}
+
+	w.Store.Swap(Build(in))
+
+	return nil
+}
+
+// ReadInputs lists everything a snapshot is built from. Secrets are read only
+// in the admin namespaces.
+func ReadInputs(ctx context.Context, reader client.Reader, adminNamespaces []string) (Inputs, error) {
+	in := Inputs{AdminNamespaces: adminNamespaces}
 
 	var apps githubgatev1alpha1.GitHubAppList
 
@@ -122,22 +135,21 @@ func (w *Watcher) rebuild(ctx context.Context) error {
 	var namespaces corev1.NamespaceList
 
 	for _, list := range []client.ObjectList{&apps, &installations, &policies, &namespaces} {
-		if err := w.Cache.List(ctx, list); err != nil {
-			return fmt.Errorf("listing %T: %w", list, err)
+		if err := reader.List(ctx, list); err != nil {
+			return Inputs{}, fmt.Errorf("listing %T: %w", list, err)
 		}
 	}
 
-	for _, namespace := range w.AdminNamespaces {
+	for _, namespace := range adminNamespaces {
 		var secrets corev1.SecretList
-		if err := w.Cache.List(ctx, &secrets, client.InNamespace(namespace)); err != nil {
-			return fmt.Errorf("listing Secrets in %s: %w", namespace, err)
+		if err := reader.List(ctx, &secrets, client.InNamespace(namespace)); err != nil {
+			return Inputs{}, fmt.Errorf("listing Secrets in %s: %w", namespace, err)
 		}
 
 		in.Secrets = append(in.Secrets, secrets.Items...)
 	}
 
 	in.Apps, in.Installations, in.Policies, in.Namespaces = apps.Items, installations.Items, policies.Items, namespaces.Items
-	w.Store.Swap(Build(in))
 
-	return nil
+	return in, nil
 }

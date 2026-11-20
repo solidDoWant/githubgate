@@ -40,7 +40,7 @@ go_build() {
 build_one() {
 	local name="$1" flags="$2" pkg="$3" dockerfile="$4" image="$5"
 	timed "go build ${name}" go_build "$flags" "$name" "$pkg"
-	timed "docker buildx build ${name}" docker buildx build --platform "linux/${arch}" --file "$dockerfile" --tag "$image" --load .
+	timed "docker buildx build ${name}" docker buildx build --platform "linux/${arch}" --file "$dockerfile" --provenance=false --sbom=false --tag "$image" --load .
 }
 logs="$(mktemp -d)"
 trap 'rmdir "$lock" 2>/dev/null || true; rm -rf "$logs"' EXIT

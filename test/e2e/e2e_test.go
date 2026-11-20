@@ -104,14 +104,73 @@ func (c cluster) tryKubectl(ctx context.Context, stdin string, args ...string) (
 
 func (c cluster) apply(t *testing.T, manifest string) {
 	t.Helper()
-	c.kubectl(t, manifest, "apply", "-f", "-")
+
+	out, err := retryTransient(t.Context(), func() (string, error) {
+		return c.tryKubectl(t.Context(), manifest, "apply", "-f", "-")
+	})
+	require.NoError(t, err, "kubectl apply: %s", out)
 }
 
 func (c cluster) helm(t *testing.T, args ...string) {
 	t.Helper()
 
-	out, err := run(t.Context(), "", "helm", append([]string{"--kube-context", c.context}, args...)...)
+	out, err := retryTransient(t.Context(), func() (string, error) {
+		return run(t.Context(), "", "helm", append([]string{"--kube-context", c.context}, args...)...)
+	})
 	require.NoError(t, err, "helm %s: %s", strings.Join(args, " "), out)
+}
+
+// transientMarkers are the messages of server-side failures that a loaded
+// API server or etcd returns and that go away on their own. A rejection by
+// validation or admission never matches.
+var transientMarkers = []string{
+	"etcdserver: request timed out",
+	"etcdserver: leader changed",
+	"etcdserver: no leader",
+	"Internal error occurred",
+	"context deadline exceeded",
+	"Client.Timeout exceeded",
+	"net/http: TLS handshake timeout",
+	"i/o timeout",
+	"connection refused",
+	"connection reset by peer",
+	"(InternalError)",
+	"(ServiceUnavailable)",
+	"(Timeout)",
+	"(TooManyRequests)",
+	"the server is currently unable to handle the request",
+}
+
+func isTransientError(output string) bool {
+	return slices.ContainsFunc(transientMarkers, func(marker string) bool {
+		return strings.Contains(output, marker)
+	})
+}
+
+// retryTransient runs an idempotent command again while it fails with a
+// transient server-side error, up to a few attempts.
+func retryTransient(ctx context.Context, attempt func() (string, error)) (string, error) {
+	const attempts = 5
+
+	var (
+		out string
+		err error
+	)
+
+	for try := 1; try <= attempts; try++ {
+		out, err = attempt()
+		if err == nil || !isTransientError(out) || try == attempts {
+			return out, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return out, err
+		case <-time.After(time.Duration(try) * 2 * time.Second):
+		}
+	}
+
+	return out, err
 }
 
 // exec runs a shell script in the pod and returns its output.

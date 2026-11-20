@@ -19,6 +19,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/solidDoWant/githubgate/internal/intercept"
 )
 
 const (
@@ -261,8 +263,8 @@ func listenAddress(pod *corev1.Pod) (netip.AddrPort, string) {
 		return netip.MustParseAddrPort(DefaultListen), ""
 	}
 
-	addrPort, err := netip.ParseAddrPort(value)
-	if err != nil || addrPort.Port() != privilegedPortLimit || addrPort.Addr().IsUnspecified() || addrPort.Addr().Zone() != "" {
+	addrPort, err := intercept.ListenAddress(value)
+	if err != nil || addrPort.Port() != privilegedPortLimit {
 		return netip.AddrPort{}, fmt.Sprintf("the %s annotation %q isn't a specific IP with port 443", ListenAnnotation, value)
 	}
 

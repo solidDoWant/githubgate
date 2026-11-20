@@ -134,12 +134,14 @@ func TestSkipAndReject(t *testing.T) {
 		"reserved token mount": {func(p *corev1.Pod) {
 			p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "githubgate-token"}}
 		}, "a mount is named githubgate-token"},
-		"listen without port":        {listenAnnotation("10.0.2.1"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1" isn't a specific IP with port 443`},
-		"listen on another port":     {listenAnnotation("10.0.2.1:8443"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1:8443" isn't a specific IP with port 443`},
-		"listen on 0.0.0.0":          {listenAnnotation("0.0.0.0:443"), `the githubgate.soliddowant.dev/listen annotation "0.0.0.0:443" isn't a specific IP with port 443`},
-		"listen on ::":               {listenAnnotation("[::]:443"), `the githubgate.soliddowant.dev/listen annotation "[::]:443" isn't a specific IP with port 443`},
-		"listen on a host name":      {listenAnnotation("localhost:443"), `the githubgate.soliddowant.dev/listen annotation "localhost:443" isn't a specific IP with port 443`},
-		"annotation without sidecar": {func(p *corev1.Pod) { p.Annotations = map[string]string{inject.InjectedAnnotation: "true"} }, "the injected annotation is set without the githubgate-intercept init container"},
+		"listen without port":         {listenAnnotation("10.0.2.1"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1" isn't a specific IP with port 443`},
+		"listen on another port":      {listenAnnotation("10.0.2.1:8443"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1:8443" isn't a specific IP with port 443`},
+		"listen on 0.0.0.0":           {listenAnnotation("0.0.0.0:443"), `the githubgate.soliddowant.dev/listen annotation "0.0.0.0:443" isn't a specific IP with port 443`},
+		"listen on ::":                {listenAnnotation("[::]:443"), `the githubgate.soliddowant.dev/listen annotation "[::]:443" isn't a specific IP with port 443`},
+		"listen on mapped 0.0.0.0":    {listenAnnotation("[::ffff:0.0.0.0]:443"), `the githubgate.soliddowant.dev/listen annotation "[::ffff:0.0.0.0]:443" isn't a specific IP with port 443`},
+		"listen on mapped ::ffff:0:0": {listenAnnotation("[::ffff:0:0]:443"), `the githubgate.soliddowant.dev/listen annotation "[::ffff:0:0]:443" isn't a specific IP with port 443`},
+		"listen on a host name":       {listenAnnotation("localhost:443"), `the githubgate.soliddowant.dev/listen annotation "localhost:443" isn't a specific IP with port 443`},
+		"annotation without sidecar":  {func(p *corev1.Pod) { p.Annotations = map[string]string{inject.InjectedAnnotation: "true"} }, "the injected annotation is set without the githubgate-intercept init container"},
 	}
 
 	for name, test := range tests {

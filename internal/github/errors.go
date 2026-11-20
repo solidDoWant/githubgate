@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	gogithub "github.com/google/go-github/v92/github"
+	gogithub "github.com/google/go-github/v93/github"
 )
 
 // Reason is the error code a caller of the token API gets for a GitHub failure.

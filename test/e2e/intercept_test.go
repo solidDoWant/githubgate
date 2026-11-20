@@ -590,6 +590,28 @@ webhooks:
 		}
 	})
 
+	t.Run("a container whose proxy settings come from envFrom keeps its NO_PROXY and gains the GitHub hosts", func(t *testing.T) {
+		c.apply(t, fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata: {name: proxy-settings, namespace: %s}
+data:
+  HTTPS_PROXY: http://egress.example:3128
+  NO_PROXY: internal.example
+`, interceptNamespace))
+
+		c.startInterceptPod(t, interceptPod{
+			name: "envfrom", namespace: interceptNamespace,
+			containers: []interceptContainer{{
+				name: "main", script: "sleep infinity",
+				extra: "      envFrom:\n        - configMapRef: {name: proxy-settings}\n",
+			}},
+		})
+
+		out, err := c.exec(ctx, interceptNamespace, "envfrom", "printenv NO_PROXY")
+		require.NoError(t, err, out)
+		assert.Equal(t, "internal.example,api.github.com,uploads.github.com,github.com", strings.TrimSpace(out))
+	})
+
 	t.Run("no key material appears in the trust directory, the pod specs, the events or the logs", func(t *testing.T) {
 		out, err := c.exec(ctx, interceptNamespace, "plain", "ls -A "+trustDirectory)
 		require.NoError(t, err, out)

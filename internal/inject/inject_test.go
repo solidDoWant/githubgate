@@ -444,3 +444,60 @@ func TestMutatedPodPassesRestrictedPodSecurity(t *testing.T) {
 		assert.True(t, result.Allowed, result.ForbiddenReason+" "+result.ForbiddenDetail)
 	}
 }
+
+func TestNoProxyKeepsEnvFromValue(t *testing.T) {
+	t.Parallel()
+
+	hosts := "api.github.com,uploads.github.com,github.com"
+	extended := "$(NO_PROXY)," + hosts
+	envFrom := []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "proxy-settings"}}}}
+
+	tests := map[string]struct {
+		env      []corev1.EnvVar
+		envFrom  []corev1.EnvFromSource
+		wantUp   string
+		wantLow  string
+		wantNone bool
+	}{
+		"proxy in env, NO_PROXY from envFrom": {
+			env: []corev1.EnvVar{{Name: "HTTPS_PROXY", Value: "http://egress:3128"}}, envFrom: envFrom,
+			wantUp: extended, wantLow: extended,
+		},
+		"all proxy settings from envFrom": {envFrom: envFrom, wantUp: extended, wantLow: extended},
+		"NO_PROXY in env wins over envFrom": {
+			env:     []corev1.EnvVar{{Name: "NO_PROXY", Value: "10.0.0.0/8"}},
+			envFrom: envFrom, wantUp: "10.0.0.0/8," + hosts, wantLow: extended,
+		},
+		"proxy only in env": {
+			env:    []corev1.EnvVar{{Name: "HTTPS_PROXY", Value: "http://egress:3128"}},
+			wantUp: hosts, wantLow: hosts,
+		},
+		"no proxy and no envFrom": {wantNone: true},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			pod := basePod()
+			pod.Spec.Containers[0].Env = test.env
+			pod.Spec.Containers[0].EnvFrom = test.envFrom
+
+			_, mutated := review(t, newHandler(t), pod)
+			require.NotNil(t, mutated)
+
+			upper, foundUpper := env(mutated.Spec.Containers[0], "NO_PROXY")
+			lower, foundLower := env(mutated.Spec.Containers[0], "no_proxy")
+
+			if test.wantNone {
+				assert.False(t, foundUpper)
+				assert.False(t, foundLower)
+
+				return
+			}
+
+			assert.Equal(t, test.wantUp, upper)
+			assert.Equal(t, test.wantLow, lower)
+		})
+	}
+}

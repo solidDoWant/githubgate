@@ -18,6 +18,11 @@ For: admins who install githubgate with its Helm chart.
 | `githubBaseURL` | `""` | GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double. |
 | `webhook.enabled` | `false` | Serve the validating admission webhook (needs cert-manager). |
 | `webhook.failurePolicy` | `Fail` | What the API server does when the webhook is unreachable. |
+| `proxy.enabled` | `false` | Serve proxy mode: a second TLS listener behind the `githubgate-proxy` Service (port 443). Needs cert-manager and `proxy.ca`. |
+| `proxy.clusterIP` | `""` | Fixed cluster IP of the `githubgate-proxy` Service, so pods can name it in `hostAliases`. Empty means the cluster picks one. |
+| `proxy.ca.name` | `""` | Name of the cert-manager Issuer or ClusterIssuer that signs the proxy certificate. Use the admin's name-constrained CA (permitted subtree `github.com`). Required when `proxy.enabled` is true. |
+| `proxy.ca.kind` | `Issuer` | Kind of the issuer. |
+| `proxy.ca.group` | `cert-manager.io` | API group of the issuer. |
 | `certificate.caConfigMapName` | `githubgate-ca` | Name of the ConfigMap that publishes the CA for clients. |
 | `certificate.caDurationDays` | `3650` | Validity of the generated CA, in days. |
 | `certificate.duration` | `2160h` | Validity of the serving certificates. |

@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -50,6 +51,7 @@ const (
 	clientBinary    = "/opt/client/githubgate-client"
 	fakeAPI         = "http://fakegithub.fake.svc:8080"
 	gateNamespace   = "githubgate"
+	proxyIP         = "10.96.0.50" // pinned cluster IP of the githubgate-proxy Service, inside kind's default service range
 	callerNamespace = "ci"
 )
 
@@ -265,14 +267,47 @@ func publicKeyPEM(t *testing.T, key *rsa.PrivateKey) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
+// installProxyCA creates the CA that signs the proxy's certificate, as an
+// Issuer named proxy-ca in the githubgate namespace. Its root certificate is
+// in the Secret proxy-ca-root.
+func (c cluster) installProxyCA(t *testing.T) {
+	t.Helper()
+
+	c.apply(t, fmt.Sprintf(`
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: proxy-root-bootstrap, namespace: %[1]s}
+spec: {selfSigned: {}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: proxy-ca-root, namespace: %[1]s}
+spec:
+  isCA: true
+  commonName: githubgate-e2e-proxy-ca
+  secretName: proxy-ca-root
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: proxy-root-bootstrap, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: proxy-ca, namespace: %[1]s}
+spec: {ca: {secretName: proxy-ca-root}}
+`, gateNamespace))
+	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", gateNamespace, "certificate/proxy-ca-root", "--timeout=2m")
+}
+
 func (c cluster) installGitHubgate(t *testing.T) {
 	t.Helper()
 
 	repo, tag, _ := strings.Cut(c.serverImage, ":")
 	c.apply(t, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata: {name: %s}\n", gateNamespace))
+	c.installProxyCA(t)
 	c.helm(t, "upgrade", "--install", "githubgate", "../../deploy/charts/githubgate",
 		"--namespace", gateNamespace, "--set", "image.repository="+repo, "--set", "image.tag="+tag,
-		"--set", "githubBaseURL="+fakeAPI, "--wait", "--timeout", "4m")
+		"--set", "githubBaseURL="+fakeAPI,
+		"--set", "proxy.enabled=true", "--set", "proxy.ca.name=proxy-ca", "--set", "proxy.clusterIP="+proxyIP,
+		"--wait", "--timeout", "4m")
 }
 
 // configure creates the App, its installation, the repository and the
@@ -366,8 +401,18 @@ spec:
 // startCallerPod runs a pod as the ServiceAccount, with the client mounted as
 // an image volume and the ServiceAccount token and the CA at the documented
 // paths.
-func (c cluster) startCallerPod(t *testing.T, name string) {
+//
+// A proxied pod also names the three GitHub hosts in hostAliases, pointing at
+// the proxy, and trusts the proxy CA (only) at /var/run/secrets/githubgate-proxy/ca.crt.
+func (c cluster) startCallerPod(t *testing.T, name string, proxied bool) {
 	t.Helper()
+
+	extraSpec, extraMount, extraVolume := "", "", ""
+	if proxied {
+		extraSpec = fmt.Sprintf("  hostAliases:\n    - ip: %s\n      hostnames: [api.github.com, uploads.github.com, github.com]\n", proxyIP)
+		extraMount = "        - {name: proxy-ca, mountPath: /var/run/secrets/githubgate-proxy, readOnly: true}\n"
+		extraVolume = "    - name: proxy-ca\n      configMap: {name: githubgate-proxy-ca}\n"
+	}
 
 	c.apply(t, fmt.Sprintf(`
 apiVersion: v1
@@ -378,7 +423,7 @@ apiVersion: v1
 kind: Pod
 metadata: {name: %[1]s, namespace: %[2]s}
 spec:
-  serviceAccountName: %[1]s
+%[5]s  serviceAccountName: %[1]s
   containers:
     - name: main
       image: %[3]s
@@ -389,7 +434,7 @@ spec:
       volumeMounts:
         - {name: githubgate, mountPath: /var/run/secrets/githubgate, readOnly: true}
         - {name: client, mountPath: /opt/client, readOnly: true}
-  volumes:
+%[6]s  volumes:
     - name: githubgate
       projected:
         sources:
@@ -397,7 +442,7 @@ spec:
           - configMap: {name: githubgate-ca, items: [{key: ca.crt, path: ca.crt}]}
     - name: client
       image: {reference: %[4]s, pullPolicy: IfNotPresent}
-`, name, callerNamespace, c.fakeImage, c.clientImage))
+%[7]s`, name, callerNamespace, c.fakeImage, c.clientImage, extraSpec, extraMount, extraVolume))
 	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", callerNamespace, "pod/"+name, "--timeout=3m")
 }
 
@@ -417,9 +462,16 @@ func TestTokenModeOnKind(t *testing.T) {
 	ca := c.kubectl(t, "", "get", "configmap", "githubgate-ca", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
 	c.kubectl(t, ca, "create", "configmap", "githubgate-ca", "-n", callerNamespace, "--from-file=ca.crt=/dev/stdin")
 
+	proxyCA := c.kubectl(t, "", "get", "secret", "proxy-ca-root", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
+	proxyCAPEM, err := base64.StdEncoding.DecodeString(proxyCA)
+	require.NoError(t, err)
+	c.kubectl(t, string(proxyCAPEM), "create", "configmap", "githubgate-proxy-ca", "-n", callerNamespace, "--from-file=ca.crt=/dev/stdin")
+
 	for _, name := range []string{"ci-build", "ci-release", "ci-client"} {
-		c.startCallerPod(t, name)
+		c.startCallerPod(t, name, false)
 	}
+
+	c.startCallerPod(t, "ci-proxied", true)
 
 	// Output of every failed or refused call, for the leak search.
 	var clientOutput []string
@@ -445,6 +497,22 @@ curl -s -o /dev/null -w '%%{http_code}' -X POST -H "Authorization: token ${token
 		assert.Contains(t, out, "denied")
 
 		clientOutput = append(clientOutput, out)
+	})
+
+	t.Run("a proxied pod reaches the proxy under the three GitHub host names and trusts only the proxy CA", func(t *testing.T) {
+		for _, host := range []string{"api.github.com", "uploads.github.com", "github.com"} {
+			script := fmt.Sprintf(`curl -sS --cacert /var/run/secrets/githubgate-proxy/ca.crt -o /dev/null -w '%%{http_code}' -H "Authorization: Bearer $(cat /var/run/secrets/githubgate/token)" https://%s/ 2>&1`, host)
+
+			out, err := c.exec(ctx, callerNamespace, "ci-proxied", script)
+			clientOutput = append(clientOutput, out)
+			require.NoError(t, err, "TLS to %s must verify against the proxy CA: %s", host, out)
+			assert.NotEqual(t, "000", strings.TrimSpace(out), "an HTTP response from the proxy for %s", host)
+		}
+
+		// The system trust store does not hold the proxy CA.
+		out, err := c.exec(ctx, callerNamespace, "ci-proxied", "curl -sS -o /dev/null https://api.github.com/ 2>&1")
+		clientOutput = append(clientOutput, out)
+		require.Error(t, err, "the proxy's certificate must not verify without the proxy CA: %s", out)
 	})
 
 	t.Run("killing a replica during a stream of token requests fails no request beyond the one in flight", func(t *testing.T) {
@@ -635,7 +703,7 @@ git clone https://github.com/%s/%s.git /tmp/denied 2>&1
 			secrets = append(secrets, token.Token)
 		}
 
-		for _, pod := range []string{"ci-build", "ci-release", "ci-client"} {
+		for _, pod := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied"} {
 			secrets = append(secrets, strings.TrimSpace(c.kubectl(t, "", "exec", "-n", callerNamespace, pod, "--", "cat", "/var/run/secrets/githubgate/token")))
 		}
 

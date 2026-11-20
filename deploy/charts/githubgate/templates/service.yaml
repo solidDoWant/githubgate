@@ -20,3 +20,23 @@ spec:
       port: 9443
       targetPort: webhook
     {{- end }}
+{{- if .Values.proxy.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "githubgate.fullname" . }}-proxy
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  {{- with .Values.proxy.clusterIP }}
+  clusterIP: {{ . | quote }}
+  {{- end }}
+  selector:
+    {{- include "githubgate.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: proxy
+      port: 443
+      targetPort: proxy
+{{- end }}

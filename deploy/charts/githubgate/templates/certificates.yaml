@@ -79,3 +79,24 @@ spec:
     name: {{ $fullname }}
     kind: Issuer
 {{- end }}
+{{- if .Values.proxy.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-proxy
+  labels:
+    {{- include "githubgate.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $fullname }}-proxy-tls
+  duration: {{ .Values.certificate.duration }}
+  renewBefore: {{ .Values.certificate.renewBefore }}
+  dnsNames:
+    - api.github.com
+    - uploads.github.com
+    - github.com
+  issuerRef:
+    name: {{ required "proxy.ca.name is required when proxy.enabled is true" .Values.proxy.ca.name }}
+    kind: {{ .Values.proxy.ca.kind }}
+    group: {{ .Values.proxy.ca.group }}
+{{- end }}

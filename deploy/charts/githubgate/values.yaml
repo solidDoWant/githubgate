@@ -24,6 +24,18 @@ webhook:
   enabled: false
   # -- What the API server does when the webhook is unreachable.
   failurePolicy: Fail
+proxy:
+  # -- Serve proxy mode: a second TLS listener behind the `githubgate-proxy` Service (port 443). Needs cert-manager and `proxy.ca`.
+  enabled: false
+  # -- Fixed cluster IP of the `githubgate-proxy` Service, so pods can name it in `hostAliases`. Empty means the cluster picks one.
+  clusterIP: ""
+  ca:
+    # -- Name of the cert-manager Issuer or ClusterIssuer that signs the proxy certificate. Use the admin's name-constrained CA (permitted subtree `github.com`). Required when `proxy.enabled` is true.
+    name: ""
+    # -- Kind of the issuer.
+    kind: Issuer
+    # -- API group of the issuer.
+    group: cert-manager.io
 certificate:
   # -- Name of the ConfigMap that publishes the CA for clients.
   caConfigMapName: githubgate-ca

@@ -1,6 +1,10 @@
-// Command gen-permissions writes internal/permissions/catalogue_gen.go from
-// GitHub's REST OpenAPI description (schema components.schemas.app-permissions)
-// at the commit pinned below.
+// Command gen-permissions writes the catalogues generated from GitHub's API
+// descriptions at the commits pinned below:
+//   - internal/permissions/catalogue_gen.go from the REST OpenAPI description
+//     (schema components.schemas.app-permissions);
+//   - internal/operations/rest_gen.go from the same description's paths;
+//   - internal/operations/mutations_gen.go from the Mutation type of
+//     octokit/graphql-schema.
 package main
 
 import (
@@ -19,6 +23,12 @@ import (
 // descriptionCommit pins github/rest-api-description; Renovate updates it.
 // renovate: depName=github/rest-api-description
 const descriptionCommit = "c9c95fe34ced05fe076001f5c55704742bc8e7f8"
+
+// schemaCommit pins octokit/graphql-schema; Renovate updates it.
+// renovate: depName=octokit/graphql-schema
+const schemaCommit = "82ff2d4780080e6929ebb95608cefa22dfa05ac7"
+
+const schemaURL = "https://raw.githubusercontent.com/octokit/graphql-schema/" + schemaCommit + "/schema.graphql"
 
 const descriptionURL = "https://raw.githubusercontent.com/github/rest-api-description/" + descriptionCommit +
 	"/descriptions/api.github.com/api.github.com.json"
@@ -59,6 +69,7 @@ type description struct {
 			} `json:"properties"`
 		} `json:"schemas"`
 	} `json:"components"`
+	Paths map[string]map[string]json.RawMessage `json:"paths"`
 }
 
 func main() {
@@ -69,25 +80,9 @@ func main() {
 }
 
 func run() error {
-	out := "internal/permissions/catalogue_gen.go"
-	if len(os.Args) > 1 {
-		out = os.Args[1]
-	}
-
 	client := &http.Client{Timeout: 2 * time.Minute}
 
-	resp, err := client.Get(descriptionURL)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetching the description: %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
+	body, err := fetch(client, descriptionURL)
 	if err != nil {
 		return err
 	}
@@ -97,12 +92,90 @@ func run() error {
 		return err
 	}
 
-	src, err := generate(desc.Components.Schemas["app-permissions"].Properties)
+	permissions, err := generate(desc.Components.Schemas["app-permissions"].Properties)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(out, src, 0o644)
+	ids, err := operationIDs(desc.Paths)
+	if err != nil {
+		return err
+	}
+
+	rest, err := generateREST(ids)
+	if err != nil {
+		return err
+	}
+
+	schema, err := fetch(client, schemaURL)
+	if err != nil {
+		return err
+	}
+
+	mutations, err := generateMutations(string(schema))
+	if err != nil {
+		return err
+	}
+
+	for path, src := range map[string][]byte{
+		"internal/permissions/catalogue_gen.go": permissions,
+		"internal/operations/rest_gen.go":       rest,
+		"internal/operations/mutations_gen.go":  mutations,
+	} {
+		if err := os.WriteFile(path, src, 0o644); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func fetch(client *http.Client, url string) ([]byte, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetching %s: %s", url, resp.Status)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// operationIDs reads the operation id of every method of every path. Path
+// items also hold non-method keys (parameters, summary), which are skipped.
+func operationIDs(paths map[string]map[string]json.RawMessage) (map[string]map[string]string, error) {
+	ids := map[string]map[string]string{}
+
+	for template, item := range paths {
+		for key, raw := range item {
+			if _, ok := httpMethods[key]; !ok {
+				if key == "head" || key == "options" || key == "trace" {
+					return nil, fmt.Errorf("%s %s: method not supported by the operation catalogue", key, template)
+				}
+
+				continue
+			}
+
+			var op struct {
+				OperationID string `json:"operationId"`
+			}
+			if err := json.Unmarshal(raw, &op); err != nil {
+				return nil, fmt.Errorf("%s %s: %w", key, template, err)
+			}
+
+			if ids[template] == nil {
+				ids[template] = map[string]string{}
+			}
+
+			ids[template][key] = op.OperationID
+		}
+	}
+
+	return ids, nil
 }
 
 func generate(props map[string]struct {

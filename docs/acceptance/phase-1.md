@@ -17,7 +17,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 6. With no repositories named, the token covers exactly the repositories the caller's rules name exactly; with only glob rules, the request is refused asking for repositories.
    Tests: `internal/resolve: TestResolve/with no repositories named the token covers the repositories the rules name exactly`, `internal/resolve: TestResolve/with no repositories named and only glob rules the request is refused asking for repositories`
 7. A PR-pipeline ServiceAccount (`ci-build`, `contents: read`) can clone but can't create a release; the release ServiceAccount (`ci-release`, `contents: write`) in the same namespace can.
-   Tests: `internal/resolve: TestResolve/a pull-request ServiceAccount can't get the write access a release needs`, `internal/resolve: TestResolve/the release ServiceAccount in the same namespace gets write access`
+   Tests: `internal/resolve: TestResolve/a pull-request ServiceAccount can't get the write access a release needs`, `internal/resolve: TestResolve/the release ServiceAccount in the same namespace gets write access`, `test/e2e: TestTokenModeOnKind/a pull request ServiceAccount can clone but not release and the release ServiceAccount can`
 8. A policy in namespace `ci-a` that names repository `b` is not accepted when the installation's ceiling doesn't admit it, and `ci-a` gets nothing on `b`.
    Tests: `internal/server: TestRulesThePolicyCannotUseGrantNothing/a rule outside the installation's ceiling grants nothing`, `internal/model: TestRuleAcceptance/a repository outside the ceiling is outside the ceiling`
 9. A policy can't use another namespace's ServiceAccount: a token from `ci-b`'s ServiceAccount gets nothing from `ci-a`'s policy.
@@ -62,9 +62,9 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Operation
 
 25. The Helm chart installs githubgate with three replicas; killing any one replica during a stream of token requests causes no failed request beyond the one in flight.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/killing a replica during a stream of token requests fails no request beyond the one in flight`
 26. No key or token appears in logs, events, status, metrics or error messages across the whole e2e suite (checked by searching the collected output for every key and token used).
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/no key or token appears in logs, events, status, metrics or errors`
 27. Every request writes one audit line with namespace, ServiceAccount, installation, repositories, permissions and decision.
     Tests: `internal/server: TestEveryRequestWritesOneAuditLineWithoutTheToken`
 28. Metrics show requests by decision and the GitHub rate-limit remaining per installation.

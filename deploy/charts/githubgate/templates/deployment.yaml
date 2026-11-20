@@ -35,6 +35,9 @@ spec:
             - --tls-cert-file=/var/run/githubgate/tls/tls.crt
             - --tls-key-file=/var/run/githubgate/tls/tls.key
             - --leader-elect
+            {{- if .Values.githubBaseURL }}
+            - --github-base-url={{ .Values.githubBaseURL }}
+            {{- end }}
             {{- if .Values.webhook.enabled }}
             - --webhook
             - --webhook-cert-dir=/var/run/githubgate/webhook

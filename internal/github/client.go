@@ -124,6 +124,15 @@ func (r *Registry) Client(app types.NamespacedName, credentials Credentials) (*A
 		r.installations[credentials.AppID] = cache
 	}
 
+	// New credentials may succeed where the last listing failed, so a failed
+	// listing's limit does not carry over to them.
+	cache.mu.Lock()
+	if cache.failure != nil {
+		cache.attemptedAt = time.Time{}
+		cache.failure = nil
+	}
+	cache.mu.Unlock()
+
 	client := &AppClient{
 		registry:      r,
 		appID:         credentials.AppID,
@@ -155,6 +164,10 @@ type installationCache struct {
 	mu       sync.Mutex
 	byOwner  map[string]InstallationInfo
 	listedAt time.Time
+	// attemptedAt and failure record the last listing, whether or not it
+	// worked, so failed listings are limited like successful ones.
+	attemptedAt time.Time
+	failure     error
 }
 
 func (c *AppClient) now() time.Time { return c.registry.options.Now() }
@@ -207,6 +220,8 @@ func (c *AppClient) installation(ctx context.Context, owner string, refresh bool
 	info, found := cache.byOwner[key]
 	listed := cache.byOwner != nil
 	age := c.now().Sub(cache.listedAt)
+	attempted := !cache.attemptedAt.IsZero()
+	sinceAttempt := c.now().Sub(cache.attemptedAt)
 	cache.mu.Unlock()
 
 	if found && listed && age < installationTTL && !refresh {
@@ -214,8 +229,8 @@ func (c *AppClient) installation(ctx context.Context, owner string, refresh bool
 	}
 
 	// Listings are shared by concurrent callers and limited to one per
-	// minRefreshInterval; inside it the last listing answers.
-	if !listed || age >= minRefreshInterval {
+	// minRefreshInterval, failed ones too; inside it the last listing answers.
+	if !attempted || sinceAttempt >= minRefreshInterval {
 		_, err, _ := cache.group.Do("list", func() (any, error) {
 			return nil, c.listInstallations(context.WithoutCancel(ctx))
 		})
@@ -226,7 +241,12 @@ func (c *AppClient) installation(ctx context.Context, owner string, refresh bool
 
 	cache.mu.Lock()
 	info, found = cache.byOwner[key]
+	failure := cache.failure
 	cache.mu.Unlock()
+
+	if failure != nil {
+		return InstallationInfo{}, failure
+	}
 
 	if !found {
 		return InstallationInfo{}, &Error{Reason: ReasonUnavailable, Message: "the App has no installation on " + owner, Condition: ConditionInstallationNotFound}
@@ -239,7 +259,7 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 	cache := c.installations
 
 	cache.mu.Lock()
-	recent := cache.byOwner != nil && c.now().Sub(cache.listedAt) < minRefreshInterval
+	recent := !cache.attemptedAt.IsZero() && c.now().Sub(cache.attemptedAt) < minRefreshInterval
 	cache.mu.Unlock()
 
 	if recent {
@@ -256,7 +276,14 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 		cancel()
 
 		if err != nil {
-			return classify(err, c.now())
+			failure := classify(err, c.now())
+
+			cache.mu.Lock()
+			cache.attemptedAt = c.now()
+			cache.failure = failure
+			cache.mu.Unlock()
+
+			return failure
 		}
 
 		for _, installation := range page {
@@ -280,6 +307,8 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 	cache.mu.Lock()
 	cache.byOwner = byOwner
 	cache.listedAt = c.now()
+	cache.attemptedAt = cache.listedAt
+	cache.failure = nil
 	cache.mu.Unlock()
 
 	return nil

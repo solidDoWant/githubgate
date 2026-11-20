@@ -365,3 +365,40 @@ func TestInstallationIDLookup(t *testing.T) {
 		require.Equal(t, 1, f.count(listInstallations))
 	})
 }
+
+func TestFailedInstallationListingsAreLimited(t *testing.T) {
+	for name, status := range map[string]int{"server error": http.StatusInternalServerError, "rejected credentials": http.StatusUnauthorized} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.setOverride(func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.Method+" "+request.URL.Path != listInstallations {
+					return false
+				}
+
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(status)
+				_, _ = writer.Write([]byte(`{"message":"nope"}`))
+
+				return true
+			})
+
+			client := f.client(t, nil)
+
+			for range 5 {
+				_, err := client.InstallationID(t.Context(), owner)
+
+				var failure *github.Error
+				require.ErrorAs(t, err, &failure)
+				require.Equal(t, github.ReasonUnavailable, failure.Reason)
+			}
+
+			require.Equal(t, 1, f.count(listInstallations))
+
+			f.clock.Advance(30 * time.Second)
+
+			_, err := client.InstallationID(t.Context(), owner)
+			require.Error(t, err)
+			require.Equal(t, 2, f.count(listInstallations))
+		})
+	}
+}

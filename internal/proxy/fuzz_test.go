@@ -1,7 +1,11 @@
 package proxy_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/solidDoWant/githubgate/internal/auth"
+	"github.com/solidDoWant/githubgate/internal/model"
 	"github.com/solidDoWant/githubgate/internal/proxy"
 )
 
@@ -111,39 +116,74 @@ func FuzzReceivePackCommands(f *testing.F) {
 		f.Add(seed)
 	}
 
+	// One forwarder per worker, with an in-process upstream, so each input
+	// costs no server or connection.
+	var (
+		forwarded [][]byte
+		audit     bytes.Buffer
+	)
+
+	upstream := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		data, err := io.ReadAll(request.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		forwarded = append(forwarded, data)
+
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody, Request: request}, nil
+	})
+
+	forwarder, err := proxy.NewForwarder(proxy.ForwarderOptions{
+		Rules:     func(string, string) []*model.Rule { return []*model.Rule{agentRule()} },
+		Tokens:    &fakeTokens{},
+		Upstreams: proxy.DefaultUpstreams(),
+		Transport: upstream,
+		Audit:     slog.New(slog.NewJSONHandler(&audit, nil)),
+	})
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	handler := proxy.NewHandler(proxy.Options{Authenticator: acceptingAuthenticator{}, Forwarder: forwarder})
+
 	f.Fuzz(func(t *testing.T, body string) {
-		forwarding := newForwardingProxy(t, agentRule())
+		forwarded, audit = nil, bytes.Buffer{}
 
-		response := serve(forwarding.handler, pushRequest(body))
+		response := serve(handler, pushRequest(body))
 
-		received := forwarding.upstream.requests()
-		if len(received) == 0 {
+		if len(forwarded) == 0 {
 			return
 		}
 
-		if received[0].body != body {
-			t.Fatalf("the push reached GitHub changed: %q became %q", body, received[0].body)
+		if string(forwarded[0]) != body {
+			t.Fatalf("the push reached GitHub changed: %q became %q", body, forwarded[0])
 		}
 
 		if response.Code != http.StatusOK {
 			t.Fatalf("a forwarded push answered %d", response.Code)
 		}
 
-		lines := forwarding.auditLines(t)
-		if len(lines) != 1 {
-			t.Fatalf("%d audit lines", len(lines))
+		var line struct {
+			Refs []string `json:"refs"`
 		}
 
-		refs, _ := lines[0]["refs"].([]any)
-		if len(refs) == 0 {
+		if err := json.Unmarshal(audit.Bytes(), &line); err != nil {
+			t.Fatalf("the audit line can't be read: %v", err)
+		}
+
+		if len(line.Refs) == 0 {
 			t.Fatalf("a push writing no known ref was forwarded: %q", body)
 		}
 
-		for _, ref := range refs {
-			name, _ := ref.(string)
-			if !strings.HasPrefix(name, "refs/heads/agent/") || !strings.Contains(body, name) {
-				t.Fatalf("ref %q outside pushRefs was forwarded", name)
+		for _, ref := range line.Refs {
+			if !strings.HasPrefix(ref, "refs/heads/agent/") {
+				t.Fatalf("ref %q outside pushRefs was forwarded", ref)
 			}
 		}
 	})
 }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }

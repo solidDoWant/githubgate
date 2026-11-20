@@ -36,6 +36,7 @@ docs/README.md             This page.
 
 docs/user/
   README.md                The pages for workload users.
+  client.md                The githubgate-client commands and settings.
   crd-reference.md         Every resource field (generated).
 
 docs/admin/

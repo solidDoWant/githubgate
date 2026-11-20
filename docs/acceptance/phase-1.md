@@ -55,9 +55,9 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 22. `githubgate-client gh pr create …` and `gh issue comment …` work in an allowed repository, and still work in a session that has lasted more than one hour.
     Tests:
 23. `githubgate-client token --repo foo --permission contents=read` prints a token usable with `curl` against the GitHub API.
-    Tests:
+    Tests: `cmd/githubgate-client: TestTokenPrintsOnlyTheTokenAndSendsTheRequest`
 24. The client reads the ServiceAccount token file on every call, so a rotated token is picked up without restarting anything.
-    Tests:
+    Tests: `cmd/githubgate-client: TestServiceAccountTokenFileIsReadOnEveryCall`
 
 ## Operation
 

@@ -39,7 +39,7 @@ The tag starts the Tekton release PipelineRun (`.tekton/release.yaml`, generated
 ## Procedure
 
 1. **Version.** Find the last tag (`git tag --sort=-v:refname | head`). Phase *N* complete: `0.N.0`; fixes since the last final release with no phase completed: the next patch. If the brief asks for a candidate, pick the next free `-rc.K` for that version.
-2. **Scope.** The phase milestone is closed, or every open issue in it is explicitly deferred with a logged decision. List open `bug` issues in the milestone and any `severity:critical` or `severity:high` bugs anywhere; **any open critical or high bug blocks the release**.
+2. **Scope.** The phase milestone is closed, or every open issue in it is explicitly deferred with a logged decision. Open `health` issues never block a release (the planner moves them to the next milestone). List open `bug` issues in the milestone and any `severity:critical` or `severity:high` bugs anywhere; **any open critical or high bug blocks the release**.
 3. **Version-bump PR.** On a branch `release/<version>`, add a `CHANGELOG.md` section for the version (and bump any version the repository records, such as the chart's `Chart.yaml`), **written for the people who use githubgate, not from PR titles**, in plain English: load the `simple-english` skill first (CLAUDE.md, Documentation):
    - **Sources:** the `## Changelog` section in the description of each PR merged since the last release (workers don't edit `CHANGELOG.md`), plus any `## Unreleased` section already in `CHANGELOG.md`, which this section replaces.
    - **Opening paragraph:** what githubgate is, what this release covers, and how to install it (the Helm chart).

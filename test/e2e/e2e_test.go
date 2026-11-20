@@ -20,6 +20,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -554,45 +555,60 @@ func TestTokenModeOnKind(t *testing.T) {
 	c.startCallerPod(t, "ci-proxied-push", true)
 
 	// Output of every failed or refused call, for the leak search.
-	var clientOutput []string
+	var (
+		clientOutput   []string
+		clientOutputMu sync.Mutex
+	)
 
-	t.Run("a pull request ServiceAccount can clone but not release and the release ServiceAccount can", func(t *testing.T) {
-		clone := fmt.Sprintf(`set -e
-token=$(%s token --repo %s)
-rm -rf /tmp/clone
-git clone -q "http://x-access-token:${token}@fakegithub.fake.svc:8080/%s/%s.git" /tmp/clone 2>/dev/null
-curl -s -o /dev/null -w '%%{http_code}' -X POST -H "Authorization: token ${token}" -d '{"tag_name":"v1"}' %s/repos/%s/%s/releases`,
-			clientBinary, repository, owner, repository, fakeAPI, owner, repository)
-
-		out, err := c.exec(ctx, callerNamespace, "ci-build", clone)
-		require.NoError(t, err, out)
-		assert.Equal(t, "403", strings.TrimSpace(out), "the read-only ServiceAccount must not create a release")
-
-		out, err = c.exec(ctx, callerNamespace, "ci-release", clone)
-		require.NoError(t, err, out)
-		assert.Equal(t, "201", strings.TrimSpace(out), "the release ServiceAccount creates a release")
-
-		out, err = c.exec(ctx, callerNamespace, "ci-build", fmt.Sprintf("%s token --repo %s --permission contents=write", clientBinary, repository))
-		require.Error(t, err, "the read-only ServiceAccount must not get a write token")
-		assert.Contains(t, out, "denied")
+	recordOutput := func(out string) {
+		clientOutputMu.Lock()
+		defer clientOutputMu.Unlock()
 
 		clientOutput = append(clientOutput, out)
-	})
+	}
 
-	t.Run("a proxied pod reaches the proxy under the three GitHub host names and trusts only the proxy CA", func(t *testing.T) {
-		for _, host := range []string{"api.github.com", "uploads.github.com", "github.com"} {
-			script := fmt.Sprintf(`curl -sS --cacert /var/run/secrets/githubgate-proxy/ca.crt -o /dev/null -w '%%{http_code}' -H "Authorization: Bearer $(cat /var/run/secrets/githubgate/token)" https://%s/ 2>&1`, host)
+	t.Run("independent callers", func(t *testing.T) {
+		t.Run("a pull request ServiceAccount can clone but not release and the release ServiceAccount can", func(t *testing.T) {
+			t.Parallel()
 
-			out, err := c.exec(ctx, callerNamespace, "ci-proxied", script)
-			clientOutput = append(clientOutput, out)
-			require.NoError(t, err, "TLS to %s must verify against the proxy CA: %s", host, out)
-			assert.NotEqual(t, "000", strings.TrimSpace(out), "an HTTP response from the proxy for %s", host)
-		}
+			clone := fmt.Sprintf(`set -e
+	token=$(%s token --repo %s)
+	rm -rf /tmp/clone
+	git clone -q "http://x-access-token:${token}@fakegithub.fake.svc:8080/%s/%s.git" /tmp/clone 2>/dev/null
+	curl -s -o /dev/null -w '%%{http_code}' -X POST -H "Authorization: token ${token}" -d '{"tag_name":"v1"}' %s/repos/%s/%s/releases`,
+				clientBinary, repository, owner, repository, fakeAPI, owner, repository)
 
-		// The system trust store does not hold the proxy CA.
-		out, err := c.exec(ctx, callerNamespace, "ci-proxied", "curl -sS -o /dev/null https://api.github.com/ 2>&1")
-		clientOutput = append(clientOutput, out)
-		require.Error(t, err, "the proxy's certificate must not verify without the proxy CA: %s", out)
+			out, err := c.exec(ctx, callerNamespace, "ci-build", clone)
+			require.NoError(t, err, out)
+			assert.Equal(t, "403", strings.TrimSpace(out), "the read-only ServiceAccount must not create a release")
+
+			out, err = c.exec(ctx, callerNamespace, "ci-release", clone)
+			require.NoError(t, err, out)
+			assert.Equal(t, "201", strings.TrimSpace(out), "the release ServiceAccount creates a release")
+
+			out, err = c.exec(ctx, callerNamespace, "ci-build", fmt.Sprintf("%s token --repo %s --permission contents=write", clientBinary, repository))
+			require.Error(t, err, "the read-only ServiceAccount must not get a write token")
+			assert.Contains(t, out, "denied")
+
+			recordOutput(out)
+		})
+		t.Run("a proxied pod reaches the proxy under the three GitHub host names and trusts only the proxy CA", func(t *testing.T) {
+			t.Parallel()
+
+			for _, host := range []string{"api.github.com", "uploads.github.com", "github.com"} {
+				script := fmt.Sprintf(`curl -sS --cacert /var/run/secrets/githubgate-proxy/ca.crt -o /dev/null -w '%%{http_code}' -H "Authorization: Bearer $(cat /var/run/secrets/githubgate/token)" https://%s/ 2>&1`, host)
+
+				out, err := c.exec(ctx, callerNamespace, "ci-proxied", script)
+				recordOutput(out)
+				require.NoError(t, err, "TLS to %s must verify against the proxy CA: %s", host, out)
+				assert.NotEqual(t, "000", strings.TrimSpace(out), "an HTTP response from the proxy for %s", host)
+			}
+
+			// The system trust store does not hold the proxy CA.
+			out, err := c.exec(ctx, callerNamespace, "ci-proxied", "curl -sS -o /dev/null https://api.github.com/ 2>&1")
+			recordOutput(out)
+			require.Error(t, err, "the proxy's certificate must not verify without the proxy CA: %s", out)
+		})
 	})
 
 	// killDuringStream runs request in a loop in pod, force-deletes one of
@@ -622,7 +638,7 @@ done`, request)
 			return n
 		}
 
-		eventually(t, "ten tokens served", func() bool { return count("ok") >= 10 }, 2*time.Minute, time.Second)
+		eventually(t, "ten tokens served", func() bool { return count("ok") >= 10 }, 2*time.Minute, 200*time.Millisecond)
 
 		pods := strings.Fields(c.kubectl(t, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "-o", "jsonpath={.items[*].metadata.name}"))
 		require.Len(t, pods, 3, "the chart runs three replicas")
@@ -648,8 +664,8 @@ done`, request)
 			}
 
 			return true
-		}, 3*time.Minute, time.Second)
-		eventually(t, "ten tokens served after pod deletion", func() bool { return count("ok") >= before+10 }, 2*time.Minute, time.Second)
+		}, 3*time.Minute, 200*time.Millisecond)
+		eventually(t, "ten tokens served after pod deletion", func() bool { return count("ok") >= before+10 }, 2*time.Minute, 200*time.Millisecond)
 
 		_, err := c.exec(ctx, callerNamespace, pod, "touch /tmp/stop")
 		require.NoError(t, err)
@@ -657,7 +673,7 @@ done`, request)
 
 		failures := count("fail")
 		out, _ := c.exec(ctx, callerNamespace, pod, "cat /tmp/errors")
-		clientOutput = append(clientOutput, out)
+		recordOutput(out)
 		assert.LessOrEqual(t, failures, 1, "at most the request in flight may fail; errors: %s", out)
 	}
 
@@ -768,7 +784,7 @@ git ls-remote https://github.com/%[1]s/%[2]s.git refs/heads/e2e-push | grep "^$s
 
 		out, err := c.exec(ctx, callerNamespace, "ci-client", script)
 		require.NoError(t, err, out)
-		clientOutput = append(clientOutput, out)
+		recordOutput(out)
 	})
 
 	t.Run("git against a repository the policy does not allow fails and the client prints the reason", func(t *testing.T) {
@@ -778,7 +794,7 @@ git clone https://github.com/%s/%s.git /tmp/denied 2>&1
 
 		out, err := c.exec(ctx, callerNamespace, "ci-client", script)
 		require.Error(t, err, "the clone of a repository outside the policy must fail; output: %s", out)
-		clientOutput = append(clientOutput, out)
+		recordOutput(out)
 		assert.Contains(t, out, "githubgate-client:", "the client prints its reason")
 		assert.Contains(t, out, otherRepository, "the reason names the repository")
 		assert.Contains(t, out, "fatal:", "git reports its own failure")
@@ -793,7 +809,7 @@ git clone https://github.com/%s/%s.git /tmp/denied 2>&1
 export SA_TOKEN=$(cat /var/run/secrets/githubgate/token)
 export PROXY_CA=/var/run/secrets/githubgate-proxy/ca.crt
 `+script)
-		clientOutput = append(clientOutput, out)
+		recordOutput(out)
 		require.NoError(t, err, out)
 
 		return out
@@ -811,12 +827,6 @@ export PROXY_CA=/var/run/secrets/githubgate-proxy/ca.crt
 `, method, data, target)
 	}
 
-	t.Run("a proxied pod reads an allowed repository with gh api", func(t *testing.T) {
-		out := proxied(t, "ci-proxied", fmt.Sprintf(`GH_TOKEN="$SA_TOKEN" SSL_CERT_FILE="$PROXY_CA" gh api repos/%s/%s --jq .name`, owner, repository))
-
-		assert.Equal(t, repository, strings.TrimSpace(out))
-	})
-
 	t.Run("a repository the proxy rules don't cover is refused naming it and never minted for", func(t *testing.T) {
 		var before []fakegithub.MintEntry
 
@@ -833,22 +843,56 @@ export PROXY_CA=/var/run/secrets/githubgate-proxy/ca.crt
 		assert.Len(t, after, len(before), "a token was minted for a refused request")
 	})
 
-	t.Run("a denied operation is refused naming it while another operation on the same repository works", func(t *testing.T) {
-		out := proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, repository), `{"tag_name":"proxy-v1"}`))
-		assert.Contains(t, out, "status=403")
-		assert.Contains(t, out, "repos/create-release")
+	t.Run("independent proxied requests", func(t *testing.T) {
+		t.Run("a proxied pod reads an allowed repository with gh api", func(t *testing.T) {
+			t.Parallel()
 
-		out = proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/1/comments", owner, repository), `{"body":"hi"}`))
-		assert.Contains(t, out, "status=201")
-	})
+			out := proxied(t, "ci-proxied", fmt.Sprintf(`GH_TOKEN="$SA_TOKEN" SSL_CERT_FILE="$PROXY_CA" gh api repos/%s/%s --jq .name`, owner, repository))
 
-	t.Run("with allowOperations only the listed operations work", func(t *testing.T) {
-		out := proxied(t, "ci-proxied-limited", call("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repository), ""))
-		assert.Contains(t, out, "status=200")
+			assert.Equal(t, repository, strings.TrimSpace(out))
+		})
+		t.Run("a denied operation is refused naming it while another operation on the same repository works", func(t *testing.T) {
+			t.Parallel()
 
-		out = proxied(t, "ci-proxied-limited", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/1/comments", owner, repository), `{"body":"hi"}`))
-		assert.Contains(t, out, "status=403")
-		assert.Contains(t, out, "issues/create-comment")
+			out := proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, repository), `{"tag_name":"proxy-v1"}`))
+			assert.Contains(t, out, "status=403")
+			assert.Contains(t, out, "repos/create-release")
+
+			out = proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/1/comments", owner, repository), `{"body":"hi"}`))
+			assert.Contains(t, out, "status=201")
+		})
+		t.Run("with allowOperations only the listed operations work", func(t *testing.T) {
+			t.Parallel()
+
+			out := proxied(t, "ci-proxied-limited", call("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repository), ""))
+			assert.Contains(t, out, "status=200")
+
+			out = proxied(t, "ci-proxied-limited", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/1/comments", owner, repository), `{"body":"hi"}`))
+			assert.Contains(t, out, "status=403")
+			assert.Contains(t, out, "issues/create-comment")
+		})
+		t.Run("a release asset upload follows the same operation rules as the API", func(t *testing.T) {
+			t.Parallel()
+
+			out, err := c.exec(ctx, callerNamespace, "ci-release", fmt.Sprintf(`set -e
+	token=$(%s token --repo %s)
+	curl -sS -X POST -H "Authorization: token ${token}" -d '{"tag_name":"asset-v1"}' %s/repos/%s/%s/releases | sed -n 's/.*"id": *\([0-9]*\).*/\1/p'`,
+				clientBinary, repository, fakeAPI, owner, repository))
+			require.NoError(t, err, out)
+
+			releaseID := strings.TrimSpace(out)
+			require.NotEmpty(t, releaseID)
+
+			upload := fmt.Sprintf(`curl -sS -i --cacert "$PROXY_CA" -X POST -H "Authorization: token $SA_TOKEN" -H 'Content-Type: text/plain' -w '\nstatus=%%{http_code}\n' --data-binary asset 'https://uploads.github.com/repos/%s/%s/releases/%s/assets?name=a.txt'
+	`, owner, repository, releaseID)
+
+			out = proxied(t, "ci-proxied", upload)
+			assert.Contains(t, out, "status=201")
+
+			out = proxied(t, "ci-proxied-limited", upload)
+			assert.Contains(t, out, "status=403")
+			assert.Contains(t, out, "repos/upload-release-asset")
+		})
 	})
 
 	t.Run("GraphQL queries work, a denied mutation is refused naming it and createPullRequest works", func(t *testing.T) {
@@ -876,27 +920,6 @@ git push -q origin HEAD:refs/heads/proxy-pr
 		out = proxied(t, "ci-proxied", call("POST", "https://api.github.com/graphql", `{"query":"mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }"}`))
 		assert.Contains(t, out, "status=403")
 		assert.Contains(t, out, "mergePullRequest")
-	})
-
-	t.Run("a release asset upload follows the same operation rules as the API", func(t *testing.T) {
-		out, err := c.exec(ctx, callerNamespace, "ci-release", fmt.Sprintf(`set -e
-token=$(%s token --repo %s)
-curl -sS -X POST -H "Authorization: token ${token}" -d '{"tag_name":"asset-v1"}' %s/repos/%s/%s/releases | sed -n 's/.*"id": *\([0-9]*\).*/\1/p'`,
-			clientBinary, repository, fakeAPI, owner, repository))
-		require.NoError(t, err, out)
-
-		releaseID := strings.TrimSpace(out)
-		require.NotEmpty(t, releaseID)
-
-		upload := fmt.Sprintf(`curl -sS -i --cacert "$PROXY_CA" -X POST -H "Authorization: token $SA_TOKEN" -H 'Content-Type: text/plain' -w '\nstatus=%%{http_code}\n' --data-binary asset 'https://uploads.github.com/repos/%s/%s/releases/%s/assets?name=a.txt'
-`, owner, repository, releaseID)
-
-		out = proxied(t, "ci-proxied", upload)
-		assert.Contains(t, out, "status=201")
-
-		out = proxied(t, "ci-proxied-limited", upload)
-		assert.Contains(t, out, "status=403")
-		assert.Contains(t, out, "repos/upload-release-asset")
 	})
 
 	t.Run("with pushRefs a push to an allowed branch works and a push to master or a tag is refused naming the ref", func(t *testing.T) {

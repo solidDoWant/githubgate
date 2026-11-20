@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -69,6 +70,13 @@ type Config struct {
 	ProxyAddress  string
 	ProxyCertFile string
 	ProxyKeyFile  string
+	// ProxyUpstreamAPI, ProxyUpstreamUploads and ProxyUpstreamGit are where
+	// proxied requests for api.github.com, uploads.github.com and github.com
+	// go; ProxyUpstreamCAFile adds a CA they may be served with.
+	ProxyUpstreamAPI     string
+	ProxyUpstreamUploads string
+	ProxyUpstreamGit     string
+	ProxyUpstreamCAFile  string
 	// Namespace is the server's own namespace: the default admin namespace
 	// and where the leader lease lives.
 	Namespace string
@@ -112,6 +120,10 @@ func ParseFlags(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&config.ProxyAddress, "proxy-address", defaultProxyAddress, "address of the proxy")
 	flags.StringVar(&config.ProxyCertFile, "proxy-tls-cert-file", "", "certificate of the proxy, for api.github.com, uploads.github.com and github.com")
 	flags.StringVar(&config.ProxyKeyFile, "proxy-tls-key-file", "", "private key of the proxy")
+	flags.StringVar(&config.ProxyUpstreamAPI, "proxy-upstream-api", "https://"+proxy.HostAPI, "where the proxy sends api.github.com requests")
+	flags.StringVar(&config.ProxyUpstreamUploads, "proxy-upstream-uploads", "https://"+proxy.HostUploads, "where the proxy sends uploads.github.com requests")
+	flags.StringVar(&config.ProxyUpstreamGit, "proxy-upstream-git", "https://"+proxy.HostGit, "where the proxy sends github.com git requests")
+	flags.StringVar(&config.ProxyUpstreamCAFile, "proxy-upstream-ca-file", "", "extra CA certificates the proxy's upstreams may be served with")
 	flags.StringVar(&config.GitHubBaseURL, "github-base-url", "", "GitHub REST API root (default api.github.com)")
 
 	if err := flags.Parse(args); err != nil {
@@ -131,6 +143,35 @@ func ParseFlags(args []string, getenv func(string) string) (Config, error) {
 	return config, config.validate()
 }
 
+// proxyUpstreams parses the upstream flags. Each must be an https URL with
+// a host and nothing after its path.
+func (c Config) proxyUpstreams() (proxy.Upstreams, error) {
+	upstreams := proxy.DefaultUpstreams()
+
+	for _, upstream := range []struct {
+		flag, value string
+		target      **url.URL
+	}{
+		{"--proxy-upstream-api", c.ProxyUpstreamAPI, &upstreams.API},
+		{"--proxy-upstream-uploads", c.ProxyUpstreamUploads, &upstreams.Uploads},
+		{"--proxy-upstream-git", c.ProxyUpstreamGit, &upstreams.Git},
+	} {
+		if upstream.value == "" {
+			continue
+		}
+
+		parsed, err := url.Parse(upstream.value)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+			parsed.RawQuery != "" || parsed.Fragment != "" {
+			return proxy.Upstreams{}, fmt.Errorf("%s must be an https URL with a host and no query", upstream.flag)
+		}
+
+		*upstream.target = parsed
+	}
+
+	return upstreams, nil
+}
+
 func (c Config) validate() error {
 	switch {
 	case len(c.AdminNamespaces) == 0:
@@ -143,11 +184,19 @@ func (c Config) validate() error {
 		return errors.New("--leader-elect needs POD_NAMESPACE")
 	case c.Proxy && (c.ProxyCertFile == "" || c.ProxyKeyFile == ""):
 		return errors.New("--proxy needs --proxy-tls-cert-file and --proxy-tls-key-file")
+	case c.Proxy && c.proxyUpstreamsInvalid() != nil:
+		return c.proxyUpstreamsInvalid()
 	case c.Proxy && c.Webhook && c.ProxyListener == nil && samePort(c.ProxyAddress, c.WebhookPort):
 		return errors.New("--proxy-address and --webhook-port use the same port")
 	}
 
 	return nil
+}
+
+func (c Config) proxyUpstreamsInvalid() error {
+	_, err := c.proxyUpstreams()
+
+	return err
 }
 
 // Run starts everything and blocks until ctx ends and the shutdown is done.
@@ -248,12 +297,13 @@ func Run(ctx context.Context, config Config) error {
 		return err
 	}
 
+	audit := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	srv := server.New(server.Options{
 		Authenticator: authenticator,
 		Store:         store,
 		GitHub:        githubRegistry,
 		Metrics:       serverMetrics,
-		Audit:         slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		Audit:         audit,
 	})
 
 	runOptions := server.RunOptions{
@@ -266,7 +316,14 @@ func Run(ctx context.Context, config Config) error {
 			return errors.Join(err, api.Close(), health.Close())
 		}
 
-		runOptions.ProxyHandler = proxy.NewHandler(proxy.Options{Authenticator: authenticator, Ready: store.Ready})
+		forwarder, err := newForwarder(config, store, srv, audit)
+		if err != nil {
+			return errors.Join(err, api.Close(), health.Close(), runOptions.Proxy.Close())
+		}
+
+		runOptions.ProxyHandler = proxy.NewHandler(proxy.Options{
+			Authenticator: authenticator, Ready: store.Ready, Forwarder: forwarder, Audit: audit, Count: srv.CountProxy,
+		})
 		runOptions.ProxyTLS = proxy.TLSConfig
 		runOptions.ProxyCertFile, runOptions.ProxyKeyFile = config.ProxyCertFile, config.ProxyKeyFile
 	}
@@ -312,6 +369,46 @@ func listeners(config Config) (api, health net.Listener, err error) {
 	}
 
 	return api, health, nil
+}
+
+// newForwarder returns the proxy's forwarder to the configured upstreams,
+// with tokens from the token API's cache.
+func newForwarder(config Config, store *model.Store, srv *server.Server, audit *slog.Logger) (*proxy.HTTPForwarder, error) {
+	upstreams, err := config.proxyUpstreams()
+	if err != nil {
+		return nil, err
+	}
+
+	var extraRoots []byte
+
+	if config.ProxyUpstreamCAFile != "" {
+		if extraRoots, err = os.ReadFile(config.ProxyUpstreamCAFile); err != nil {
+			return nil, fmt.Errorf("reading --proxy-upstream-ca-file: %w", err)
+		}
+	}
+
+	transport, err := proxy.NewTransport(extraRoots)
+	if err != nil {
+		return nil, fmt.Errorf("--proxy-upstream-ca-file: %w", err)
+	}
+
+	return proxy.NewForwarder(proxy.ForwarderOptions{
+		Rules: func(namespace, serviceAccount string) []*model.Rule {
+			// A replica serves the proxy only once its snapshot is built;
+			// without one, nothing is allowed.
+			snapshot := store.Load()
+			if snapshot == nil {
+				return nil
+			}
+
+			return snapshot.Rules(namespace, serviceAccount)
+		},
+		Tokens:    srv,
+		Upstreams: upstreams,
+		Transport: transport,
+		Audit:     audit,
+		Count:     srv.CountProxy,
+	})
 }
 
 func proxyListener(config Config) (net.Listener, error) {

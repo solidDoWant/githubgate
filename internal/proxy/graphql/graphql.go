@@ -344,3 +344,22 @@ func mutationNames(operation *ast.OperationDefinition) ([]string, *Error) {
 
 	return names, nil
 }
+
+// DecodeJSON decodes one JSON value as the GraphQL body is decoded: numbers
+// kept as written, no key more than once in any object, and nothing after
+// the value.
+func DecodeJSON(data []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+
+	value, err := decodeValue(decoder, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("data follows the JSON value")
+	}
+
+	return value, nil
+}

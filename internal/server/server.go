@@ -22,6 +22,7 @@ import (
 	"github.com/solidDoWant/githubgate/internal/github"
 	"github.com/solidDoWant/githubgate/internal/model"
 	"github.com/solidDoWant/githubgate/internal/permissions"
+	"github.com/solidDoWant/githubgate/internal/proxy"
 	"github.com/solidDoWant/githubgate/internal/resolve"
 )
 
@@ -196,51 +197,94 @@ func (s *Server) token(writer http.ResponseWriter, request *http.Request) answer
 }
 
 func (s *Server) mint(request *http.Request, result answer) answer {
-	installation := result.decision.Installation
+	token, githubStatus, err := s.installationToken(request.Context(), result.caller,
+		result.decision.Installation, result.decision.Repositories, result.decision.Permissions)
+	if err != nil {
+		return s.githubFailure(result, err)
+	}
+
+	result.github = githubStatus
+	result.status, result.reason, result.token = http.StatusOK, string(resolve.OutcomeAllowed), token
+
+	return result
+}
+
+// installationToken returns a token for the caller from the cache, or mints
+// one. It also says whether the token was "minted" or "cached".
+func (s *Server) installationToken(
+	ctx context.Context,
+	caller auth.Identity,
+	installation *model.Installation,
+	repositories []string,
+	permissionSet map[string]permissions.Level,
+) (*github.Token, string, error) {
 	app := installation.App
 
 	client, err := s.options.GitHub.Client(app.NamespacedName, github.Credentials{
 		AppID: app.AppID, PrivateKey: app.PrivateKey(), Version: app.KeyVersion,
 	})
 	if err != nil {
-		return s.githubFailure(result, err)
+		return nil, "", err
 	}
 
-	installationID, err := client.InstallationID(request.Context(), installation.Owner)
+	installationID, err := client.InstallationID(ctx, installation.Owner)
 	if err != nil {
-		return s.githubFailure(result, err)
+		return nil, "", err
 	}
 
-	key := newTokenKey(result.caller.Namespace, result.caller.ServiceAccount, app.AppID, installationID,
-		result.decision.Repositories, result.decision.Permissions)
+	key := newTokenKey(caller.Namespace, caller.ServiceAccount, app.AppID, installationID, repositories, permissionSet)
 
 	token, hit := s.tokens.get(key)
 	s.countCache(hit)
 
-	if !hit {
-		token, err = s.tokens.mint(request.Context(), key, func(ctx context.Context) (*github.Token, error) {
-			started := time.Now()
-			defer s.observeGitHub("mint", started)
-
-			return client.Mint(ctx, github.MintRequest{
-				Installation: installation.String(),
-				Owner:        installation.Owner,
-				Repositories: result.decision.Repositories,
-				Permissions:  result.decision.Permissions,
-			})
-		})
-		if err != nil {
-			return s.githubFailure(result, err)
-		}
-
-		result.github = "minted"
-	} else {
-		result.github = "cached"
+	if hit {
+		return token, "cached", nil
 	}
 
-	result.status, result.reason, result.token = http.StatusOK, string(resolve.OutcomeAllowed), token
+	token, err = s.tokens.mint(ctx, key, func(ctx context.Context) (*github.Token, error) {
+		started := time.Now()
+		defer s.observeGitHub("mint", started)
 
-	return result
+		return client.Mint(ctx, github.MintRequest{
+			Installation: installation.String(),
+			Owner:        installation.Owner,
+			Repositories: repositories,
+			Permissions:  permissionSet,
+		})
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	return token, "minted", nil
+}
+
+// ProxyToken gives the proxy the token an allowed decision names, from the
+// same cache as token mode.
+func (s *Server) ProxyToken(ctx context.Context, caller auth.Identity, decision proxy.Decision) (string, string, error) {
+	if len(decision.Repositories) == 0 || len(decision.Permissions) == 0 || decision.Installation == nil {
+		return "", "not_called", &proxy.TokenError{
+			Status: http.StatusForbidden, Code: reasonDenied, Message: "the request resolved to no repository or no permission",
+		}
+	}
+
+	token, githubStatus, err := s.installationToken(ctx, caller, decision.Installation, decision.Repositories, decision.Permissions)
+	if err != nil {
+		failed := s.githubFailure(answer{}, err)
+
+		return "", failed.github, &proxy.TokenError{
+			Status: failed.status, Code: failed.reason, Message: failed.message, RetryAfter: failed.retryAfter,
+		}
+	}
+
+	return token.Token, githubStatus, nil
+}
+
+// CountProxy records a proxied request in the request metrics.
+func (s *Server) CountProxy(decision string, status int) {
+	if s.options.Metrics != nil {
+		s.options.Metrics.requests.WithLabelValues("proxy", decision, codeClass(status)).Inc()
+	}
 }
 
 func (s *Server) githubFailure(result answer, err error) answer {

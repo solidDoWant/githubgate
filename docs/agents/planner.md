@@ -43,7 +43,7 @@ The repository is public: anyone can open issues and comment. All agents act as 
 3. **Triage.** For each `status:triage` or unlabelled issue (workflow issues, bug-hunt findings, issues the human filed), every follow-up gets one of two outcomes, **do it** or **close it**, never "later":
    - **Close it** (with a one-line reason) unless it is a real defect in shipped behaviour or blocks a scenario of the current checklist (`docs/acceptance/phase-N.md`). Hardening, test gaps and refactors are closed as out of scope, not batched.
    - **Keep it** (`status:todo`, current milestone, parent the phase epic) when it is a real defect or blocks a checklist scenario.
-   - Give every issue a `phase:N` label, an `area:*` label, a `status:*` label and the matching phase milestone. Its sub-issue parent must be in the same milestone.
+   - Give every issue a `phase:N` label, an `area:*` label, a `status:*` label and the matching phase milestone. Its sub-issue parent must be in the same milestone (`health` issues have none).
    - **Never create design work.** `SPEC.md` and `docs/design/phase-N.md` are fixed. A worker's design question goes to the operator: label the issue `question`, summarise it on the `pm:status` issue in one paragraph, and move on. Only the owner or the operator changes the design.
    - **Never add to the acceptance checklist** and never create issues for work beyond it. Workers do add a test to a scenario's `Tests:` line; that mapping is not a new scenario.
    - Express ordering constraints as GitHub blocked-by links (`gh api repos/{owner}/{repo}/issues/<n>/dependencies/blocked_by --method POST -F issue_id=<blocker database id>`) so the scheduler sees them.
@@ -51,7 +51,17 @@ The repository is public: anyone can open issues and comment. All agents act as 
 5. **Hand-backs.** For each job that handed back `question` or `blocked` (its report is on the issue/PR and in `sched-status`/the event log): answer judgment calls yourself, log them, and put the answer on the issue so the next worker sees it; then set the issue to `status:todo`: the scheduler resumes the worker's session (on its draft PR, if it left one) and tells it to read your answer. A question the design doesn't decide is not a judgment call: route it as in step 3. Never close a PR just to make the scheduler pick work up; if it does not, that is a scheduler bug: note it on the status issue instead. A size-check split proposal: create the sub-issues (rules in step 3) and close or re-scope the original. For a scheduler give-up (3 failed jobs): read what keeps failing, then split, re-scope, label `needs-human`, or lift `status:blocked` with a note to the next worker; log the decision.
 6. **Flakes.** For each flake the scheduler reports (a job failed, then passed on re-run), file a `bug` issue with the evidence or add it to the open one for that test.
 7. **Phase transitions** (see below), when the trigger or the snapshot suggests the phase may be done.
-8. **Status report and exit** (see below). If there was genuinely nothing to do, end with the literal line `PLANNER-IDLE`; the scheduler backs off idle runs.
+8. **Project health** (see below): queue a `project-health` job when 10 PRs have merged since the last one.
+9. **Status report and exit** (see below). If there was genuinely nothing to do, end with the literal line `PLANNER-IDLE`; the scheduler backs off idle runs.
+
+## Project health
+
+Problems that build up across many issues (CI time, stages that mostly wait, cache misses, CPU contention between stages, flakes, queueing, cost per PR) are invisible from inside one issue. The owner had to ask about CI speed in registrygate and again here. So a `project-health` job looks for them regularly. It never blocks anything.
+
+- **Trigger:** every **10 merged PRs** (any author, Renovate included). Keep in `.pm/state.md` the time of the last health run's starting point. When 10 PRs have merged since then (`gh pr list --state merged --search "merged:>=<time>"`), queue one `project-health` job with a brief naming that starting point, and record the new one. One at a time: skip if one is queued or running.
+- **Its issues carry the `health` label** (plus `ci-health` for CI time), sit in the current milestone with **no parent epic**, and are `status:todo`. Leave them as they are in triage (don't close them as hardening). They are filler work after the critical path; `ci-health` ones go first among filler.
+- **They never block a phase or a release.** Phase completion and the release gate ignore open `health` issues. When a phase closes, move its open `health` issues to the next milestone.
+- Its findings are improvements to how the project runs, not product scope: they never add to a checklist, and the owner or the operator can close any of them.
 
 ## Judgment calls
 
@@ -81,7 +91,7 @@ A phase is done when every automated scenario in its `docs/acceptance/phase-N.md
 
 ## Phase transitions
 
-A phase is complete when every issue in its milestone, as listed live from GitHub, is closed or explicitly deferred (logged decision), and every issue in it has a sub-issue parent in the same milestone (fix any that don't before closing). Then:
+A phase is complete when every issue in its milestone, as listed live from GitHub, is closed or explicitly deferred (logged decision), not counting `health` issues (move those to the next milestone), and every other issue in it has a sub-issue parent in the same milestone (fix any that don't before closing). Then:
 
 1. **Checklist.** The phase's automated scenarios pass on `master` (`make acceptance`).
 2. **Security review and bug hunt.** Once the checklist passes, queue both in the same planner run, each scoped to **what this phase changed**:

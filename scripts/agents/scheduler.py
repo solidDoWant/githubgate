@@ -154,7 +154,7 @@ DEFAULT_CONFIG = {
     "max_change_request_rounds": 3,
     "limit_margin_s": 120,
     "limit_fallback_s": 900,
-    "special_roles": ["bug-hunter", "security-auditor", "release-manager", "design-reviewer"],
+    "special_roles": ["bug-hunter", "security-auditor", "release-manager", "design-reviewer", "project-health"],
     "light_review_globs": ["*.md", "docs/*", "*_test.go", "test/*", "*/testdata/*", "testdata/*"],
     "housekeeping": {
         "env_refresh_s": 1800,

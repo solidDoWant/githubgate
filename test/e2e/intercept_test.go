@@ -516,7 +516,9 @@ webhooks:
 	})
 
 	t.Run("every container of a pod with several init containers is intercepted", func(t *testing.T) {
-		request := `curl -sS -f -o /dev/null -w 'status=%{http_code}' https://api.github.com/repos/acme/project`
+		// --fail-with-body keeps GitHub's answer in the log, so a failure names
+		// which side refused the request.
+		request := `curl -sS --fail-with-body -w '\nstatus=%{http_code}' https://api.github.com/repos/acme/project`
 		step := func(name string) interceptContainer {
 			return interceptContainer{name: name, script: request + "; echo; sleep infinity"}
 		}
@@ -537,7 +539,11 @@ webhooks:
 
 		for _, container := range []string{"first-init", "second-init", "one", "two"} {
 			logs := c.kubectl(t, "", "logs", "-n", interceptNamespace, "multi", "-c", container)
-			assert.Contains(t, logs, "status=200", "container %s made its request through the interceptor", container)
+			if !assert.Contains(t, logs, "status=200", "container %s made its request through the interceptor", container) {
+				// The refusal's source is in the proxy's or the fake's log.
+				t.Logf("githubgate log:\n%s", c.kubectl(t, "", "logs", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "--all-containers", "--tail=50", "--prefix"))
+				t.Logf("fake GitHub log:\n%s", c.kubectl(t, "", "logs", "-n", "fake", "deploy/fakegithub", "--tail=50"))
+			}
 		}
 	})
 

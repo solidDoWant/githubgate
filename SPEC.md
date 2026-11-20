@@ -177,7 +177,7 @@ Responses are streamed back unchanged except for headers that would leak the ins
 
 ### Signed commits (phase 2)
 
-GitHub marks a commit "Verified" when it creates the commit itself through its API with an App's token. `githubgate-client push <remote> <branch>` takes the local commits not yet on the remote branch and re-creates each one through GitHub's API (token or proxy mode), then resets the local branch to the signed commits. Commit ids change; authors and messages are kept, and the committer is the App's bot. Plain `git push` keeps working and stays unsigned. The design must verify, with a live test, which API (GraphQL `createCommitOnBranch` or the Git Database REST API) gives Verified commits while keeping file modes, symlinks and deletions; merge commits may be refused.
+GitHub marks a commit "Verified" when it creates the commit itself through its API with an App's token. `githubgate-client push <remote> <branch>` takes the local commits not yet on the remote branch and re-creates each one through GitHub's API (token or proxy mode), then resets the local branch to the signed commits. Commit ids change; messages, file contents and modes are kept. GitHub signs only commits the App itself authors, so the App's bot is the author and the original author is kept in a `Co-authored-by:` trailer. Plain `git push` keeps working and stays unsigned. It uses the Git Database REST API (checked live: Verified, and it keeps file modes and symlinks). Merge commits and submodule changes are refused.
 
 ### Transparent interception (phase 3)
 
@@ -241,5 +241,4 @@ Reference tables (CRD fields, flags, metrics) are generated from code.
 
 ## 11. Open questions
 
-- Which GitHub API gives Verified commits with full file modes (phase 2 design, live-tested).
-- Whether proxy mode should default to allowing every operation the permissions allow (with `deny…` lists) or to an allow-list (phase 2 design).
+- None open.

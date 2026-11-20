@@ -122,6 +122,76 @@ func TestClassifyLimitsTheBodyToOneMebibyte(t *testing.T) {
 	}
 }
 
+func TestClassifyLimitsThePrintedDocumentToOneMebibyte(t *testing.T) {
+	t.Parallel()
+
+	// A field nested depth times prints compactly as "a {\n" per level, the
+	// innermost "a\n", and "}\n" per level: 6*depth+2 bytes from 3*depth+2
+	// bytes of input. The document "query {\n" ... "}\n" holds chains of
+	// such fields and one flat field whose name sets the exact printed size.
+	const depth = 900
+
+	chain := " a" + strings.Repeat("{a", depth) + strings.Repeat("}", depth)
+	chains := 194
+	chainPrinted := 6*depth + 2
+
+	documentOfPrintedSize := func(size int) string {
+		filler := size - len("query {\n") - len("}\n") - chains*chainPrinted - len("\n")
+
+		return "query {" + strings.Repeat(chain, chains) + " " + strings.Repeat("x", filler) + "}"
+	}
+
+	tests := []struct {
+		name       string
+		size       int
+		requireErr require.ErrorAssertionFunc
+	}{
+		{name: "a document printing to exactly 1 MiB is classified", size: graphql.MaxBodySize},
+		{name: "a document printing to one byte over 1 MiB is refused as too large", size: graphql.MaxBodySize + 1, requireErr: requireRefused(http.StatusRequestEntityTooLarge, "too_large")},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if test.requireErr == nil {
+				test.requireErr = require.NoError
+			}
+
+			body, err := json.Marshal(map[string]string{"query": documentOfPrintedSize(test.size)})
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(body), graphql.MaxBodySize)
+
+			request, err := graphql.Classify(bytes.NewReader(body))
+			test.requireErr(t, err)
+
+			if request == nil {
+				return
+			}
+
+			var forwarded struct {
+				Query string `json:"query"`
+			}
+
+			require.NoError(t, json.Unmarshal(request.Body, &forwarded))
+			assert.Len(t, forwarded.Query, test.size)
+		})
+	}
+}
+
+func TestClassifyPrintsNestedSelectionsWithoutIndentation(t *testing.T) {
+	t.Parallel()
+
+	// Indenting each level would print about depth² bytes.
+	deep := strings.Repeat("{a", 998) + strings.Repeat("}", 998)
+	body := `{"query":"query {` + strings.Repeat(" a"+deep, 7) + `}"}`
+
+	request, err := graphql.Classify(strings.NewReader(body))
+	require.NoError(t, err)
+	assert.Less(t, len(request.Body), 4*len(body))
+	assert.NotContains(t, string(request.Body), `\t`)
+}
+
 func TestClassifyReturnsTheOperationKindAndMutationNames(t *testing.T) {
 	t.Parallel()
 

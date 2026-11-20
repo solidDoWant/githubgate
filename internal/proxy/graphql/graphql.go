@@ -70,6 +70,10 @@ func (e *Error) Error() string {
 	return e.Reason
 }
 
+func tooLarge(reason string) *Error {
+	return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Reason: reason}
+}
+
 func invalid(format string, args ...any) *Error {
 	return &Error{Status: http.StatusBadRequest, Code: "invalid_request", Reason: fmt.Sprintf(format, args...)}
 }
@@ -92,11 +96,7 @@ func Classify(body io.Reader) (*Request, error) {
 	}
 
 	if len(data) > MaxBodySize {
-		return nil, &Error{
-			Status: http.StatusRequestEntityTooLarge,
-			Code:   "too_large",
-			Reason: fmt.Sprintf("GraphQL body is larger than %d bytes", MaxBodySize),
-		}
+		return nil, tooLarge(fmt.Sprintf("GraphQL body is larger than %d bytes", MaxBodySize))
 	}
 
 	fields, refusal := decodeTopLevel(data)
@@ -130,10 +130,10 @@ func Classify(body io.Reader) (*Request, error) {
 		return nil, invalid("GraphQL %s operations are not supported", operation.Operation)
 	}
 
-	var printed bytes.Buffer
-
-	formatter.NewFormatter(&printed).FormatQueryDocument(document)
-	fields.Query = printed.String()
+	fields.Query, refusal = printDocument(document)
+	if refusal != nil {
+		return nil, refusal
+	}
 
 	request.Body, err = json.Marshal(fields)
 	if err != nil {
@@ -141,6 +141,52 @@ func Classify(body io.Reader) (*Request, error) {
 	}
 
 	return request, nil
+}
+
+// errPrintedTooLarge stops the formatter once the printed document passes
+// MaxBodySize.
+var errPrintedTooLarge = errors.New("printed GraphQL document is too large")
+
+// boundedWriter collects at most limit bytes. The formatter ignores write
+// errors, so a write past the limit panics with errPrintedTooLarge to stop the
+// printing before the whole document is built.
+type boundedWriter struct {
+	buffer bytes.Buffer
+	limit  int
+}
+
+func (w *boundedWriter) Write(data []byte) (int, error) {
+	if w.buffer.Len()+len(data) > w.limit {
+		panic(errPrintedTooLarge)
+	}
+
+	return w.buffer.Write(data)
+}
+
+// printDocument prints the document compactly, without indentation: the formatter's
+// indentation grows with the square of the nesting depth, so a small, deeply
+// nested document would print to hundreds of MiB. A document whose printed
+// form still passes MaxBodySize is refused before it is printed in full.
+func printDocument(document *ast.QueryDocument) (printed string, refusal *Error) {
+	writer := &boundedWriter{limit: MaxBodySize}
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+
+		if recovered != errPrintedTooLarge { //nolint:errorlint // the sentinel itself is panicked, never wrapped
+			panic(recovered)
+		}
+
+		printed = ""
+		refusal = tooLarge(fmt.Sprintf("printed GraphQL document is larger than %d bytes", MaxBodySize))
+	}()
+
+	formatter.NewFormatter(writer, formatter.WithCompacted(), formatter.WithIndent("")).FormatQueryDocument(document)
+
+	return writer.buffer.String(), nil
 }
 
 // decodeTopLevel decodes the top-level object of a GraphQL body with exact,

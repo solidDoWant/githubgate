@@ -10,23 +10,36 @@ import (
 	"strings"
 )
 
-// runGH gets a fresh token and runs gh with GH_TOKEN set.
+// runGH gets a fresh token and runs gh with GH_TOKEN set. With --proxy the
+// token is the ServiceAccount token, and gh trusts only the proxy CA.
 func runGH(ctx context.Context, env *environment, args []string) error {
 	var repo string
 
+	proxy := false
+
 	for len(args) > 0 && args[0] != "--" {
 		switch {
+		case args[0] == "--proxy":
+			proxy, args = true, args[1:]
 		case args[0] == "--repo" && len(args) > 1:
 			repo, args = args[1], args[2:]
 		case strings.HasPrefix(args[0], "--repo="):
 			repo, args = strings.TrimPrefix(args[0], "--repo="), args[1:]
 		default:
-			return errors.New("usage: gh [--repo owner/name] -- <gh args>")
+			return errors.New("usage: gh [--repo owner/name | --proxy] -- <gh args>")
 		}
 	}
 
 	if len(args) > 0 {
 		args = args[1:]
+	}
+
+	if proxy {
+		if repo != "" {
+			return errors.New("--repo has no effect with --proxy: the proxy decides per request")
+		}
+
+		return runProxiedGH(ctx, env, args)
 	}
 
 	if repo == "" {
@@ -50,12 +63,41 @@ func runGH(ctx context.Context, env *environment, args []string) error {
 		return err
 	}
 
+	return execGH(ctx, env, args, "GH_TOKEN="+response.Token)
+}
+
+// runProxiedGH runs gh with the ServiceAccount token and the proxy CA as its
+// only trusted CA. gh is a Go program, and Go loads the system certificate
+// directories even when SSL_CERT_FILE is set, so SSL_CERT_DIR points at an
+// empty directory.
+func runProxiedGH(ctx context.Context, env *environment, args []string) error {
+	caFile, _, err := proxyCA(env)
+	if err != nil {
+		return err
+	}
+
+	token, err := serviceAccountToken(env)
+	if err != nil {
+		return err
+	}
+
+	emptyDir, err := os.MkdirTemp("", "githubgate-no-certs-")
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = os.Remove(emptyDir) }()
+
+	return execGH(ctx, env, args, "GH_TOKEN="+token, "SSL_CERT_FILE="+caFile, "SSL_CERT_DIR="+emptyDir)
+}
+
+func execGH(ctx context.Context, env *environment, args []string, vars ...string) error {
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Stdin = env.stdin
 	cmd.Stdout = env.stdout
 	cmd.Stderr = env.stderr
 
-	cmd.Env = append(os.Environ(), "GH_TOKEN="+response.Token)
+	cmd.Env = append(os.Environ(), vars...)
 
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

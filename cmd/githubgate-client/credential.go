@@ -10,10 +10,16 @@ import (
 
 // runGitCredential implements the git credential helper protocol for
 // https://github.com. store and erase do nothing, because tokens are never
-// kept.
+// kept. With --proxy it answers the ServiceAccount token for the proxy instead
+// of asking githubgate for an installation token.
 func runGitCredential(ctx context.Context, env *environment, args []string) error {
+	proxy := len(args) > 0 && args[0] == "--proxy"
+	if proxy {
+		args = args[1:]
+	}
+
 	if len(args) != 1 {
-		return errors.New("usage: git-credential get|store|erase")
+		return errors.New("usage: git-credential [--proxy] get|store|erase")
 	}
 
 	switch args[0] {
@@ -42,9 +48,22 @@ func runGitCredential(ctx context.Context, env *environment, args []string) erro
 		return err
 	}
 
-	// Other hosts and protocols are left to the next helper.
+	// Other hosts and protocols are left to the next helper. In proxy mode
+	// this also keeps the ServiceAccount token to the one host git reaches
+	// through the proxy.
 	if input["protocol"] != "https" || input["host"] != "github.com" {
 		return nil
+	}
+
+	if proxy {
+		token, err := serviceAccountToken(env)
+		if err != nil {
+			return refuse(env, err.Error())
+		}
+
+		_, err = fmt.Fprintf(env.stdout, "username=x-access-token\npassword=%s\n", token)
+
+		return err
 	}
 
 	request := tokenRequest{}

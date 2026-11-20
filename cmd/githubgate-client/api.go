@@ -139,15 +139,9 @@ func newHTTPClient(env *environment) (string, *http.Client, error) {
 }
 
 func postToken(ctx context.Context, httpClient *http.Client, env *environment, endpoint string, body []byte) (*tokenResponse, bool, error) {
-	tokenFile := env.getenv("GITHUBGATE_TOKEN_FILE")
-	if tokenFile == "" {
-		tokenFile = defaultTokenFile
-	}
-
-	// Read on every call so a rotated token is picked up.
-	saToken, err := os.ReadFile(tokenFile)
+	saToken, err := serviceAccountToken(env)
 	if err != nil {
-		return nil, false, fmt.Errorf("read ServiceAccount token file: %w", err)
+		return nil, false, err
 	}
 
 	//nolint:forbidigo // This request goes to githubgate, never to GitHub.
@@ -156,7 +150,7 @@ func postToken(ctx context.Context, httpClient *http.Client, env *environment, e
 		return nil, false, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(saToken)))
+	req.Header.Set("Authorization", "Bearer "+saToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := httpClient.Do(req)

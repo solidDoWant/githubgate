@@ -32,6 +32,7 @@ type pushFixture struct {
 	work      string
 	vars      map[string]string
 	api       *httptest.Server
+	key       *rsa.PrivateKey
 	mu        sync.Mutex
 	requests  []recordedRequest
 	intercept func(w http.ResponseWriter, r *http.Request, body []byte) bool
@@ -76,6 +77,8 @@ func newPushFixture(t *testing.T) *pushFixture {
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
+
+	fix.key = key
 
 	fix.server.CreateApp(fakegithub.App{ID: 7, Name: "app", PublicKey: &key.PublicKey})
 	require.NoError(t, fix.server.CreateInstallation(fakegithub.Installation{

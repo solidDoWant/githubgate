@@ -272,6 +272,30 @@ func TestProxyRefusesRequestsOutsideTheRulesWithoutForwarding(t *testing.T) {
 			expectedMessage: `"createDeployment"`,
 		},
 		{
+			name:            "publishing a draft release without tag_name under pushRefs",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
+			request:         withBody(authenticated(http.MethodPatch, proxy.HostAPI, "/repos/acme/foo/releases/1"), `{"draft":false}`),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: `"repos/update-release"`,
+		},
+		{
+			name:            "a release update with a draft value that isn't a boolean under pushRefs",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
+			request:         withBody(authenticated(http.MethodPatch, proxy.HostAPI, "/repos/acme/foo/releases/1"), `{"draft":"false"}`),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: `"repos/update-release"`,
+		},
+		{
+			name:            "publishing a draft release with a tag outside pushRefs",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
+			request:         withBody(authenticated(http.MethodPatch, proxy.HostAPI, "/repos/acme/foo/releases/1"), `{"draft":false,"tag_name":"v1"}`),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: `"refs/tags/v1"`,
+		},
+		{
 			name:            "a ref body with a key twice",
 			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
 			request:         withBody(authenticated(http.MethodPost, proxy.HostAPI, "/repos/acme/foo/git/refs"), `{"ref":"refs/heads/agent/x","ref":"refs/heads/master"}`),
@@ -347,6 +371,13 @@ func TestProxyForwardsEachHostToItsUpstream(t *testing.T) {
 			expectedPath: "/api/repos/acme/foo/git/refs",
 			expectedAuth: "token " + installationToken,
 			expectedBody: `{"ref":"refs/heads/agent/x","sha":"aa"}`,
+		},
+		{
+			name:         "a release update without tag_name that keeps it a draft is sent as is",
+			request:      withBody(authenticated(http.MethodPatch, proxy.HostAPI, "/repos/acme/foo/releases/1"), `{"name":"notes","draft":true}`),
+			expectedPath: "/api/repos/acme/foo/releases/1",
+			expectedAuth: "token " + installationToken,
+			expectedBody: `{"name":"notes","draft":true}`,
 		},
 	}
 

@@ -37,6 +37,11 @@ type Decided struct {
 	// RefsUnknown is true when the request writes refs the proxy has not
 	// read, so a rule with pushRefs can't allow it.
 	RefsUnknown bool
+	// PublishesRelease is true when a release update may publish a draft
+	// without naming its tag. Publishing creates the draft's tag, which the
+	// proxy can't see without looking the release up, so a rule with
+	// pushRefs can't allow it.
+	PublishesRelease bool
 	// push is a git push's command section, kept to answer a refusal in
 	// git's protocol.
 	push *receiveCommands
@@ -318,6 +323,10 @@ func refsRefused(proxy *model.ProxyRule, check operations.RefCheck, request Deci
 	case operations.RefsBodyRef, operations.RefsPathRef, operations.RefsReleaseTag:
 		if request.RefsUnknown {
 			return fmt.Sprintf("the refs operation %q writes can't be checked against pushRefs", request.Operation)
+		}
+
+		if request.PublishesRelease {
+			return fmt.Sprintf("operation %q without tag_name can publish a draft release, which creates a tag pushRefs can't check", request.Operation)
 		}
 
 		return refsOutside(proxy.PushRefs, request.Refs)

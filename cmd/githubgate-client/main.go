@@ -20,6 +20,7 @@ commands:
   token [--repo name] [--owner owner] [--permission name=level]... [--installation ns/name]
   git-credential get|store|erase
   gh [--repo owner/name] -- <gh args>
+  push [<remote> [<branch>]]
   configure
   version
 `
@@ -81,6 +82,8 @@ func run(ctx context.Context, env *environment, args []string) error {
 		return runGitCredential(ctx, env, args[1:])
 	case "gh":
 		return runGH(ctx, env, args[1:])
+	case "push":
+		return runPush(ctx, env, args[1:])
 	case "configure":
 		return runConfigure(ctx, env)
 	default:

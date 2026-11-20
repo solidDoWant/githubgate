@@ -4,3 +4,8 @@ description: Gives Kubernetes workloads limited GitHub access through GitHub App
 type: application
 version: 0.3.0
 appVersion: 0.3.0
+# helm push turns sources[0] into the org.opencontainers.image.source
+# annotation, which links the ghcr.io chart package to this repository.
+home: https://github.com/solidDoWant/githubgate
+sources:
+  - https://github.com/solidDoWant/githubgate

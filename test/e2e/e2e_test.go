@@ -52,6 +52,7 @@ const (
 	fakeAPI         = "http://fakegithub.fake.svc:8080"
 	gateNamespace   = "githubgate"
 	proxyIP         = "10.96.0.50" // pinned cluster IP of the githubgate-proxy Service, inside kind's default service range
+	fakeTLSIP       = "10.96.0.51" // pinned cluster IP of the fake's HTTPS Service, which githubgate's pods know as the GitHub hosts
 	callerNamespace = "ci"
 )
 
@@ -241,10 +242,11 @@ spec:
     spec:
       containers:
         - name: fakegithub
-          image: %s
+          image: %[1]s
           imagePullPolicy: IfNotPresent
-          ports: [{containerPort: 8080}, {containerPort: 8081}]
-          readinessProbe: {tcpSocket: {port: 8080}}
+          args: [--tls-address=:8443, --tls-ca-out=/tmp/fake-ca.crt]
+          ports: [{containerPort: 8080}, {containerPort: 8081}, {containerPort: 8443}]
+          readinessProbe: {tcpSocket: {port: 8443}}
 ---
 apiVersion: v1
 kind: Service
@@ -254,7 +256,16 @@ spec:
   ports:
     - {name: api, port: 8080}
     - {name: control, port: 8081}
-`, c.fakeImage))
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fakegithub-tls, namespace: fake}
+spec:
+  clusterIP: %[2]s
+  selector: {app: fakegithub}
+  ports:
+    - {name: https, port: 443, targetPort: 8443}
+`, c.fakeImage, fakeTLSIP))
 	c.kubectl(t, "", "rollout", "status", "-n", "fake", "deployment/fakegithub", "--timeout=3m")
 }
 
@@ -303,10 +314,19 @@ func (c cluster) installGitHubgate(t *testing.T) {
 	repo, tag, _ := strings.Cut(c.serverImage, ":")
 	c.apply(t, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata: {name: %s}\n", gateNamespace))
 	c.installProxyCA(t)
+
+	// The proxy sends requests to the fake under GitHub's own host names,
+	// served with the fake's test CA.
+	fakeCA := c.kubectl(t, "", "exec", "-n", "fake", "deploy/fakegithub", "--", "cat", "/tmp/fake-ca.crt")
+	c.kubectl(t, fakeCA, "create", "configmap", "fake-github-ca", "-n", gateNamespace, "--from-file=ca.crt=/dev/stdin")
+
 	c.helm(t, "upgrade", "--install", "githubgate", "../../deploy/charts/githubgate",
 		"--namespace", gateNamespace, "--set", "image.repository="+repo, "--set", "image.tag="+tag,
 		"--set", "githubBaseURL="+fakeAPI,
 		"--set", "proxy.enabled=true", "--set", "proxy.ca.name=proxy-ca", "--set", "proxy.clusterIP="+proxyIP,
+		"--set", "proxy.upstreams.caConfigMap=fake-github-ca",
+		"--set", "hostAliases[0].ip="+fakeTLSIP,
+		"--set", "hostAliases[0].hostnames={api.github.com,uploads.github.com,github.com}",
 		"--wait", "--timeout", "4m")
 }
 
@@ -321,7 +341,9 @@ func (c cluster) configure(t *testing.T) string {
 	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 
 	c.control(t, "/apps", map[string]any{"id": appID, "name": "e2e", "public_key_pem": publicKeyPEM(t, key)})
-	c.control(t, "/installations", map[string]any{"id": 1, "app_id": appID, "owner": owner, "permissions": map[string]string{"contents": "write"}})
+	c.control(t, "/installations", map[string]any{"id": 1, "app_id": appID, "owner": owner, "permissions": map[string]string{
+		"contents": "write", "issues": "write", "pull_requests": "write",
+	}})
 	c.control(t, "/repositories", map[string]any{"owner": owner, "name": repository})
 	c.control(t, "/repositories", map[string]any{"owner": owner, "name": otherRepository})
 
@@ -346,7 +368,7 @@ spec:
   owner: %[4]s
   ceiling:
     - repositories: ["*"]
-      permissions: {contents: write}
+      permissions: {contents: write, issues: write, pull_requests: write}
   allowedNamespaces:
     selector: {matchLabels: {e2e-client: "true"}}
 ---
@@ -385,13 +407,42 @@ spec:
       repositories: [%[5]s]
       permissions: {contents: write}
       token: {enabled: true}
+---
+apiVersion: githubgate.soliddowant.dev/v1alpha1
+kind: GitHubAccessPolicy
+metadata: {name: ci-proxied, namespace: %[2]s}
+spec:
+  serviceAccounts: [ci-proxied]
+  rules:
+    - name: proxy
+      installationRef: {namespace: %[1]s, name: acme}
+      repositories: [%[5]s]
+      permissions: {contents: write, issues: write, pull_requests: write}
+      proxy:
+        enabled: true
+        denyOperations: [repos/create-release]
+        denyMutations: [mergePullRequest]
+---
+apiVersion: githubgate.soliddowant.dev/v1alpha1
+kind: GitHubAccessPolicy
+metadata: {name: ci-proxied-limited, namespace: %[2]s}
+spec:
+  serviceAccounts: [ci-proxied-limited]
+  rules:
+    - name: proxy
+      installationRef: {namespace: %[1]s, name: acme}
+      repositories: [%[5]s]
+      permissions: {contents: write, issues: write}
+      proxy:
+        enabled: true
+        allowOperations: [repos/get]
 `, gateNamespace, callerNamespace, appID, owner, repository))
 
 	for _, kind := range []string{"githubapp/e2e", "githubinstallation/acme"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", gateNamespace, kind, "--timeout=2m")
 	}
 
-	for _, policy := range []string{"ci-build", "ci-release", "ci-client"} {
+	for _, policy := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", callerNamespace, "githubaccesspolicy/"+policy, "--timeout=2m")
 	}
 
@@ -472,6 +523,7 @@ func TestTokenModeOnKind(t *testing.T) {
 	}
 
 	c.startCallerPod(t, "ci-proxied", true)
+	c.startCallerPod(t, "ci-proxied-limited", true)
 
 	// Output of every failed or refused call, for the leak search.
 	var clientOutput []string
@@ -685,6 +737,145 @@ git clone https://github.com/%s/%s.git /tmp/denied 2>&1
 		assert.Contains(t, out, "fatal:", "git reports its own failure")
 	})
 
+	// proxied runs a script in a proxied pod with SA_TOKEN set to its
+	// ServiceAccount token, which it sends where a GitHub token would go.
+	proxied := func(t *testing.T, pod, script string) string {
+		t.Helper()
+
+		out, err := c.exec(ctx, callerNamespace, pod, `set -e
+export SA_TOKEN=$(cat /var/run/secrets/githubgate/token)
+export PROXY_CA=/var/run/secrets/githubgate-proxy/ca.crt
+`+script)
+		clientOutput = append(clientOutput, out)
+		require.NoError(t, err, out)
+
+		return out
+	}
+
+	// call makes one request through the proxy and prints the status, the
+	// headers and the body, so the leak search reads all of them.
+	call := func(method, target, body string) string {
+		data := ""
+		if body != "" {
+			data = fmt.Sprintf("-H 'Content-Type: application/json' --data '%s'", body)
+		}
+
+		return fmt.Sprintf(`curl -sS -i --cacert "$PROXY_CA" -w '\nstatus=%%{http_code}\n' -X %s -H "Authorization: token $SA_TOKEN" -H 'Accept: application/vnd.github+json' %s '%s'
+`, method, data, target)
+	}
+
+	t.Run("a proxied pod reads an allowed repository with gh api", func(t *testing.T) {
+		out := proxied(t, "ci-proxied", fmt.Sprintf(`GH_TOKEN="$SA_TOKEN" SSL_CERT_FILE="$PROXY_CA" gh api repos/%s/%s --jq .name`, owner, repository))
+
+		assert.Equal(t, repository, strings.TrimSpace(out))
+	})
+
+	t.Run("a repository the proxy rules don't cover is refused naming it and never minted for", func(t *testing.T) {
+		var before []fakegithub.MintEntry
+
+		c.controlGet(t, "/mint-log", &before)
+
+		out := proxied(t, "ci-proxied", call("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, otherRepository), ""))
+
+		assert.Contains(t, out, "status=403")
+		assert.Contains(t, out, fmt.Sprintf("%s/%s", owner, otherRepository))
+
+		var after []fakegithub.MintEntry
+
+		c.controlGet(t, "/mint-log", &after)
+		assert.Len(t, after, len(before), "a token was minted for a refused request")
+	})
+
+	t.Run("a denied operation is refused naming it while another operation on the same repository works", func(t *testing.T) {
+		out := proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, repository), `{"tag_name":"proxy-v1"}`))
+		assert.Contains(t, out, "status=403")
+		assert.Contains(t, out, "repos/create-release")
+
+		out = proxied(t, "ci-proxied", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/1/comments", owner, repository), `{"body":"hi"}`))
+		assert.Contains(t, out, "status=201")
+	})
+
+	t.Run("with allowOperations only the listed operations work", func(t *testing.T) {
+		out := proxied(t, "ci-proxied-limited", call("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repository), ""))
+		assert.Contains(t, out, "status=200")
+
+		out = proxied(t, "ci-proxied-limited", call("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/1/comments", owner, repository), `{"body":"hi"}`))
+		assert.Contains(t, out, "status=403")
+		assert.Contains(t, out, "issues/create-comment")
+	})
+
+	t.Run("GraphQL queries work, a denied mutation is refused naming it and createPullRequest works", func(t *testing.T) {
+		// The pull request needs a base and a head branch.
+		setup := gitSetup + fmt.Sprintf(`rm -rf /tmp/pr
+git clone -q https://github.com/%[1]s/%[2]s.git /tmp/pr 2>/dev/null
+cd /tmp/pr
+git commit -q --allow-empty -m base
+git push -q origin HEAD:refs/heads/main
+git commit -q --allow-empty -m head
+git push -q origin HEAD:refs/heads/proxy-pr
+`, owner, repository)
+		out, err := c.exec(ctx, callerNamespace, "ci-client", setup)
+		require.NoError(t, err, out)
+
+		gh := `GH_TOKEN="$SA_TOKEN" SSL_CERT_FILE="$PROXY_CA" gh api graphql `
+
+		out = proxied(t, "ci-proxied", gh+fmt.Sprintf(`-f query='query { repository(owner: "%s", name: "%s") { id } }' --jq .data.repository.id`, owner, repository))
+		repositoryID := strings.TrimSpace(out)
+		require.NotEmpty(t, repositoryID)
+
+		out = proxied(t, "ci-proxied", gh+fmt.Sprintf(`-f query='mutation { createPullRequest(input: {repositoryId: "%s", baseRefName: "main", headRefName: "proxy-pr", title: "t"}) { pullRequest { number } } }' --jq .data.createPullRequest.pullRequest.number`, repositoryID))
+		assert.NotEmpty(t, strings.TrimSpace(out), "the pull request was created")
+
+		out = proxied(t, "ci-proxied", call("POST", "https://api.github.com/graphql", `{"query":"mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }"}`))
+		assert.Contains(t, out, "status=403")
+		assert.Contains(t, out, "mergePullRequest")
+	})
+
+	t.Run("a release asset upload follows the same operation rules as the API", func(t *testing.T) {
+		out, err := c.exec(ctx, callerNamespace, "ci-release", fmt.Sprintf(`set -e
+token=$(%s token --repo %s)
+curl -sS -X POST -H "Authorization: token ${token}" -d '{"tag_name":"asset-v1"}' %s/repos/%s/%s/releases | sed -n 's/.*"id": *\([0-9]*\).*/\1/p'`,
+			clientBinary, repository, fakeAPI, owner, repository))
+		require.NoError(t, err, out)
+
+		releaseID := strings.TrimSpace(out)
+		require.NotEmpty(t, releaseID)
+
+		upload := fmt.Sprintf(`curl -sS -i --cacert "$PROXY_CA" -X POST -H "Authorization: token $SA_TOKEN" -H 'Content-Type: text/plain' -w '\nstatus=%%{http_code}\n' --data-binary asset 'https://uploads.github.com/repos/%s/%s/releases/%s/assets?name=a.txt'
+`, owner, repository, releaseID)
+
+		out = proxied(t, "ci-proxied", upload)
+		assert.Contains(t, out, "status=201")
+
+		out = proxied(t, "ci-proxied-limited", upload)
+		assert.Contains(t, out, "status=403")
+		assert.Contains(t, out, "repos/upload-release-asset")
+	})
+
+	t.Run("every proxied request writes one audit line without a token", func(t *testing.T) {
+		logs := c.kubectl(t, "", "logs", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "--all-containers", "--tail=-1")
+
+		found := false
+
+		for line := range strings.SplitSeq(logs, "\n") {
+			var entry map[string]any
+			if json.Unmarshal([]byte(line), &entry) != nil || entry["mode"] != "proxy" || entry["operation"] != "repos/create-release" {
+				continue
+			}
+
+			found = true
+
+			assert.Equal(t, callerNamespace, entry["namespace"])
+			assert.Equal(t, "ci-proxied", entry["service_account"])
+			assert.Equal(t, "refused", entry["decision"])
+			assert.Equal(t, []any{owner + "/" + repository}, entry["repositories"])
+			assert.Contains(t, entry, "refs")
+			assert.Contains(t, entry, "mutations")
+		}
+
+		assert.True(t, found, "the refused release has an audit line")
+	})
+
 	t.Run("no key or token appears in logs, events, status, metrics or errors", func(t *testing.T) {
 		var tokens []struct {
 			Token string `json:"token"`
@@ -703,7 +894,7 @@ git clone https://github.com/%s/%s.git /tmp/denied 2>&1
 			secrets = append(secrets, token.Token)
 		}
 
-		for _, pod := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied"} {
+		for _, pod := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited"} {
 			secrets = append(secrets, strings.TrimSpace(c.kubectl(t, "", "exec", "-n", callerNamespace, pod, "--", "cat", "/var/run/secrets/githubgate/token")))
 		}
 

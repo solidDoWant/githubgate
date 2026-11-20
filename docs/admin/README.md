@@ -19,6 +19,16 @@ githubgate writes one JSON line to its log for each token request. The line neve
 - `github_status`: `minted` when GitHub made a new token, `cached` when githubgate gave out a token it already had, `not_called` when GitHub was not asked, or the GitHub error code.
 - `duration` and `request_id`.
 
+githubgate also writes one JSON line for each request to the proxy, when the response ends. The line never holds a token, a key, a header value, the path or the query. It has the fields above, with `mode` set to `proxy`, and these fields:
+
+- `host` and `method`: the GitHub host and the HTTP method of the request.
+- `kind`: `rest`, `graphql`, `git-info-refs`, `git-upload-pack` or `git-receive-pack`.
+- `operation`: the REST operation id, for example `repos/create-release`.
+- `mutations`: the names of the GraphQL mutations in the request.
+- `refs`: the git refs that the request writes, when githubgate read them.
+- `github_status`: the HTTP status from GitHub, `not_called` when githubgate did not send the request, or the GitHub error code when githubgate could not get a token.
+- `bytes`: the size of the response body that the caller got.
+
 ## The metrics
 
 githubgate serves Prometheus metrics at `/metrics` on its health port (8080):
@@ -43,7 +53,9 @@ The chart sets these. You need them only to run githubgate yourself.
 - `--leader-elect`: only the elected replica writes status. Needs `POD_NAMESPACE`.
 - `--webhook`, `--webhook-cert-dir`, `--webhook-port`: serve the admission webhook at `/validate` (default port 9443).
 - `--api-address` (`:8443`), `--health-address` (`:8080`), `--github-base-url` (default: api.github.com).
-- `--proxy`: serve proxy mode on `--proxy-address` (default `:9443`). Proxy mode is not finished yet. For now githubgate checks and refuses each request, and sends nothing to GitHub.
+- `--proxy`: serve proxy mode on `--proxy-address` (default `:9443`). githubgate decides each request against the proxy rules of the caller. It sends an allowed request to GitHub with an installation token in place of the ServiceAccount token.
+- `--proxy-upstream-api`, `--proxy-upstream-uploads`, `--proxy-upstream-git`: where the proxy sends requests for `api.github.com`, `uploads.github.com` and `github.com`. Each must be an `https` URL. Defaults: the GitHub hosts. The chart values are `proxy.upstreams.api`, `proxy.upstreams.uploads` and `proxy.upstreams.git`.
+- `--proxy-upstream-ca-file`: extra CA certificates that the upstreams can use, added to the system CAs. The chart value `proxy.upstreams.caConfigMap` names a ConfigMap with the certificates in `ca.crt`.
 - `--proxy-tls-cert-file`, `--proxy-tls-key-file`: the certificate of the proxy. They are required with `--proxy`. The certificate must name `api.github.com`, `uploads.github.com` and `github.com`. The proxy refuses a TLS connection for any other name. githubgate reads the files again when they change.
 - The webhook and the proxy both use port 9443 by default. If you turn on both, set `--webhook-port` or `--proxy-address` to a different port.
 

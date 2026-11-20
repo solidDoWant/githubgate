@@ -178,6 +178,7 @@ func TestProxyForwardsAllowedRequestsWithTheInstallationToken(t *testing.T) {
 	request.Header.Set("Cookie", "user=1")
 	request.Header.Set("X-Forwarded-For", "10.0.0.1")
 	request.Header.Set("X-Forwarded-Proto", "http")
+	request.Header.Set("X-Forwarded-Port", "80")
 	request.Header.Set("Accept", "application/vnd.github+json")
 
 	response := serve(forwarding.handler, request)

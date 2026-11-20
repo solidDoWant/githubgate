@@ -4,7 +4,7 @@ FROM mirror.gcr.io/library/debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064
 
 ARG TARGETARCH
 RUN apt-get update \
-	&& apt-get install --no-install-recommends -y git curl ca-certificates \
+	&& apt-get install --no-install-recommends -y git curl ca-certificates gh \
 	&& rm -rf /var/lib/apt/lists/*
 COPY build/images/${TARGETARCH}/fakegithub /fakegithub
 USER 65532:65532

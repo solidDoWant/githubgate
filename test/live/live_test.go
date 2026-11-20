@@ -97,19 +97,14 @@ type liveEnv struct {
 	api     *server.Server
 }
 
-// recordingAuthenticator takes the caller from the bearer value "ns/sa", so
-// the test chooses the identity without a Kubernetes API.
+// recordingAuthenticator takes the caller from the credential "ns/sa", so the
+// test chooses the identity without a Kubernetes API. It reads the schemes
+// the real authenticator does: Bearer and token (gh) and the Basic password
+// (git).
 type recordingAuthenticator struct{}
 
 func (recordingAuthenticator) Authenticate(_ context.Context, request *http.Request) (auth.Identity, error) {
-	value, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
-	if !ok {
-		// git sends the credential as the password of basic authentication.
-		if _, password, basic := request.BasicAuth(); basic {
-			value, ok = password, true
-		}
-	}
-
+	value, ok := credentialFrom(request)
 	if !ok {
 		return auth.Identity{}, auth.ErrNoCredential
 	}
@@ -120,6 +115,26 @@ func (recordingAuthenticator) Authenticate(_ context.Context, request *http.Requ
 	}
 
 	return auth.Identity{Namespace: namespace, ServiceAccount: name, Pod: "live"}, nil
+}
+
+// credentialFrom returns the credential of the request's one Authorization
+// header, or false when there is none or its scheme is unknown.
+func credentialFrom(request *http.Request) (string, bool) {
+	values := request.Header.Values("Authorization")
+	if len(values) != 1 {
+		return "", false
+	}
+
+	scheme, credential, _ := strings.Cut(values[0], " ")
+	switch {
+	case strings.EqualFold(scheme, "Bearer"), strings.EqualFold(scheme, "token"):
+		return strings.TrimSpace(credential), true
+	case strings.EqualFold(scheme, "Basic"):
+		_, password, ok := request.BasicAuth()
+		return password, ok
+	default:
+		return "", false
+	}
 }
 
 // tokenRecorder remembers every token the token API hands out.

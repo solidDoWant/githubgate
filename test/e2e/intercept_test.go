@@ -417,6 +417,63 @@ echo cloned
 		}
 	})
 
+	t.Run("a pod whose CA variable points into a mounted volume runs and trusts both CAs", func(t *testing.T) {
+		// A second fake GitHub with a CA of its own stands in for a server the
+		// pod's own CA signs. It answers to codeload.github.com, a name the
+		// interceptor does not serve, so the pod reaches it directly.
+		c.apply(t, fmt.Sprintf(`
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: own-ca-server, namespace: fake}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: own-ca-server}}
+  template:
+    metadata: {labels: {app: own-ca-server}}
+    spec:
+      containers:
+        - name: server
+          image: %[1]s
+          imagePullPolicy: IfNotPresent
+          args: [--tls-address=:8443, --tls-ca-out=/tmp/own-ca.crt]
+          readinessProbe: {tcpSocket: {port: 8443}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: own-ca-server, namespace: fake}
+spec:
+  selector: {app: own-ca-server}
+  ports: [{name: https, port: 443, targetPort: 8443}]
+`, c.fakeImage))
+		c.kubectl(t, "", "rollout", "status", "-n", "fake", "deployment/own-ca-server", "--timeout=3m")
+
+		ownCA := c.kubectl(t, "", "exec", "-n", "fake", "deploy/own-ca-server", "--", "cat", "/tmp/own-ca.crt")
+		c.applyConfigMap(t, interceptNamespace, "own-ca", ownCA)
+
+		c.startInterceptPod(t, interceptPod{
+			name: "own-ca", namespace: interceptNamespace,
+			spec: "  volumes:\n    - name: own-ca\n      configMap: {name: own-ca}\n",
+			containers: []interceptContainer{{
+				name: "main", script: "sleep infinity",
+				env:   "        - {name: SSL_CERT_FILE, value: /etc/own/ca.crt}\n",
+				extra: "      volumeMounts:\n        - {name: own-ca, mountPath: /etc/own, readOnly: true}\n",
+			}},
+		})
+
+		// gh reads the variable, so its request through the interceptor needs the
+		// pod's CA in the joined file. curl is given the same file explicitly,
+		// because it prefers the bundle variable the webhook sets.
+		out, err := c.exec(ctx, interceptNamespace, "own-ca", fmt.Sprintf(`set -e
+gh api repos/%[1]s/%[2]s --jq .name
+ip=$(getent hosts own-ca-server.fake.svc | cut -d' ' -f1)
+test -n "$ip"
+curl -sS -o /dev/null -w 'own status=%%{http_code}' --cacert "$SSL_CERT_FILE" --resolve codeload.github.com:443:$ip https://codeload.github.com/
+`, owner, repository))
+		require.NoError(t, err, "both CAs must be trusted from the container: %s", out)
+		assert.Contains(t, out, repository)
+		assert.Contains(t, out, "own status=")
+	})
+
 	t.Run("pods are not created while the injection webhook is unavailable", func(t *testing.T) {
 		// A second webhook with the same shape, pointing at a Service with no
 		// endpoints, for a label of its own. githubgate's webhook keeps running.

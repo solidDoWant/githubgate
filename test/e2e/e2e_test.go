@@ -919,7 +919,7 @@ done
 
 	// proxyGitSetup is the documented setup of git in a proxied pod.
 	proxyGitSetup := fmt.Sprintf(`export PATH=%s:$PATH GIT_TERMINAL_PROMPT=0
-githubgate-client configure --proxy
+githubgate-client configure --proxy >/dev/null
 git config --global user.name e2e
 git config --global user.email e2e@example.com
 `, path.Dir(clientBinary))
@@ -939,7 +939,8 @@ git rev-parse HEAD
 `, owner, repository))
 		require.NoError(t, err, out)
 
-		sha := strings.TrimSpace(out)
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		sha := lines[len(lines)-1]
 
 		out = proxied(t, "ci-proxied", proxyGitSetup+`cd /tmp/proxy-clone
 git fetch -q origin

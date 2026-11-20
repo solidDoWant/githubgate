@@ -70,6 +70,6 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 28. Metrics show requests by decision and the GitHub rate-limit remaining per installation.
     Tests: `internal/server: TestMetricsCountRequestsByDecision`, `internal/github: TestMintUpdatesTheRateLimitGaugeAtMostOnceAMinute`
 29. **Live:** against the owner's test App, scenarios 1, 4, 7 and 20 pass on github.com.
-    Tests:
+    Tests: `test/live: TestLiveAgainstGitHub`
 30. **Docs:** a user page shows how to use GitHub from a Tekton task and from a Coder workspace; an admin page shows how to create an App, its installation, a ceiling and a policy.
     Tests:

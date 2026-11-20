@@ -73,6 +73,22 @@ func (tr *transcript) addToken(token string) {
 	tr.tokens[token] = true
 }
 
+// linesContaining returns the transcript's lines that contain substring.
+func (tr *transcript) linesContaining(substring string) []string {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	var lines []string
+
+	for _, line := range strings.Split(tr.buffer.String(), "\n") {
+		if strings.Contains(line, substring) {
+			lines = append(lines, line)
+		}
+	}
+
+	return lines
+}
+
 func (tr *transcript) printf(t *testing.T, format string, args ...any) {
 	t.Helper()
 

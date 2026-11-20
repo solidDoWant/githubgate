@@ -1,6 +1,7 @@
 package github_test
 
 import (
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -429,12 +430,12 @@ func TestErrorsNeverContainSecrets(t *testing.T) {
 		record(err)
 	}
 
-	good := github.Credentials{AppID: appID, PrivateKey: f.pem}
-	wrongKey := otherKeyPEM(t)
+	good := github.Credentials{AppID: appID, PrivateKey: f.key, Version: "good"}
+	wrongKey := otherKey(t)
 
-	// A key that is not usable, then a key GitHub rejects.
-	mint(github.Credentials{AppID: appID, PrivateKey: f.pem[:len(f.pem)/2]}, readRequest())
-	mint(github.Credentials{AppID: appID, PrivateKey: wrongKey}, readRequest())
+	// A missing key, then a key GitHub rejects.
+	mint(github.Credentials{AppID: appID, Version: "missing"}, readRequest())
+	mint(github.Credentials{AppID: appID, PrivateKey: wrongKey, Version: "wrong"}, readRequest())
 
 	// GitHub refuses the scope.
 	refused := readRequest()
@@ -459,10 +460,10 @@ func TestErrorsNeverContainSecrets(t *testing.T) {
 	f.clock.Advance(time.Minute)
 	mint(good, readRequest())
 
-	secrets := []string{string(f.pem), string(wrongKey)}
+	secrets := []string{f.key.N.String(), f.key.D.String(), wrongKey.N.String(), wrongKey.D.String()}
 
-	for _, key := range [][]byte{f.pem, wrongKey} {
-		for _, line := range strings.Split(string(key), "\n") {
+	for _, key := range []*rsa.PrivateKey{f.key, wrongKey} {
+		for _, line := range strings.Split(string(keyPEM(key)), "\n") {
 			if len(line) > 16 && !strings.HasPrefix(line, "-----") {
 				secrets = append(secrets, line)
 			}

@@ -55,7 +55,6 @@ type fixture struct {
 	fake  *fakegithub.Server
 	api   *httptest.Server
 	key   *rsa.PrivateKey
-	pem   []byte
 	clock *clock
 
 	mu       sync.Mutex
@@ -84,7 +83,6 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		fake:  fake,
 		key:   key,
-		pem:   pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
 		clock: &clock{now: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)},
 		calls: map[string]int{},
 	}
@@ -146,7 +144,7 @@ func (f *fixture) registry(metrics *github.Metrics) *github.Registry {
 func (f *fixture) client(t *testing.T, metrics *github.Metrics) *github.AppClient {
 	t.Helper()
 
-	client, err := f.registry(metrics).Client(appName, github.Credentials{AppID: appID, PrivateKey: f.pem})
+	client, err := f.registry(metrics).Client(appName, github.Credentials{AppID: appID, PrivateKey: f.key, Version: "1"})
 	require.NoError(t, err)
 
 	return client
@@ -178,12 +176,16 @@ func requireGitHubError(t *testing.T, err error, reason github.Reason, condition
 	require.Equal(t, condition, failure.Condition, failure.Message)
 }
 
-func otherKeyPEM(t *testing.T) []byte {
+func otherKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
+	return key
+}
+
+func keyPEM(key *rsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 }
 
@@ -192,13 +194,30 @@ func TestClientFollowsChangedCredentials(t *testing.T) {
 		f := newFixture(t)
 		registry := f.registry(nil)
 
-		client, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: otherKeyPEM(t)})
+		client, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: otherKey(t), Version: "1"})
 		require.NoError(t, err)
 
 		_, err = client.Mint(t.Context(), readRequest())
 		requireGitHubError(t, err, github.ReasonUnavailable, github.ConditionSecretInvalid)
 
-		client, err = registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.pem})
+		client, err = registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.key, Version: "2"})
+		require.NoError(t, err)
+
+		_, err = client.Mint(t.Context(), readRequest())
+		require.NoError(t, err)
+	})
+
+	t.Run("a changed key under an unchanged version is still used", func(t *testing.T) {
+		f := newFixture(t)
+		registry := f.registry(nil)
+
+		client, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: otherKey(t), Version: "1"})
+		require.NoError(t, err)
+
+		_, err = client.Mint(t.Context(), readRequest())
+		requireGitHubError(t, err, github.ReasonUnavailable, github.ConditionSecretInvalid)
+
+		client, err = registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.key, Version: "1"})
 		require.NoError(t, err)
 
 		_, err = client.Mint(t.Context(), readRequest())
@@ -209,13 +228,13 @@ func TestClientFollowsChangedCredentials(t *testing.T) {
 		f := newFixture(t)
 		registry := f.registry(nil)
 
-		client, err := registry.Client(appName, github.Credentials{AppID: appID + 1, PrivateKey: f.pem})
+		client, err := registry.Client(appName, github.Credentials{AppID: appID + 1, PrivateKey: f.key, Version: "1"})
 		require.NoError(t, err)
 
 		_, err = client.Mint(t.Context(), readRequest())
 		requireGitHubError(t, err, github.ReasonUnavailable, github.ConditionSecretInvalid)
 
-		client, err = registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.pem})
+		client, err = registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.key, Version: "2"})
 		require.NoError(t, err)
 
 		_, err = client.Mint(t.Context(), readRequest())
@@ -226,25 +245,25 @@ func TestClientFollowsChangedCredentials(t *testing.T) {
 		f := newFixture(t)
 		registry := f.registry(nil)
 
-		first, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.pem})
+		first, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.key, Version: "1"})
 		require.NoError(t, err)
 
-		second, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: bytes.Clone(f.pem)})
+		second, err := registry.Client(appName, github.Credentials{AppID: appID, PrivateKey: f.key, Version: "1"})
 		require.NoError(t, err)
 		require.Same(t, first, second)
 	})
 
-	t.Run("a key that is not PEM is refused", func(t *testing.T) {
+	t.Run("a missing key is refused", func(t *testing.T) {
 		f := newFixture(t)
 
-		_, err := f.registry(nil).Client(appName, github.Credentials{AppID: appID, PrivateKey: []byte("not a key")})
+		_, err := f.registry(nil).Client(appName, github.Credentials{AppID: appID, Version: "1"})
 		requireGitHubError(t, err, github.ReasonUnavailable, github.ConditionSecretInvalid)
 	})
 
 	t.Run("a missing App ID is refused", func(t *testing.T) {
 		f := newFixture(t)
 
-		_, err := f.registry(nil).Client(appName, github.Credentials{PrivateKey: f.pem})
+		_, err := f.registry(nil).Client(appName, github.Credentials{PrivateKey: f.key, Version: "1"})
 		requireGitHubError(t, err, github.ReasonUnavailable, github.ConditionSecretInvalid)
 	})
 }

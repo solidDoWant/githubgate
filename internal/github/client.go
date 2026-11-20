@@ -4,8 +4,8 @@
 package github
 
 import (
-	"bytes"
 	"context"
+	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"strings"
@@ -43,11 +43,13 @@ type Options struct {
 	Now func() time.Time
 }
 
-// Credentials are a GitHubApp's App ID and PEM private key, read from the
-// GitHubApp and its Secrets.
+// Credentials are a GitHubApp's App ID and parsed private key, read from the
+// GitHubApp and its Secrets. Version changes whenever either may have changed
+// (the Secrets' resourceVersions).
 type Credentials struct {
 	AppID      int64
-	PrivateKey []byte
+	PrivateKey *rsa.PrivateKey
+	Version    string
 }
 
 // Registry holds one App client per GitHubApp and the installation ids each
@@ -88,13 +90,14 @@ func NewRegistry(options Options) *Registry {
 }
 
 // Client returns the App client of a GitHubApp, building a new one when the
-// App ID or private key differ from the ones the current client was built
-// with, so a changed Secret takes effect on the next call.
+// App ID, the version or the private key differ from the ones the current
+// client was built with, so a changed Secret takes effect on the next call.
 func (r *Registry) Client(app types.NamespacedName, credentials Credentials) (*AppClient, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if current, ok := r.clients[app]; ok && current.appID == credentials.AppID && bytes.Equal(current.privateKey, credentials.PrivateKey) {
+	if current, ok := r.clients[app]; ok && current.appID == credentials.AppID && current.version == credentials.Version &&
+		credentials.PrivateKey != nil && current.privateKey.Equal(credentials.PrivateKey) {
 		return current, nil
 	}
 
@@ -102,12 +105,11 @@ func (r *Registry) Client(app types.NamespacedName, credentials Credentials) (*A
 		return nil, &Error{Reason: ReasonUnavailable, Message: "the App ID is not set", Condition: ConditionSecretInvalid}
 	}
 
-	transport, err := ghinstallation.NewAppsTransport(r.options.Transport, credentials.AppID, credentials.PrivateKey)
-	if err != nil {
-		// The parser's error is dropped: only a fixed text may describe a key.
-		return nil, &Error{Reason: ReasonUnavailable, Message: "the App's private key is not a PEM RSA private key", Condition: ConditionSecretInvalid}
+	if credentials.PrivateKey == nil {
+		return nil, &Error{Reason: ReasonUnavailable, Message: "the App's private key is not set", Condition: ConditionSecretInvalid}
 	}
 
+	transport := ghinstallation.NewAppsTransportFromPrivateKey(r.options.Transport, credentials.AppID, credentials.PrivateKey)
 	transport.BaseURL = strings.TrimSuffix(r.options.BaseURL, "/")
 
 	api, err := gogithub.NewClient(gogithub.WithTransport(transport), gogithub.WithURLs(&r.options.BaseURL, nil))
@@ -124,7 +126,8 @@ func (r *Registry) Client(app types.NamespacedName, credentials Credentials) (*A
 	client := &AppClient{
 		registry:      r,
 		appID:         credentials.AppID,
-		privateKey:    bytes.Clone(credentials.PrivateKey),
+		version:       credentials.Version,
+		privateKey:    credentials.PrivateKey,
 		api:           api,
 		installations: cache,
 	}
@@ -137,7 +140,8 @@ func (r *Registry) Client(app types.NamespacedName, credentials Credentials) (*A
 type AppClient struct {
 	registry      *Registry
 	appID         int64
-	privateKey    []byte
+	version       string
+	privateKey    *rsa.PrivateKey
 	api           *gogithub.Client
 	installations *installationCache
 }

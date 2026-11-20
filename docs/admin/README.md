@@ -2,12 +2,9 @@
 
 For: people who install githubgate and decide who gets GitHub access. You know Kubernetes, Helm and GitHub Apps.
 
-githubgate is in early development. These pages are not written yet. They will show:
+- [Set up token mode](token-mode-setup.md): install, create an App, an installation with a ceiling and a policy, and read the status.
 
-- how to install githubgate with its Helm chart;
-- how to create a GitHub App, its `GitHubApp` and `GitHubInstallation` objects, and a ceiling;
-- how to write a `GitHubAccessPolicy` for a namespace;
-- how to read the status of the objects, the audit log and the metrics.
+This page also describes the audit log and the metrics.
 
 ## The audit log
 

@@ -77,7 +77,12 @@ The interceptor makes no decisions and never sees an installation token. It logs
 | `NODE_EXTRA_CA_CERTS` | `ca.crt` | Node.js |
 | `GH_TOKEN` | `githubgate`, only if the container sets neither `GH_TOKEN` nor `GITHUB_TOKEN` | `gh` refuses to run without a token; the interceptor replaces it |
 
-These replace the image's own bundle, so a pod that relies on private CAs lists them in the chart's `inject.extraCAConfigMap` (see "Injection webhook"); the bundle keeps the default roots for every other host, including GitHub's storage hosts.
+These replace the image's own bundle, which keeps the default roots for every other host, including GitHub's storage hosts. Private CAs reach the bundle three ways: the chart's `inject.extraCAConfigMap` (cluster-wide), the namespace annotation `githubgate.soliddowant.dev/extra-ca-configmap: <ConfigMap name>` (key `ca.crt`, in the pod's namespace), or a container that already sets one of the variables (joined, below).
+
+**Joining a container's own CA variable.** Other tools set these variables too (registry tooling, images with internal CAs). Rejecting them would make opting a namespace in break ordinary pods, so the webhook joins them where it can. For each container whose `env` sets `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` or `NODE_EXTRA_CA_CERTS` to a literal path `P`:
+- **`P` is inside one of that container's volume mounts** (ConfigMap, Secret, projected, emptyDir): the webhook mounts the same volume (same `subPath`) read-only into the interceptor at `/var/run/githubgate/join/<container>/<n>` and passes `--join <container>/<VARIABLE>=<path in the interceptor>`. The interceptor writes `trust/join/<container>/<VARIABLE>`: the container's own file followed by the pod CA (the container's file keeps deciding every other host, as it did before), re-reads the source every 30 seconds and rewrites the result atomically when it changes. The webhook points the container's variable at that file. Until the source exists (a file an earlier init container writes, for example), the joined file holds only the pod CA, so GitHub works and other hosts fail until the source appears.
+- **`P` is a file baked into the image, or the variable comes from `valueFrom`:** neither the webhook nor the interceptor can read it, so the pod is rejected: `githubgate: pod can't be intercepted: container "<name>" sets <VARIABLE> to a file githubgate can't read; put the CA in a ConfigMap and name it in the namespace annotation githubgate.soliddowant.dev/extra-ca-configmap`.
+- `SSL_CERT_DIR` isn't one of githubgate's variables and is left alone.
 
 **What interception covers, and what it doesn't.** `hostAliases` maps the three hosts to `127.0.0.1` for every container, and the webhook makes egress-proxy variables skip them (below), so tools reach the interceptor. Cases outside githubgate's control remain: a tool that resolves names without `/etc/hosts`, or proxy variables set at run time. In those cases only the pod's own credential (if it has one) can reach the real GitHub, never the ServiceAccount token, which only the interceptor reads and only sends to a server verified by the proxy CA.
 
@@ -102,7 +107,7 @@ If the proxy CA file is missing or holds no certificate, the replica isn't ready
 **Rejected**, with the message `githubgate: pod can't be intercepted: <reason>` (scenario 7):
 - `hostNetwork: true`;
 - `hostAliases` naming one of the three hosts (case-insensitive, trailing dot removed);
-- a container or init container whose `env` sets `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` or `NODE_EXTRA_CA_CERTS` (`env` only: `envFrom` loses to the injected `env`, so no ConfigMap lookup is needed);
+- a container or init container that sets one of the CA variables in a way that can't be joined (see "Joining a container's own CA variable"; `env` only: `envFrom` loses to the injected `env`, so no ConfigMap lookup is needed);
 - a container port `443`;
 - a pod sysctl `net.ipv4.ip_unprivileged_port_start` above 443;
 - a container named `githubgate-intercept`, or volumes or mounts named `githubgate-token`, `githubgate-trust` or `githubgate-intercept-state`, that the webhook didn't add (no `githubgate.soliddowant.dev/injected` annotation); or that annotation on a pod without the sidecar.
@@ -113,7 +118,8 @@ If the proxy CA file is missing or holds no certificate, the replica isn't ready
 - **Egress proxies:** in every container that sets any of `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`, `ALL_PROXY`, `all_proxy`, append `api.github.com,uploads.github.com,github.com` to `NO_PROXY` and `no_proxy` (creating them if absent).
 - Volumes: `githubgate-token` (projected ServiceAccount token, audience from `--audience`, `expirationSeconds: 3600`), `githubgate-intercept-state` (`emptyDir`, medium Memory, 1 MiB), both mounted **only** in the interceptor; `githubgate-trust` (`emptyDir`, medium Memory, 4 MiB).
 - Init container `githubgate-intercept`, `restartPolicy: Always` (native sidecar), image from `--inject-image`, args `intercept`, env `GITHUBGATE_INTERCEPT_PROXY_ADDRESS`, `GITHUBGATE_INTERCEPT_PROXY_CA` (the PEM inline; the CA certificate is public; a rotation applies to new pods) and, if configured, `GITHUBGATE_INTERCEPT_EXTRA_CA`. `startupProbe`: `exec ["/githubgate-client", "intercept", "--probe"]`, period 1 s, failure threshold 30 (scenario 9: kubelet starts later containers only after it succeeds). Security context: `runAsUser`/`runAsGroup` 65532, `runAsNonRoot`, `allowPrivilegeEscalation: false`, `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem`, `capabilities.drop: [ALL]`. Resources: memory request = limit 64 Mi, CPU request 10m, no CPU limit.
-- Every later container gets the "Trust" variables (`GH_TOKEN` only as stated there) and a read-only mount of `githubgate-trust` at `/var/run/githubgate/trust`.
+- Every later container gets the "Trust" variables (`GH_TOKEN` only as stated there; joined variables point at their joined file) and a read-only mount of `githubgate-trust` at `/var/run/githubgate/trust`.
+- If the namespace has the `extra-ca-configmap` annotation, its ConfigMap is mounted read-only into the interceptor and passed as `--extra-ca @<file>` (in addition to the chart's). A missing ConfigMap is a rejection naming it, so pods don't start without the CA they asked for.
 
 Pods created before the label was added aren't changed; the admin doc says to restart them.
 
@@ -142,13 +148,14 @@ The interceptor's variables are prefixed `GITHUBGATE_INTERCEPT_`. Phase 2's clie
 | Proxy CA rotated | running pods keep the old CA and fail TLS to the proxy (`503`) until restarted; documented |
 | Policy changes | decided at the proxy, as in phase 2 |
 | Webhook unavailable | pods in opted-in namespaces aren't created |
-| Another webhook adds a container after githubgate | reinvocation gives it the trust env and mount |
+| Another webhook adds a container after githubgate | reinvocation gives it the trust env and mount, and joins any CA variable it sets |
+| A joined CA file changes (ConfigMap update) | the interceptor rewrites the joined file within 30 seconds; processes that loaded it keep the old one |
 | Pod uses phase 1's token-mode client (`githubgate-client gh`, `git-credential`) | its installation token is stripped and replaced; the request is decided by **proxy** rules, so token-only policies get `403` (admin doc: add proxy rules before opting in) |
 | Pod uses phase 2's `--proxy` client | refused by its resolution check (the hosts resolve to `127.0.0.1`); remove that setup when opting in |
 
 ## Testing
 
-- **Unit:** the webhook's decisions (skip, reject, mutate, reinvocation) as a table over pod shapes, including Tekton-like pods with several init containers, proxy variables, `GH_TOKEN`/`GITHUB_TOKEN`, and a pod in a `restricted` namespace that must pass the PodSecurity library after mutation; the interceptor's header handling and error table; certificates (name constraints critical, IP ranges excluded, a leaf with an IP SAN fails `Verify`, leaf names exact, CA reused from the state directory, keys written only there).
+- **Unit:** the webhook's decisions (skip, reject, mutate, reinvocation) as a table over pod shapes, including Tekton-like pods with several init containers, proxy variables, `GH_TOKEN`/`GITHUB_TOKEN`, and a pod in a `restricted` namespace that must pass the PodSecurity library after mutation; joining (a CA variable inside a ConfigMap mount, with `subPath`, in an emptyDir written later, baked into the image, from `valueFrom`); the interceptor's header handling and error table; certificates (name constraints critical, IP ranges excluded, a leaf with an IP SAN fails `Verify`, leaf names exact, CA reused from the state directory, keys written only there).
 - **Scenario 10:** a test in `cmd/githubgate-client` that swaps the token file the way kubelet's atomic writer does (new `..data` target, then rename) and checks the next request's credential at a stub proxy.
 - **e2e (kind):** an opted-in namespace with the webhook, the proxy and the fake GitHub, with `inject.extraCAConfigMap` holding the fake's test CA (scenario 5's storage redirect); plain pods with `gh`, `git`, `curl` (scenarios 1–7, 9, 11, 12). Scenario 8: a test-only `MutatingWebhookConfiguration` pointing at a Service with no endpoints for a separate label, removed in `t.Cleanup` (githubgate itself keeps running). Scenario 11: search pods, events and logs for key material, and assert that every file in the trust directory holds only `CERTIFICATE` blocks and that the sidecar's env and args hold no key.
 - **Scenario 13:** the container test takes its env, hosts and flags from `nix eval` of a test NixOS configuration using the module (as JSON), so it tests the module's real output.

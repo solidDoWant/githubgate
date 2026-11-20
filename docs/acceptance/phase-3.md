@@ -18,7 +18,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
    Tests:
 6. A pod in a namespace without the label, or with the opt-out annotation in an opted-in namespace, is created unchanged.
    Tests:
-7. A pod in an opted-in namespace that can't be intercepted safely (host network, or its own `hostAliases` or environment settings for the GitHub hosts or the CA variables) is rejected with a message naming the reason.
+7. A pod in an opted-in namespace that can't be intercepted safely (host network, its own `hostAliases` for the GitHub hosts, or a CA variable pointing at a file githubgate can't read) is rejected with a message naming the reason; a pod whose container sets a CA variable to a file in a mounted volume runs, trusting both its own CA and the pod's.
    Tests:
 8. While the injection webhook is unavailable, pods in opted-in namespaces are not created (fail closed), and pods elsewhere are created as usual.
    Tests:

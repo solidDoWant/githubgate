@@ -3,6 +3,7 @@
 For: people who install githubgate and decide who gets GitHub access. You know Kubernetes, Helm and GitHub Apps.
 
 - [Set up token mode](token-mode-setup.md): install, create an App, an installation with a ceiling and a policy, and read the status.
+- [Set up proxy mode](proxy-mode-setup.md): the name-constrained CA, the chart values and the proxy rules.
 
 This page also describes the audit log and the metrics.
 

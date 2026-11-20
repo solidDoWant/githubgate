@@ -70,3 +70,26 @@ func TestAdminPageCoversAppInstallationCeilingAndPolicy(t *testing.T) {
 
 	assert.True(t, anyPage(pages, func(page string) bool { return hasHeading(page, "ceiling") }), "no ceiling heading on an admin page")
 }
+
+func TestUserPageShowsProxyPodSetupAndPush(t *testing.T) {
+	pages := markdownFiles(t, "user")
+	assert.True(t, anyPage(pages, func(page string) bool {
+		return hasKindBlock(page, "Pod") && regexp.MustCompile(`(?m)^\s*hostAliases:`).MatchString(page)
+	}), "no Pod manifest with hostAliases on a user page")
+	assert.True(t, anyPage(pages, func(page string) bool {
+		return regexp.MustCompile("githubgate-client push --proxy").MatchString(page)
+	}), "no githubgate-client push example on a user page")
+}
+
+func TestAdminPageCoversProxyCAAndProxyRules(t *testing.T) {
+	pages := markdownFiles(t, "admin")
+	assert.True(t, anyPage(pages, func(page string) bool {
+		return hasHeading(page, "name-constrained CA") && regexp.MustCompile(`permitted;DNS:github\.com`).MatchString(page)
+	}), "no name-constrained proxy CA section on an admin page")
+
+	for _, field := range []string{"denyOperations", "allowOperations", "denyMutations", "allowMutations", "pushRefs"} {
+		assert.True(t, anyPage(pages, func(page string) bool {
+			return hasKindBlock(page, "GitHubAccessPolicy") && regexp.MustCompile(field).MatchString(page)
+		}), "proxy field %s missing on an admin page", field)
+	}
+}

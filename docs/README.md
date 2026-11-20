@@ -38,11 +38,13 @@ docs/user/
   README.md                The pages for workload users.
   getting-access.md        Get GitHub access in a Tekton task or a Coder workspace, and read a refusal.
   client.md                The githubgate-client commands and settings.
+  proxy-mode.md            Set up a pod for proxy mode, push signed commits, and read a refusal.
   crd-reference.md         Every resource field (generated).
 
 docs/admin/
   README.md                The pages for admins.
   token-mode-setup.md      Install, App, installation, ceiling, policy and status.
+  proxy-mode-setup.md      The proxy CA, the chart values and the proxy rules.
   chart-values.md          Every Helm chart value (generated).
 
 docs/dev/

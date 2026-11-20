@@ -26,7 +26,7 @@ func (s *Server) handleGit(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	_, password, hasAuth := request.BasicAuth()
+	username, password, hasAuth := request.BasicAuth()
 	if !hasAuth || password == "" {
 		writer.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
 		http.Error(writer, "Authentication required", http.StatusUnauthorized)
@@ -34,8 +34,11 @@ func (s *Server) handleGit(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	// Only the literal user name x-access-token works with an installation
+	// token; any other user name is treated as a failed password login:
+	// https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation#using-an-installation-access-token-to-authenticate-with-git
 	token, ok := s.lookupToken(password)
-	if !ok {
+	if !ok || username != "x-access-token" {
 		writer.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
 		http.Error(writer, "Invalid username or token. Password authentication is not supported for Git operations.", http.StatusUnauthorized)
 

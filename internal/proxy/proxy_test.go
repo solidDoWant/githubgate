@@ -54,7 +54,7 @@ func (f *recordingForwarder) count() int {
 	return len(f.requests)
 }
 
-// tokenReviewAuthenticator is the phase one authenticator against a fake API
+// tokenReviewAuthenticator is the token API's authenticator against a fake API
 // server that knows validToken (with githubgate's audience) and otherToken
 // (with another audience).
 func tokenReviewAuthenticator(t *testing.T) auth.Authenticator {

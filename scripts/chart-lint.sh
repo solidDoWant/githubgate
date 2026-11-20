@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 chart=deploy/charts/githubgate
-required=()
+required=(--set "image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000")
 
 helm lint --strict "$chart" "${required[@]}"
 
@@ -22,4 +22,16 @@ mem=$(grep -E '^ +memory:' <<<"$default" | sort -u | wc -l)
 [ "$mem" -eq 1 ] || fail "memory request and limit differ"
 helm template githubgate "$chart" "${required[@]}" --show-only templates/deployment.yaml |
 	awk '/limits:/{f=1;next} f&&/cpu:/{exit 1} /requests:/{f=0}' || fail "a CPU limit is set"
+for want in 'kind: PodDisruptionBudget' 'replicas: 3' 'terminationGracePeriodSeconds: 30' 'name: githubgate-ca' 'kind: Certificate' 'kind: Role$' 'tokenreviews'; do
+	grep -qE -- "$want" <<<"$default" || fail "default render lacks: $want"
+done
+grep -qF 'kind: ValidatingWebhookConfiguration' <<<"$default" && fail "webhook rendered while disabled"
+# No cluster-wide Secret access.
+helm template githubgate "$chart" "${required[@]}" --show-only templates/clusterrole.yaml | grep -q secrets && fail "ClusterRole grants Secret access"
+webhook=$(helm template githubgate "$chart" --namespace githubgate "${required[@]}" --set webhook.enabled=true)
+for want in 'kind: ValidatingWebhookConfiguration' 'githubgate-webhook'; do
+	grep -qF -- "$want" <<<"$webhook" || fail "webhook render lacks: $want"
+done
+# Every image is pinned by digest.
+grep -E '^ +image:' <<<"$default" | grep -qv '@sha256:' && fail "an image is not pinned by digest"
 echo "chart-lint: passed"

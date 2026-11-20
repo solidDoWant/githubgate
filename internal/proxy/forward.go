@@ -168,11 +168,19 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	decision := Decide(f.options.Rules(caller.Namespace, caller.ServiceAccount), decided)
+	rules := f.options.Rules(caller.Namespace, caller.ServiceAccount)
+	decision := Decide(rules, decided)
 	entry.decisionResult = &decision
 
 	if !decision.Allowed() {
 		entry.reason = decision.Code
+
+		if decided.push != nil {
+			writePushRefusal(recorder, request.Body, decided.push, decision.Message, refusedRefs(rules, decided))
+
+			return
+		}
+
 		writeRefusal(recorder, classified.Host, graphQL, refuse(decision.Status, decision.Code, decision.Message))
 
 		return
@@ -292,7 +300,18 @@ func readBody(request *http.Request, classified Request) (Decided, *refusal) {
 		decided.Mutations = parsed.Mutations
 		replaceBody(request, parsed.Body)
 	case KindGitReceive:
-		decided.RefsUnknown = true
+		commands, failure := readReceiveCommands(bodyOf(request))
+		if failure != nil {
+			return decided, failure
+		}
+
+		decided.Refs = commands.Refs
+		decided.push = commands
+
+		// The section read is forwarded unchanged, followed by the rest of
+		// the stream; the length is unchanged.
+		rest := bodyOf(request)
+		request.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(commands.Raw), rest), closer: request.Body}
 	case KindREST:
 		return readRESTRefs(request, decided)
 	}
@@ -356,6 +375,20 @@ func readRESTRefs(request *http.Request, decided Decided) (Decided, *refusal) {
 	}
 
 	return decided, nil
+}
+
+// readCloser reads from Reader and closes closer, which may be nil.
+type readCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r readCloser) Close() error {
+	if r.closer == nil {
+		return nil
+	}
+
+	return r.closer.Close()
 }
 
 func bodyOf(request *http.Request) io.Reader {

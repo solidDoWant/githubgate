@@ -436,6 +436,7 @@ spec:
       proxy:
         enabled: true
         allowOperations: [repos/get]
+        pushRefs: [refs/heads/agent/**]
 `, gateNamespace, callerNamespace, appID, owner, repository))
 
 	for _, kind := range []string{"githubapp/e2e", "githubinstallation/acme"} {
@@ -871,6 +872,33 @@ curl -sS -X POST -H "Authorization: token ${token}" -d '{"tag_name":"asset-v1"}'
 		out = proxied(t, "ci-proxied-limited", upload)
 		assert.Contains(t, out, "status=403")
 		assert.Contains(t, out, "repos/upload-release-asset")
+	})
+
+	t.Run("with pushRefs a push to an allowed branch works and a push to master or a tag is refused naming the ref", func(t *testing.T) {
+		// git sends the ServiceAccount token as the Basic password, which is
+		// what a credential helper would do.
+		script := fmt.Sprintf(`remote=https://github.com/%[1]s/%[2]s.git
+header="Authorization: Basic $(printf 'x-access-token:%%s' "$SA_TOKEN" | base64 | tr -d '\n')"
+pushgit() { git -c http.sslCAInfo="$PROXY_CA" -c http.extraHeader="$header" "$@"; }
+rm -rf /tmp/push-refs
+git init -q /tmp/push-refs
+cd /tmp/push-refs
+git -c user.name=e2e -c user.email=e2e@example.com commit -q --allow-empty -m push-refs
+sha=$(git rev-parse HEAD)
+pushgit push -q "$remote" HEAD:refs/heads/agent/x
+pushgit ls-remote "$remote" refs/heads/agent/x | grep -q "^$sha"
+for ref in refs/heads/master refs/tags/push-refs-v1; do
+  if pushgit push --force "$remote" HEAD:$ref 2>/tmp/push-refs.err; then echo "pushed $ref"; exit 1; fi
+  cat /tmp/push-refs.err
+  if pushgit ls-remote "$remote" $ref | grep -q "^$sha"; then echo "$ref reached GitHub"; exit 1; fi
+done
+`, owner, repository)
+
+		out := proxied(t, "ci-proxied-limited", script)
+
+		for _, ref := range []string{"refs/heads/master", "refs/tags/push-refs-v1"} {
+			assert.Contains(t, out, fmt.Sprintf("githubgate: repository %q: ref %q is outside pushRefs", owner+"/"+repository, ref))
+		}
 	})
 
 	t.Run("killing a replica during a stream of proxied requests fails no request beyond the one in flight", func(t *testing.T) {

@@ -71,7 +71,8 @@ test: ## Run unit tests: Go (race detector; GO_TEST_JSON=file also writes the go
 # Fuzz targets run by test-fuzz, as package:FuzzName.
 FUZZ_TARGETS = \
 	./internal/proxy/graphql:FuzzClassify \
-	./internal/proxy:FuzzProxyRequestTarget
+	./internal/proxy:FuzzProxyRequestTarget \
+	./internal/proxy:FuzzReceivePackCommands
 
 FUZZTIME ?= 30s
 

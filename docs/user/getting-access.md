@@ -57,3 +57,15 @@ githubgate refuses when it cannot decide. It never gives a wider token to make a
 If `denied` names a repository that your policy lists, ask your admin to check the status of the policy. A rule that is outside the ceiling of the installation is not accepted and gives nothing. See [the admin guide](../admin/token-mode-setup.md).
 
 A policy change applies to new tokens only. A token that githubgate already gave out stays valid until it expires.
+
+## A refused push in proxy mode
+
+In proxy mode, a rule can have `pushRefs`. Then a `git push` can write only refs that match one of its patterns. githubgate reads the list of refs before GitHub gets any data. If one ref is outside `pushRefs`, githubgate refuses the whole push, and GitHub gets nothing. `git` shows the reason after each ref, for example:
+
+```
+ ! [remote rejected] master -> master (githubgate: repository "acme/foo": ref "refs/heads/master" is outside pushRefs)
+```
+
+The refs that were allowed show `githubgate: push refused (another ref)`. Push them again without the refused ref.
+
+githubgate also refuses a push that it cannot read: status 400 for a command list that is not valid, and status 413 for a list of more than 1000 refs or more than 64 KiB.

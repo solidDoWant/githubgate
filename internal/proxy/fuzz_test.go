@@ -1,7 +1,11 @@
 package proxy_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/solidDoWant/githubgate/internal/auth"
+	"github.com/solidDoWant/githubgate/internal/model"
 	"github.com/solidDoWant/githubgate/internal/proxy"
 )
 
@@ -96,3 +101,89 @@ type acceptingAuthenticator struct{}
 func (acceptingAuthenticator) Authenticate(context.Context, *http.Request) (auth.Identity, error) {
 	return auth.Identity{Namespace: "ci-a", ServiceAccount: "builder"}, nil
 }
+
+// FuzzReceivePackCommands checks that whatever a push sends, it reaches
+// GitHub only unchanged and only when every ref it writes matches pushRefs;
+// anything else is refused with nothing forwarded.
+func FuzzReceivePackCommands(f *testing.F) {
+	for _, seed := range []string{
+		pushBody("report-status side-band-64k", "refs/heads/agent/x"),
+		pushBody("report-status", "refs/heads/agent/x", "refs/heads/master"),
+		pkt("shallow "+oldID+"\n", oldID+" "+newID+" refs/heads/agent/x\x00report-status") + flush + packData,
+		pkt("push-cert\x00report-status", "push-cert-end\n") + flush,
+		"zzzz", "", flush, "0004" + flush, "fff0",
+	} {
+		f.Add(seed)
+	}
+
+	// One forwarder per worker, with an in-process upstream, so each input
+	// costs no server or connection.
+	var (
+		forwarded [][]byte
+		audit     bytes.Buffer
+	)
+
+	upstream := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		data, err := io.ReadAll(request.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		forwarded = append(forwarded, data)
+
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody, Request: request}, nil
+	})
+
+	forwarder, err := proxy.NewForwarder(proxy.ForwarderOptions{
+		Rules:     func(string, string) []*model.Rule { return []*model.Rule{agentRule()} },
+		Tokens:    &fakeTokens{},
+		Upstreams: proxy.DefaultUpstreams(),
+		Transport: upstream,
+		Audit:     slog.New(slog.NewJSONHandler(&audit, nil)),
+	})
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	handler := proxy.NewHandler(proxy.Options{Authenticator: acceptingAuthenticator{}, Forwarder: forwarder})
+
+	f.Fuzz(func(t *testing.T, body string) {
+		forwarded, audit = nil, bytes.Buffer{}
+
+		response := serve(handler, pushRequest(body))
+
+		if len(forwarded) == 0 {
+			return
+		}
+
+		if string(forwarded[0]) != body {
+			t.Fatalf("the push reached GitHub changed: %q became %q", body, forwarded[0])
+		}
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("a forwarded push answered %d", response.Code)
+		}
+
+		var line struct {
+			Refs []string `json:"refs"`
+		}
+
+		if err := json.Unmarshal(audit.Bytes(), &line); err != nil {
+			t.Fatalf("the audit line can't be read: %v", err)
+		}
+
+		if len(line.Refs) == 0 {
+			t.Fatalf("a push writing no known ref was forwarded: %q", body)
+		}
+
+		for _, ref := range line.Refs {
+			if !strings.HasPrefix(ref, "refs/heads/agent/") {
+				t.Fatalf("ref %q outside pushRefs was forwarded", ref)
+			}
+		}
+	})
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }

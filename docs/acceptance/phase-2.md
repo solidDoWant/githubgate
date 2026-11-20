@@ -44,11 +44,11 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Signed commits
 
 18. `githubgate-client push origin <branch>` publishes the local commits that the remote branch doesn't have; each is created through GitHub's API with the same message, file contents, file modes (executable bit, symlinks) and deletions, authored by the App (GitHub signs only commits the App authors) with the original author kept in a `Co-authored-by:` trailer, and the remote branch ends at the last one.
-    Tests:
+    Tests: `cmd/githubgate-client: TestPushPublishesCommitsThroughTheAPI`, `cmd/githubgate-client: TestPushPublishesOntoAnExistingRemoteBranch`, `cmd/githubgate-client: TestPushPublishesNothingOnARateLimit`
 19. After `push`, the local branch points at the published commits, and the working tree and index are unchanged.
-    Tests:
+    Tests: `cmd/githubgate-client: TestPushMovesTheLocalBranchAndKeepsTheWorkingTree`, `cmd/githubgate-client: TestPushLeavesTheLocalBranchWhenTheTreesDiffer`
 20. A range containing a merge commit, or a change GitHub's API can't express (a submodule), is refused with a message naming the commit, and nothing is published.
-    Tests:
+    Tests: `cmd/githubgate-client: TestPushRefusesWhatTheAPICannotExpress`
 21. `push` works in token mode and through the proxy, and through the proxy it obeys `pushRefs`.
     Tests:
 

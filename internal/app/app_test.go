@@ -65,6 +65,35 @@ func TestParseFlags(t *testing.T) {
 				"--webhook", "--webhook-cert-dir=/w", "--webhook-port=9444",
 			}, base...),
 		},
+		"inject with defaults": {
+			args: append([]string{"--inject", "--webhook-cert-dir=/w", "--inject-image=ghcr.io/x/c@sha256:abc", "--inject-proxy-ca-file=/ca"}, base...),
+			env:  map[string]string{"POD_NAMESPACE": "gg"},
+			check: func(t *testing.T, config app.Config) {
+				assert.True(t, config.Inject)
+				assert.False(t, config.Webhook)
+				assert.Equal(t, "githubgate-proxy.gg.svc:443", config.InjectProxyAddress)
+			},
+		},
+		"inject without image": {
+			args:   append([]string{"--inject", "--webhook-cert-dir=/w", "--inject-proxy-ca-file=/ca"}, base...),
+			env:    map[string]string{"POD_NAMESPACE": "gg"},
+			assert: require.Error,
+		},
+		"inject image not pinned": {
+			args:   append([]string{"--inject", "--webhook-cert-dir=/w", "--inject-image=ghcr.io/x/c:latest", "--inject-proxy-ca-file=/ca"}, base...),
+			env:    map[string]string{"POD_NAMESPACE": "gg"},
+			assert: require.Error,
+		},
+		"inject without proxy CA file": {
+			args:   append([]string{"--inject", "--webhook-cert-dir=/w", "--inject-image=ghcr.io/x/c@sha256:abc"}, base...),
+			env:    map[string]string{"POD_NAMESPACE": "gg"},
+			assert: require.Error,
+		},
+		"inject without webhook dir": {
+			args:   append([]string{"--inject", "--inject-image=ghcr.io/x/c@sha256:abc", "--inject-proxy-ca-file=/ca"}, base...),
+			env:    map[string]string{"POD_NAMESPACE": "gg"},
+			assert: require.Error,
+		},
 		"no admin namespace":  {args: base, assert: require.Error},
 		"missing TLS flags":   {args: []string{"--admin-namespaces=a"}, assert: require.Error},
 		"webhook without dir": {args: append([]string{"--admin-namespaces=a", "--webhook"}, base...), assert: require.Error},

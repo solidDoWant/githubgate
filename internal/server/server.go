@@ -48,6 +48,8 @@ type Options struct {
 	Metrics *Metrics
 	// Audit receives one line per token request; discarded when nil.
 	Audit *slog.Logger
+	// ReadyCheck, when set, must also report true for the replica to be ready.
+	ReadyCheck func() bool
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 }
@@ -97,7 +99,9 @@ type ErrorResponse struct {
 
 // Ready reports whether the replica can serve: its snapshot is built and it
 // isn't shutting down.
-func (s *Server) Ready() bool { return !s.draining.Load() && s.options.Store.Ready() }
+func (s *Server) Ready() bool {
+	return !s.draining.Load() && s.options.Store.Ready() && (s.options.ReadyCheck == nil || s.options.ReadyCheck())
+}
 
 // Handler returns the token API.
 func (s *Server) Handler() http.Handler {

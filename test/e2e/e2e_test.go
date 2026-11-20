@@ -20,6 +20,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,16 +34,6 @@ import (
 func slicesCompactSorted(items []string) []string {
 	return slices.Compact(slices.Sorted(slices.Values(items)))
 }
-
-// Pinned images of cert-manager, which the chart needs for its certificates.
-// Each is the repository, the tag and the digest.
-const (
-	certManagerChartVersion = "1.21.3"
-	certManagerController   = "quay.io/jetstack/cert-manager-controller:v1.21.3@sha256:9f4f96a33c7774cef24466fcd85031997531a03a8d117f151126baa8d1290dcc"
-	certManagerCAInjector   = "quay.io/jetstack/cert-manager-cainjector:v1.21.3@sha256:083d0e906f8eb44e255fe4ff817ae54e49f9ed82e22f1011bb4e9e4f4b8a641f"
-	certManagerWebhook      = "quay.io/jetstack/cert-manager-webhook:v1.21.3@sha256:055ac8e9de6a0ba6763794838fe38944acc650f68ebe1b01dd8be079e580f458"
-	certManagerStartupCheck = "quay.io/jetstack/cert-manager-startupapicheck:v1.21.3@sha256:1c519d4afca1413d1e4ccd78bdc756184418ab55a34569a3b3de39d32f9974e1"
-)
 
 const (
 	appID           = 4242
@@ -213,26 +204,6 @@ func splitImage(ref string) (repo, digest string) {
 	return repo, digest
 }
 
-func (c cluster) installCertManager(t *testing.T) {
-	t.Helper()
-
-	args := []string{
-		"upgrade", "--install", "cert-manager", "oci://quay.io/jetstack/charts/cert-manager",
-		"--version", certManagerChartVersion, "--namespace", "cert-manager", "--create-namespace",
-		"--set", "crds.enabled=true", "--wait", "--timeout", "4m",
-	}
-
-	for prefix, ref := range map[string]string{
-		"image": certManagerController, "cainjector.image": certManagerCAInjector,
-		"webhook.image": certManagerWebhook, "startupapicheck.image": certManagerStartupCheck,
-	} {
-		repo, digest := splitImage(ref)
-		args = append(args, "--set", prefix+".repository="+repo, "--set", prefix+".digest="+digest)
-	}
-
-	c.helm(t, args...)
-}
-
 func (c cluster) installFakeGitHub(t *testing.T) {
 	t.Helper()
 
@@ -318,12 +289,19 @@ spec: {ca: {secretName: proxy-ca-root}}
 	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", gateNamespace, "certificate/proxy-ca-root", "--timeout=2m")
 }
 
+// installGatewayNamespaceAndProxyCA creates the githubgate namespace and the
+// proxy CA in it.
+func (c cluster) installGatewayNamespaceAndProxyCA(t *testing.T) {
+	t.Helper()
+
+	c.apply(t, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata: {name: %s}\n", gateNamespace))
+	c.installProxyCA(t)
+}
+
 func (c cluster) installGitHubgate(t *testing.T) {
 	t.Helper()
 
 	repo, tag, _ := strings.Cut(c.serverImage, ":")
-	c.apply(t, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata: {name: %s}\n", gateNamespace))
-	c.installProxyCA(t)
 
 	// The proxy sends requests to the fake under GitHub's own host names,
 	// served with the fake's test CA.
@@ -530,8 +508,15 @@ func TestTokenModeOnKind(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Minute)
 	t.Cleanup(cancel)
 
-	c.installCertManager(t)
-	c.installFakeGitHub(t)
+	// cert-manager is installed by up.sh while the images build. The fake
+	// GitHub and the proxy CA depend on nothing but the cluster and
+	// cert-manager, so they come up together.
+	var setup sync.WaitGroup
+
+	setup.Go(func() { c.installFakeGitHub(t) })
+	setup.Go(func() { c.installGatewayNamespaceAndProxyCA(t) })
+	setup.Wait()
+
 	c.installGitHubgate(t)
 
 	keyPEM := c.configure(t)

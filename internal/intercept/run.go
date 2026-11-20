@@ -126,9 +126,18 @@ func Run(ctx context.Context, options Options) error {
 	}
 
 	joinCtx, stopJoining := context.WithCancel(ctx)
-	defer stopJoining()
+	joinDone := make(chan struct{})
 
-	go joined.run(joinCtx, options.JoinInterval, options.Logger)
+	go func() {
+		defer close(joinDone)
+		joined.run(joinCtx, options.JoinInterval, options.Logger)
+	}()
+
+	// Run must not return while the joiner can still write into the trust directory.
+	defer func() {
+		stopJoining()
+		<-joinDone
+	}()
 
 	server := &http.Server{
 		Handler: &Forwarder{

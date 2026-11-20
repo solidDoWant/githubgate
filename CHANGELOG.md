@@ -2,6 +2,56 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.3.0
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release covers phase 3 of the project: transparent interception. With interception, a pod needs no GitHub setup. githubgate adds a helper container, the interceptor, to each pod that opts in. `git`, `gh` and `curl` in the pod then work as they do against GitHub, and every request goes through the githubgate proxy. The pod never holds a GitHub token. A KubeVirt VM can use the interceptor in its launcher pod. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.3.0 --namespace githubgate --create-namespace
+```
+
+The setup is in [Set up interception](https://github.com/solidDoWant/githubgate/blob/master/docs/admin/interception-setup.md). Workload users read [Use GitHub with no setup in your pod](https://github.com/solidDoWant/githubgate/blob/master/docs/user/interception.md).
+
+### Upgrade notes for admins
+
+None. Policies, chart values and clients of 0.2.0 work without a change. Interception is off until you turn it on with the chart value `inject.enabled`.
+
+### Interception
+
+- An injection webhook adds the interceptor to each pod in a namespace with the label `githubgate.soliddowant.dev/inject=true`. One pod opts out with the annotation `githubgate.soliddowant.dev/inject: "false"`. In other namespaces, one pod opts in with the label `githubgate.soliddowant.dev/inject: "true"`. ([#149](https://github.com/solidDoWant/githubgate/pull/149), [#173](https://github.com/solidDoWant/githubgate/pull/173))
+- The webhook points `github.com`, `api.github.com` and `uploads.github.com` to the interceptor, at `127.43.0.1:443` by default. It sets the trust variables (`SSL_CERT_FILE` and others) in every container, so that the tools trust the interceptor. It sets `GH_TOKEN` to a placeholder when a container has no GitHub token variable, because `gh` does not run without one. ([#149](https://github.com/solidDoWant/githubgate/pull/149), [#173](https://github.com/solidDoWant/githubgate/pull/173))
+- If a container sets an egress proxy variable, the webhook adds the three GitHub names to `NO_PROXY` and `no_proxy`. It keeps the values that the container sets, also when they come from `envFrom`. ([#149](https://github.com/solidDoWant/githubgate/pull/149), [#199](https://github.com/solidDoWant/githubgate/pull/199))
+- If a container sets a CA variable to a file in one of its volumes, githubgate joins that file with the CA of the interceptor. Other hosts keep the CAs of the file. A namespace can add its own private CAs with the annotation `githubgate.soliddowant.dev/extra-ca-configmap`. ([#160](https://github.com/solidDoWant/githubgate/pull/160))
+- The webhook rejects a pod that it cannot make safe, and the error gives the reason. Examples are `hostNetwork: true`, a container on port 443, or a CA variable that points to a file in the image. ([#149](https://github.com/solidDoWant/githubgate/pull/149), [#160](https://github.com/solidDoWant/githubgate/pull/160))
+- The pod annotation `githubgate.soliddowant.dev/listen` sets another address for the interceptor. A KubeVirt VM uses it to reach the interceptor in its launcher pod at its gateway address, `10.0.2.1:443`. Nothing of githubgate runs in the VM, and the ServiceAccount token never enters the VM. ([#173](https://github.com/solidDoWant/githubgate/pull/173), [#193](https://github.com/solidDoWant/githubgate/pull/193))
+
+### Client (`git`, `gh`)
+
+- `githubgate-client intercept` runs the interceptor. It removes every credential that your tools send. Then it sends the request to the githubgate proxy with the ServiceAccount token of the pod. It makes its own CA for each pod and writes the trust files that your containers read. ([#151](https://github.com/solidDoWant/githubgate/pull/151))
+- The interceptor stops cleanly and exits 0 when the pod stops it. ([#195](https://github.com/solidDoWant/githubgate/pull/195))
+
+### Deployment
+
+- The chart values `inject.enabled`, `inject.image.digest`, `inject.proxyAddress`, `inject.proxyCAConfigMap` and `inject.extraCAConfigMap` install and set up the injection webhook. The webhook needs cert-manager and proxy mode (`proxy.enabled`). ([#150](https://github.com/solidDoWant/githubgate/pull/150))
+- The webhook fails closed. If it is not available or has no proxy CA, githubgate refuses to create pods that opt in. It never lets such a pod through without the interceptor. ([#149](https://github.com/solidDoWant/githubgate/pull/149), [#150](https://github.com/solidDoWant/githubgate/pull/150))
+- The githubgate pods check their readiness every second, so a new pod gets requests sooner. ([#158](https://github.com/solidDoWant/githubgate/pull/158))
+- The guides for interception are under `docs/user/` and `docs/admin/`. ([#165](https://github.com/solidDoWant/githubgate/pull/165))
+
+### Security
+
+- The interceptor and the webhook refuse a listen address that covers every address of the pod, also when it is written as `::ffff:0.0.0.0`. On such an address, other pods can reach the interceptor and send requests with the token of your pod. ([#196](https://github.com/solidDoWant/githubgate/pull/196))
+- `golang.org/x/sys` is now v0.50.0. ([#184](https://github.com/solidDoWant/githubgate/pull/184))
+
+### Fixes
+
+- githubgate closes all of its listeners before it stops. ([#180](https://github.com/solidDoWant/githubgate/pull/180))
+
+Internal work: end-to-end tests for interception on kind, a live test on github.com, faster CI (fuzz tests in their own stage, parallel e2e setup), agent tooling and design documents.
+
+### Known issues
+
+None.
+
 ## 0.2.0
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release covers phase 2 of the project: proxy mode and signed commits. In proxy mode, the workload gets no GitHub token at all. githubgate forwards each request of the workload to GitHub itself, and it can limit which branches and tags a push changes. Install or upgrade with the Helm chart:

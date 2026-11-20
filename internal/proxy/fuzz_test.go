@@ -172,7 +172,9 @@ func FuzzReceivePackCommands(f *testing.F) {
 			t.Fatalf("the audit line can't be read: %v", err)
 		}
 
-		if len(line.Refs) == 0 {
+		// Only git's probe, a body that is exactly one flush packet, may be
+		// forwarded without a ref: it names none and carries no pack.
+		if len(line.Refs) == 0 && body != "0000" {
 			t.Fatalf("a push writing no known ref was forwarded: %q", body)
 		}
 

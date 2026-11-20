@@ -45,9 +45,11 @@ type receiveCommands struct {
 
 // readReceiveCommands reads a receive-pack request's command section up to
 // its flush packet: optional shallow lines, then commands with the first one
-// carrying the capabilities. Anything else, a malformed object id or a ref
+// carrying the capabilities. A body that is only a flush packet is git's
+// probe and names no ref. Anything else, a malformed object id or a ref
 // that is not a valid ref name is refused, as is a section over 1000
-// commands or 64 KiB. It reads nothing past the flush packet.
+// commands or 64 KiB. It reads nothing past the flush packet, except to
+// check that a probe ends there.
 func readReceiveCommands(body io.Reader) (*receiveCommands, *refusal) {
 	section := &boundedRecorder{reader: body, limit: maxReceiveCommandBytes}
 	scanner := pktline.NewScanner(section)
@@ -71,6 +73,10 @@ func readReceiveCommands(body io.Reader) (*receiveCommands, *refusal) {
 
 	if !flushed {
 		return nil, malformedPush("the push command list can't be read")
+	}
+
+	if len(lines) == 0 {
+		return readProbe(body, section.recorded.Bytes())
 	}
 
 	commands := lines
@@ -117,6 +123,18 @@ func readReceiveCommands(body io.Reader) (*receiveCommands, *refusal) {
 	}
 
 	return &receiveCommands{Raw: section.recorded.Bytes(), Refs: refs, Capabilities: capabilities}, nil
+}
+
+// readProbe accepts a body that is only a flush packet: git sends it before
+// a push larger than its post buffer to check that the server accepts a
+// push, and GitHub answers it. It names no ref and carries no pack, so it
+// writes nothing. Anything after the flush packet is refused.
+func readProbe(body io.Reader, raw []byte) (*receiveCommands, *refusal) {
+	if _, err := io.ReadFull(body, make([]byte, 1)); !errors.Is(err, io.EOF) {
+		return nil, malformedPush("the push names no ref")
+	}
+
+	return &receiveCommands{Raw: raw, Refs: []string{}, Capabilities: capability.NewList()}, nil
 }
 
 // commandRef returns the ref of a command line `<old> <new> <ref>`, and

@@ -35,7 +35,7 @@ type Decided struct {
 	// Refs are the full refs the request writes, as far as they are known.
 	Refs []string
 	// RefsUnknown is true when the request writes refs the proxy has not
-	// read (a git push), so a rule with pushRefs can't allow it.
+	// read, so a rule with pushRefs can't allow it.
 	RefsUnknown bool
 	// push is a git push's command section, kept to answer a refusal in
 	// git's protocol.

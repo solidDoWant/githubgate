@@ -23,10 +23,21 @@ trap 'rmdir "$lock" 2>/dev/null || true' EXIT
 
 echo "e2e-images: building the images for linux/${arch}" >&2
 mkdir -p "build/images/${arch}"
-CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w -X main.version=${tag}" -o "build/images/${arch}/githubgate" ./cmd/githubgate
-CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w -X main.version=${tag}" -o "build/images/${arch}/githubgate-client" ./cmd/githubgate-client
-CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="-s -w" -o "build/images/${arch}/fakegithub" ./cmd/fakegithub
-docker buildx build --platform "linux/${arch}" --file Dockerfile --tag "$server_image" --load . >&2
-docker buildx build --platform "linux/${arch}" --file Dockerfile.client --tag "$client_image" --load . >&2
-docker buildx build --platform "linux/${arch}" --file Dockerfile.fakegithub --tag "$fake_image" --load . >&2
-echo "e2e-images: built" >&2
+# timed runs a command and prints how long it took, on stderr with the rest of the log.
+timed() {
+	local label="$1" begin=$SECONDS
+	shift
+	"$@" >&2
+	echo "e2e-images: ${label} took $((SECONDS - begin))s" >&2
+}
+go_build() {
+	local flags="$1" out="$2" pkg="$3"
+	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -ldflags="$flags" -o "build/images/${arch}/${out}" "$pkg"
+}
+timed "go build githubgate" go_build "-s -w -X main.version=${tag}" githubgate ./cmd/githubgate
+timed "go build githubgate-client" go_build "-s -w -X main.version=${tag}" githubgate-client ./cmd/githubgate-client
+timed "go build fakegithub" go_build "-s -w" fakegithub ./cmd/fakegithub
+timed "docker buildx build githubgate" docker buildx build --platform "linux/${arch}" --file Dockerfile --tag "$server_image" --load .
+timed "docker buildx build githubgate-client" docker buildx build --platform "linux/${arch}" --file Dockerfile.client --tag "$client_image" --load .
+timed "docker buildx build fakegithub" docker buildx build --platform "linux/${arch}" --file Dockerfile.fakegithub --tag "$fake_image" --load .
+echo "e2e-images: built in ${SECONDS}s" >&2

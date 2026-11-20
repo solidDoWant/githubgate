@@ -6,7 +6,7 @@ In proxy mode, githubgate answers for `api.github.com`, `uploads.github.com` and
 
 ## 1. Make a name-constrained CA
 
-The proxy certificate names real GitHub hosts. A pod that trusts the CA would trust any certificate the CA signs. So limit the CA to the GitHub names with an X.509 name constraint. Use one permitted DNS subtree, `github.com`. That subtree also covers `api.github.com` and `uploads.github.com`, and nothing else.
+The proxy certificate names real GitHub hosts. A pod that trusts the CA would trust any certificate the CA signs. So limit the CA to the GitHub names with an X.509 name constraint. Use one permitted DNS subtree, `github.com`. That subtree permits `github.com` and every subdomain of it, not only `api.github.com` and `uploads.github.com`. githubgate serves only those two hosts and `github.com`: the proxy refuses any other name. But a pod that trusts the CA trusts any certificate the CA signs for any subdomain of `github.com`. For this reason, keep the CA key away from everything except githubgate's issuer.
 
 Use a CA that only githubgate's issuer uses. Do not reuse the cluster CA. Make the CA with your own tools. For example, with `openssl`, set this in the CA extensions:
 

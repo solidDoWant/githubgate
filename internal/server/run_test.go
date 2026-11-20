@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/solidDoWant/githubgate/internal/proxy"
 	"github.com/solidDoWant/githubgate/internal/server"
 )
 
@@ -299,4 +300,68 @@ func TestRunClosesIdleConnectionsAndRefusesExcessOnes(t *testing.T) {
 
 		return connection.Close() == nil
 	}, 20*time.Second, 50*time.Millisecond)
+}
+
+func servedProxySerial(address, serverName string) (int64, error) {
+	connection, err := tls.Dial("tcp", address, &tls.Config{ServerName: serverName, InsecureSkipVerify: true}) //nolint:gosec // see servedSerial
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() { _ = connection.Close() }()
+
+	return connection.ConnectionState().PeerCertificates[0].SerialNumber.Int64(), nil
+}
+
+func TestRunServesTheProxyWithItsOwnCertificate(t *testing.T) {
+	f := newFixture(t)
+	certFile, keyFile := writeCertificate(t, t.TempDir(), 1)
+	proxyDir := t.TempDir()
+	proxyCertFile, proxyKeyFile := writeCertificate(t, proxyDir, 7)
+
+	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	healthListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() {
+		done <- f.server.Run(ctx, server.RunOptions{
+			API: apiListener, Health: healthListener, CertFile: certFile, KeyFile: keyFile, Gatherer: prometheus.NewRegistry(),
+			Proxy: proxyListener, ProxyCertFile: proxyCertFile, ProxyKeyFile: proxyKeyFile, ProxyTLS: proxy.TLSConfig,
+			ProxyHandler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusTeapot) }),
+		})
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(t, <-done)
+	})
+
+	address := proxyListener.Addr().String()
+
+	require.Eventually(t, func() bool {
+		serial, err := servedProxySerial(address, proxy.HostAPI)
+
+		return err == nil && serial == 7
+	}, 10*time.Second, 20*time.Millisecond)
+
+	_, err = servedProxySerial(address, "other.example")
+	require.Error(t, err, "the proxy served a name other than GitHub's")
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{ServerName: proxy.HostGit, InsecureSkipVerify: true}}} //nolint:gosec // see servedSerial
+	t.Cleanup(client.CloseIdleConnections)
+	assert.Equal(t, http.StatusTeapot, status(t, client, http.MethodGet, "https://"+address+"/"))
+
+	writeCertificate(t, proxyDir, 8)
+
+	require.Eventually(t, func() bool {
+		serial, err := servedProxySerial(address, proxy.HostUploads)
+
+		return err == nil && serial == 8
+	}, 30*time.Second, 50*time.Millisecond)
 }

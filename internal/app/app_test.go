@@ -45,6 +45,26 @@ func TestParseFlags(t *testing.T) {
 				assert.True(t, config.LeaderElect)
 			},
 		},
+		"proxy flags": {
+			args: append([]string{"--admin-namespaces=a", "--proxy", "--proxy-tls-cert-file=/pc", "--proxy-tls-key-file=/pk"}, base...),
+			check: func(t *testing.T, config app.Config) {
+				assert.True(t, config.Proxy)
+				assert.Equal(t, ":9443", config.ProxyAddress)
+				assert.Equal(t, "/pc", config.ProxyCertFile)
+				assert.Equal(t, "/pk", config.ProxyKeyFile)
+			},
+		},
+		"proxy without its TLS files": {args: append([]string{"--admin-namespaces=a", "--proxy"}, base...), assert: require.Error},
+		"proxy and webhook on one port": {
+			args:   append([]string{"--admin-namespaces=a", "--proxy", "--proxy-tls-cert-file=/pc", "--proxy-tls-key-file=/pk", "--webhook", "--webhook-cert-dir=/w"}, base...),
+			assert: require.Error,
+		},
+		"proxy and webhook on different ports": {
+			args: append([]string{
+				"--admin-namespaces=a", "--proxy", "--proxy-tls-cert-file=/pc", "--proxy-tls-key-file=/pk",
+				"--webhook", "--webhook-cert-dir=/w", "--webhook-port=9444",
+			}, base...),
+		},
 		"no admin namespace":  {args: base, assert: require.Error},
 		"missing TLS flags":   {args: []string{"--admin-namespaces=a"}, assert: require.Error},
 		"webhook without dir": {args: append([]string{"--admin-namespaces=a", "--webhook"}, base...), assert: require.Error},

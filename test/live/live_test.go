@@ -45,6 +45,8 @@ const (
 	tenantNamespace = "ci-a"
 	buildAccount    = "ci-build"
 	releaseAccount  = "ci-release"
+	proxyAccount    = "ci-proxy"
+	pushAccount     = "ci-push"
 	apiRoot         = "https://api.github.com"
 	clientBinary    = "githubgate-client"
 )
@@ -91,6 +93,8 @@ type liveEnv struct {
 	log     *transcript
 	tmp     string
 	gitPath string
+	store   *model.Store
+	api     *server.Server
 }
 
 // recordingAuthenticator takes the caller from the bearer value "ns/sa", so
@@ -99,6 +103,13 @@ type recordingAuthenticator struct{}
 
 func (recordingAuthenticator) Authenticate(_ context.Context, request *http.Request) (auth.Identity, error) {
 	value, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		// git sends the credential as the password of basic authentication.
+		if _, password, basic := request.BasicAuth(); basic {
+			value, ok = password, true
+		}
+	}
+
 	if !ok {
 		return auth.Identity{}, auth.ErrNoCredential
 	}
@@ -140,6 +151,18 @@ func rule(name, repo string, set map[string]githubgatev1alpha1.Level) githubgate
 		Repositories:    []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repo)},
 		Permissions:     set,
 		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},
+	}
+}
+
+func proxyRule(name, repo string, set map[string]githubgatev1alpha1.Level, mode githubgatev1alpha1.ProxyMode) githubgatev1alpha1.AccessRule {
+	mode.Enabled = true
+
+	return githubgatev1alpha1.AccessRule{
+		Name:            name,
+		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
+		Repositories:    []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repo)},
+		Permissions:     set,
+		Proxy:           &mode,
 	}
 }
 
@@ -198,7 +221,7 @@ func setup(t *testing.T) *liveEnv {
 				Owner:  owner,
 				Ceiling: []githubgatev1alpha1.PermissionSet{{
 					Repositories: []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repo)},
-					Permissions:  map[string]githubgatev1alpha1.Level{"contents": "write", "issues": "write"},
+					Permissions:  map[string]githubgatev1alpha1.Level{"contents": "write", "issues": "write", "pull_requests": "write"},
 				}},
 				AllowedNamespaces: githubgatev1alpha1.AllowedNamespaces{Names: []string{tenantNamespace}},
 			},
@@ -206,6 +229,13 @@ func setup(t *testing.T) *liveEnv {
 		Policies: []githubgatev1alpha1.GitHubAccessPolicy{
 			policy(buildAccount, rule("read", repo, map[string]githubgatev1alpha1.Level{"contents": "read"})),
 			policy(releaseAccount, rule("write", repo, map[string]githubgatev1alpha1.Level{"contents": "write", "issues": "write"})),
+			policy(proxyAccount, proxyRule("proxy", repo, map[string]githubgatev1alpha1.Level{"contents": "write", "issues": "write", "pull_requests": "write"},
+				githubgatev1alpha1.ProxyMode{
+					DenyOperations: []githubgatev1alpha1.OperationPattern{"repos/create-release"},
+					AllowMutations: []githubgatev1alpha1.MutationPattern{"createPullRequest"},
+				})),
+			policy(pushAccount, proxyRule("push", repo, map[string]githubgatev1alpha1.Level{"contents": "write"},
+				githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/agent/**"}})),
 		},
 		Secrets: []corev1.Secret{{
 			ObjectMeta: metav1.ObjectMeta{Namespace: adminNamespace, Name: "app-key", ResourceVersion: "1"},
@@ -227,6 +257,7 @@ func setup(t *testing.T) *liveEnv {
 		Audit:         slog.New(slog.NewJSONHandler(live.log, nil)),
 	})
 
+	live.store, live.api = store, tokenAPI
 	live.srv = httptest.NewUnstartedServer(tokenRecorder(tokenAPI.Handler(), live.log))
 	live.srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 	live.srv.StartTLS()
@@ -236,7 +267,7 @@ func setup(t *testing.T) *liveEnv {
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: live.srv.Certificate().Raw})
 	require.NoError(t, os.WriteFile(live.caFile, caPEM, 0o600))
 
-	for _, account := range []string{buildAccount, releaseAccount} {
+	for _, account := range []string{buildAccount, releaseAccount, proxyAccount, pushAccount} {
 		require.NoError(t, os.WriteFile(live.tokenFile(account), []byte(tenantNamespace+"/"+account), 0o600))
 	}
 

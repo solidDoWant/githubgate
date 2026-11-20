@@ -55,6 +55,6 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Live and docs
 
 22. **Live:** scenarios 1, 6, 9, 12 and 18 pass on github.com, and the commits from 18 show as Verified.
-    Tests:
+    Tests: `test/live: TestLiveProxyAgainstGitHub`, `test/live: TestLiveSignedCommitsAgainstGitHub`
 23. **Docs:** a user page shows how to set up proxy mode in a pod and use `push`; an admin page shows how to set up the proxy CA and write proxy rules.
     Tests:

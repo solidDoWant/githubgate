@@ -3,7 +3,9 @@
 package live_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -39,10 +41,12 @@ type workload struct {
 	network string
 }
 
-// authorizations remembers every Authorization header the proxy receives.
+// authorizations remembers every Authorization header the proxy receives,
+// and the method, host and path of each request (never a header or query).
 type authorizations struct {
-	mu     sync.Mutex
-	values []string
+	mu       sync.Mutex
+	values   []string
+	requests []string
 }
 
 func (a *authorizations) observe(request *http.Request) {
@@ -50,6 +54,15 @@ func (a *authorizations) observe(request *http.Request) {
 	defer a.mu.Unlock()
 
 	a.values = append(a.values, request.Header.Values("Authorization")...)
+	a.requests = append(a.requests, request.Method+" "+request.Host+" "+request.URL.Path+" "+request.Proto)
+}
+
+// received lists the requests the proxy received, oldest first.
+func (a *authorizations) received() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return append([]string(nil), a.requests...)
 }
 
 func (a *authorizations) all() []string {
@@ -67,6 +80,35 @@ func docker(t *testing.T, args ...string) (string, error) {
 	out, err := cmd.CombinedOutput()
 
 	return string(out), err
+}
+
+// dockerSplit runs docker with its standard output and standard error kept
+// apart, so a tool's debug trace on stderr doesn't mix with its result.
+func dockerSplit(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "docker", args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+
+	return stdout.String(), stderr.String(), err
+}
+
+// exitCode is the exit code err reports: 0 for nil, -1 when the command
+// didn't run to an exit.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return exitError.ExitCode()
+	}
+
+	return -1
 }
 
 // startWorkload builds the workload image, starts a container for account and
@@ -158,6 +200,27 @@ func (w *workload) run(t *testing.T, dir, name string, args ...string) (string, 
 func (w *workload) runWithEnv(t *testing.T, env []string, dir, name string, args ...string) (string, error) {
 	t.Helper()
 
+	out, err := docker(t, w.execArgs(env, dir, name, args...)...)
+	w.live.log.printf(t, "$ (container) %s %s\n%s", name, strings.Join(args, " "), out)
+
+	return out, err
+}
+
+// runSplit is runWithEnv with the command's standard output and standard
+// error returned apart; it prints both and the exit code.
+func (w *workload) runSplit(t *testing.T, env []string, dir, name string, args ...string) (string, error) {
+	t.Helper()
+
+	stdout, stderr, err := dockerSplit(t, w.execArgs(env, dir, name, args...)...)
+	w.live.log.printf(t, "$ (container) %s %s %s\nexit code %d\nstdout (%d bytes):\n%s\nstderr:\n%s",
+		strings.Join(env, " "), name, strings.Join(args, " "), exitCode(err), len(stdout), stdout, stderr)
+
+	return stdout, err
+}
+
+// execArgs are the docker arguments that run a command in the container as
+// a pod's workload would.
+func (w *workload) execArgs(env []string, dir, name string, args ...string) []string {
 	bundle := workloadTrust + "/bundle.crt"
 
 	full := []string{"exec", "-w", dir}
@@ -173,20 +236,18 @@ func (w *workload) runWithEnv(t *testing.T, env []string, dir, name string, args
 		"-e", "GIT_COMMITTER_NAME=githubgate live test", "-e", "GIT_COMMITTER_EMAIL=live-test@example.invalid",
 		w.name,
 	}...)
-	full = append(full, inWorkload(w.network, append([]string{name}, args...)...)...)
 
-	out, err := docker(t, full...)
-	w.live.log.printf(t, "$ (container) %s %s\n%s", name, strings.Join(args, " "), out)
-
-	return out, err
+	return append(full, inWorkload(w.network, append([]string{name}, args...)...)...)
 }
 
 // explainGHOnFailure registers a cleanup that, when the test failed, prints
-// what gh received for args (run again with GH_DEBUG=api and without --jq, so
-// the status, headers and body show even when the filter prints nothing), the
-// interceptor's log and the proxy's audit lines. gh masks the Authorization
-// header in its debug output, and none of these carry a token.
-func (w *workload) explainGHOnFailure(t *testing.T, args ...string) {
+// what gh received for args: the same command run twice more in a row (each
+// with its output and exit code), then run with GH_DEBUG=api and without
+// --jq, so the status, headers and body show even when the filter prints
+// nothing. It then prints the interceptor's log, the proxy's audit lines and
+// the requests the proxy received. gh masks the Authorization header in its
+// debug output, and none of these carry a token.
+func (w *workload) explainGHOnFailure(t *testing.T, seen *authorizations, args ...string) {
 	t.Helper()
 
 	t.Cleanup(func() {
@@ -194,11 +255,16 @@ func (w *workload) explainGHOnFailure(t *testing.T, args ...string) {
 			return
 		}
 
-		_, _ = w.runWithEnv(t, []string{"GH_DEBUG=api"}, "/tmp", "gh", withoutJQ(args)...)
+		for range 2 {
+			_, _ = w.runSplit(t, nil, "/tmp", "gh", args...)
+		}
+
+		_, _ = w.runSplit(t, []string{"GH_DEBUG=api"}, "/tmp", "gh", withoutJQ(args)...)
 
 		output, err := docker(t, "exec", w.name, "cat", interceptLogFile)
 		w.live.log.printf(t, "interceptor log (err %v):\n%s", err, output)
-		w.live.log.printf(t, "proxy audit lines:\n%s", strings.Join(w.live.log.linesContaining(`"msg":"proxy request"`), "\n"))
+		w.live.log.printf(t, "proxy audit lines:\n%s", strings.Join(w.live.proxyAudit.linesContaining(`"msg":"proxy request"`), "\n"))
+		w.live.log.printf(t, "requests the proxy received:\n%s", strings.Join(seen.received(), "\n"))
 	})
 }
 
@@ -234,9 +300,11 @@ func TestLiveInterceptionAgainstGitHub(t *testing.T) {
 
 	t.Run("gh api reads an allowed repository with no setup", func(t *testing.T) {
 		args := []string{"api", "repos/" + slug, "--jq", ".name"}
-		box.explainGHOnFailure(t, args...)
+		box.explainGHOnFailure(t, seen, args...)
 
-		out, err := box.run(t, "/tmp", "gh", args...)
+		// The first gh call in the container is traced on stderr; only its
+		// standard output is checked.
+		out, err := box.runSplit(t, []string{"GH_DEBUG=api"}, "/tmp", "gh", args...)
 		require.NoError(t, err)
 		assert.Equal(t, live.repo, strings.TrimSpace(out))
 	})
@@ -277,7 +345,7 @@ func TestLiveInterceptionAgainstGitHub(t *testing.T) {
 		assert.Contains(t, out, `"name"`, "the request ran as the workload's ServiceAccount, not as the foreign credential")
 
 		args := []string{"api", "repos/" + slug, "--jq", ".name", "-H", "Authorization: token " + foreignCredential}
-		box.explainGHOnFailure(t, args...)
+		box.explainGHOnFailure(t, seen, args...)
 
 		out, err = box.run(t, "/tmp", "gh", args...)
 		require.NoError(t, err)

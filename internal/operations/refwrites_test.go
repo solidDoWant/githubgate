@@ -69,10 +69,10 @@ func TestRefWritesTableIsComplete(t *testing.T) {
 }
 
 func TestRefWritesCompletenessCatchesNewEntries(t *testing.T) {
-	assert.Equal(t, []string{"git/create-refs-batch", "repos/tag-release"},
-		unreviewed(restRefWrites, append(restIDs(), "repos/tag-release", "git/create-refs-batch", "issues/lock")))
-	assert.Equal(t, []string{"forceMergeBranch"},
-		unreviewed(mutationRefWrites, append(mutationNames(), "forceMergeBranch", "addReaction")))
+	assert.Equal(t, []string{"git/create-refs-batch", "repos/redeploy-environment", "repos/tag-release"},
+		unreviewed(restRefWrites, append(restIDs(), "repos/tag-release", "git/create-refs-batch", "repos/redeploy-environment", "issues/lock")))
+	assert.Equal(t, []string{"forceMergeBranch", "redeployEnvironment"},
+		unreviewed(mutationRefWrites, append(mutationNames(), "forceMergeBranch", "redeployEnvironment", "addReaction")))
 }
 
 func TestRESTRefCheck(t *testing.T) {
@@ -89,6 +89,7 @@ func TestRESTRefCheck(t *testing.T) {
 		"repos/merge-upstream":                 RefsRefused,
 		"pulls/merge":                          RefsRefused,
 		"pulls/update-branch":                  RefsRefused,
+		"repos/create-deployment":              RefsRefused,
 		"repos/delete-release":                 RefsNone,
 		"git/create-commit":                    RefsNone,
 		"issues/create":                        RefsNone,
@@ -106,7 +107,7 @@ func TestMutationRefCheck(t *testing.T) {
 	for _, name := range []string{
 		"createRef", "updateRef", "updateRefs", "deleteRef", "createCommitOnBranch", "mergeBranch",
 		"mergePullRequest", "enablePullRequestAutoMerge", "updatePullRequestBranch", "revertPullRequest",
-		"forceMergeBranch",
+		"createDeployment", "forceMergeBranch",
 	} {
 		assert.Equal(t, RefsRefused, MutationRefCheck(name), name)
 	}

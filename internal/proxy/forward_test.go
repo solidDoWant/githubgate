@@ -255,6 +255,22 @@ func TestProxyRefusesRequestsOutsideTheRulesWithoutForwarding(t *testing.T) {
 			expectedMessage: `"refs/heads/master"`,
 		},
 		{
+			name:            "a deployment that can auto-merge into a branch outside pushRefs",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, contentsAndDeployments(), pushRefs("refs/heads/agent/**"))},
+			request:         withBody(authenticated(http.MethodPost, proxy.HostAPI, "/repos/acme/foo/deployments"), `{"ref":"release","auto_merge":true,"required_contexts":[]}`),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: `"repos/create-deployment"`,
+		},
+		{
+			name:            "a createDeployment mutation that can auto-merge under pushRefs",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, contentsAndDeployments(), pushRefs("refs/heads/agent/**"))},
+			request:         withBody(authenticated(http.MethodPost, proxy.HostAPI, "/graphql"), `{"query":"mutation { createDeployment(input: {repositoryId: \"R\", refId: \"REF\", autoMerge: true}) { deployment { id } } }"}`),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: `"createDeployment"`,
+		},
+		{
 			name:            "a ref body with a key twice",
 			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, write("contents"), pushRefs("refs/heads/agent/**"))},
 			request:         withBody(authenticated(http.MethodPost, proxy.HostAPI, "/repos/acme/foo/git/refs"), `{"ref":"refs/heads/agent/x","ref":"refs/heads/master"}`),

@@ -65,6 +65,10 @@ func write(name string) map[string]permissions.Level {
 	return map[string]permissions.Level{name: permissions.LevelWrite}
 }
 
+func contentsAndDeployments() map[string]permissions.Level {
+	return map[string]permissions.Level{"contents": permissions.LevelWrite, "deployments": permissions.LevelWrite}
+}
+
 func read(name string) map[string]permissions.Level {
 	return map[string]permissions.Level{name: permissions.LevelRead}
 }
@@ -164,6 +168,30 @@ func TestDecideAllowsOnlyWhatAllowingRulesGive(t *testing.T) {
 			expectedStatus:  http.StatusForbidden,
 			expectedCode:    "denied",
 			expectedMessage: []string{`"updateRefs"`},
+		},
+		{
+			name:            "creating a deployment is refused under pushRefs because it can auto-merge into its ref",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, contentsAndDeployments(), pushRefs("refs/heads/agent/**"))},
+			request:         rest("repos/create-deployment", "acme", "foo"),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: []string{`"repos/create-deployment"`, "pushRefs"},
+		},
+		{
+			name:            "the createDeployment mutation is refused under pushRefs",
+			rules:           []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, contentsAndDeployments(), pushRefs("refs/heads/agent/**"))},
+			request:         mutation("createDeployment"),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: []string{`"createDeployment"`},
+		},
+		{
+			name:                 "creating a deployment is allowed without pushRefs",
+			rules:                []*model.Rule{proxyRule("a", app1Installation, []string{"foo"}, contentsAndDeployments())},
+			request:              rest("repos/create-deployment", "acme", "foo"),
+			expectedInstallation: app1Installation,
+			expectedRepositories: []string{"foo"},
+			expectedPermissions:  contentsAndDeployments(),
 		},
 		{
 			name: "a clone uses the only installation whose rule covers the repository",

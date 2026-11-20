@@ -26,7 +26,7 @@ const (
 // refWriteReview matches the REST operation ids and mutation names that must
 // appear in the tables below. A catalogue update adding one fails the
 // completeness test until someone reviews it.
-var refWriteReview = regexp.MustCompile(`(?i)ref|commit|merge|branch|tag|release|content|file`)
+var refWriteReview = regexp.MustCompile(`(?i)ref|commit|merge|branch|tag|release|content|file|deploy`)
 
 // restRefWrites is the reviewed table of REST operations. Reads never write.
 var restRefWrites = map[string]RefCheck{
@@ -54,6 +54,9 @@ var restRefWrites = map[string]RefCheck{
 	// can restart it.
 	"migrations/map-commit-author":  RefsRefused,
 	"migrations/set-lfs-preference": RefsRefused,
+	// A deployment can auto-merge the default branch into its ref, and
+	// auto-merge is on unless the body turns it off.
+	"repos/create-deployment": RefsRefused,
 
 	// Reviewed: these write no ref.
 	"agent-merge/delete-agent-merge-enrollment":              RefsNone,
@@ -142,6 +145,31 @@ var restRefWrites = map[string]RefCheck{
 	"repos/list-releases":                                              RefsNone,
 	"repos/list-tags":                                                  RefsNone,
 	"search/commits":                                                   RefsNone,
+	"actions/get-pending-deployments-for-run":                          RefsNone,
+	"actions/review-pending-deployments-for-run":                       RefsNone,
+	"orgs/create-artifact-deployment-record":                           RefsNone,
+	"orgs/create-cluster-deployment-records-job":                       RefsNone,
+	"orgs/get-cluster-deployment-records-job":                          RefsNone,
+	"orgs/list-artifact-deployment-records":                            RefsNone,
+	"orgs/set-cluster-deployment-records":                              RefsNone,
+	"repos/cancel-pages-deployment":                                    RefsNone,
+	"repos/create-deploy-key":                                          RefsNone,
+	"repos/create-deployment-protection-rule":                          RefsNone,
+	"repos/create-deployment-status":                                   RefsNone,
+	"repos/create-pages-deployment":                                    RefsNone,
+	"repos/delete-deploy-key":                                          RefsNone,
+	"repos/delete-deployment":                                          RefsNone,
+	"repos/disable-deployment-protection-rule":                         RefsNone,
+	"repos/get-all-deployment-protection-rules":                        RefsNone,
+	"repos/get-custom-deployment-protection-rule":                      RefsNone,
+	"repos/get-deploy-key":                                             RefsNone,
+	"repos/get-deployment":                                             RefsNone,
+	"repos/get-deployment-status":                                      RefsNone,
+	"repos/get-pages-deployment":                                       RefsNone,
+	"repos/list-custom-deployment-rule-integrations":                   RefsNone,
+	"repos/list-deploy-keys":                                           RefsNone,
+	"repos/list-deployment-statuses":                                   RefsNone,
+	"repos/list-deployments":                                           RefsNone,
 }
 
 // mutationRefWrites is the reviewed table of GraphQL mutations. A mutation
@@ -162,6 +190,8 @@ var mutationRefWrites = map[string]RefCheck{
 	"createLinkedBranch": RefsRefused,
 	// Merging from a queue writes the base branch.
 	"enqueuePullRequest": RefsRefused,
+	// A deployment can auto-merge the default branch into its ref.
+	"createDeployment": RefsRefused,
 
 	// Reviewed: these write no ref.
 	"createBranchProtectionRule":                               RefsNone,
@@ -177,6 +207,11 @@ var mutationRefWrites = map[string]RefCheck{
 	"updateOrganizationWebCommitSignoffSetting":                RefsNone,
 	"updateRepositoryWebCommitSignoffSetting":                  RefsNone,
 	"updateSponsorshipPreferences":                             RefsNone,
+	"approveDeployments":                                       RefsNone,
+	"createDeploymentStatus":                                   RefsNone,
+	"deleteDeployment":                                         RefsNone,
+	"rejectDeployments":                                        RefsNone,
+	"updateEnterpriseDeployKeySetting":                         RefsNone,
 }
 
 // RESTRefCheck returns how pushRefs applies to a REST operation. An

@@ -76,7 +76,7 @@ spec:
 | `allowOperations` | When set, only these REST operations are allowed. |
 | `denyMutations` | GraphQL mutation names that githubgate refuses, for example `mergePullRequest`. |
 | `allowMutations` | When set, only these GraphQL mutations are allowed. GraphQL queries are always allowed within the permissions. |
-| `pushRefs` | When set, every ref that a request writes must match one of these patterns. githubgate checks a `git push`, the REST calls that write refs, tags and releases, and the GraphQL ref mutations. |
+| `pushRefs` | When set, every ref that a request writes must match one of these patterns. githubgate checks a `git push`, the REST calls that write refs, tags and releases, and the GraphQL ref mutations. If githubgate cannot check a ref that a request can write, it refuses the request. For example, it refuses every new deployment, because GitHub can merge the default branch into the ref of the deployment. |
 
 Rules for these fields:
 

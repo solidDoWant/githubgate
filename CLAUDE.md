@@ -42,7 +42,7 @@ Non-negotiable (`SPEC.md`, the principles section). Call out any change touching
 - `make fmt` / `make vet` / `make lint`: format; vet with every build tag; run every linter and check, reporting all failures before exiting non-zero.
 - `make test`: unit tests with `-race`, plus the tests of the agent and CI scripts.
 - `make generate` / `make check-generate`: regenerate CRDs, RBAC, deepcopy, the chart's generated templates, the docs references and `.tekton/`, or fail on drift.
-- `make test-fuzz`: every fuzz target for `FUZZTIME` (30 s) each; CI runs it in the unit stage.
+- `make test-fuzz`: every fuzz target at once for `FUZZTIME` (30 s) each, `FUZZ_PARALLEL` (4) workers each; CI runs it in its own stage.
 - `make test-integration`, `make test-e2e` (kind cluster `E2E_CLUSTER`; agents use `githubgate-<issue>`; `KEEP_CLUSTER=1` keeps it).
 - `make test-live`: against github.com with the owner's test App. **Operator only, by hand, never in CI.** Agents never run these tests, never ask for the key, and never add a pipeline, secret or variable for them. Workers check the tests skip cleanly without `GITHUBGATE_LIVE_KEY_FILE`.
 - `make acceptance`: run every test named on a checklist `Tests:` line and print the scoreboard for `PHASE` (default 1).

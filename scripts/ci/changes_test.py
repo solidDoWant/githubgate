@@ -11,7 +11,8 @@ spec = importlib.util.spec_from_file_location("changes", SCRIPT)
 changes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(changes)
 
-GO_STAGES = ["lint", "unit", "generate", "integration"]
+GO_STAGES = ["lint", "unit", "fuzz", "generate", "integration"]
+NON_GO_STAGES = ["lint", "unit", "generate", "integration"]
 
 
 class SelectTest(unittest.TestCase):
@@ -29,6 +30,11 @@ class SelectTest(unittest.TestCase):
         self.check(["internal/proxy/forward_test.go"], GO_STAGES)
         self.check(["root_test.go"], GO_STAGES)
 
+    def test_the_fuzz_stage_runs_only_for_changes_the_targets_build_from(self):
+        self.check(["go.sum"], GO_STAGES + ["e2e"])
+        self.check(["internal/proxy/testdata/fuzz/FuzzClassify/abc"], GO_STAGES + ["e2e"])
+        self.check(["deploy/charts/githubgate/values.yaml"], NON_GO_STAGES + ["e2e"])
+
     def test_an_e2e_harness_change_runs_e2e_even_when_it_is_a_test_file(self):
         self.check(["test/e2e/token_test.go"], GO_STAGES + ["e2e"])
 
@@ -38,7 +44,7 @@ class SelectTest(unittest.TestCase):
 
     def test_markdown_outside_the_root_and_docs_counts_as_code(self):
         # `*.md` matches only at the root.
-        self.check(["deploy/charts/githubgate/README.md"], GO_STAGES + ["e2e", "docs"])
+        self.check(["deploy/charts/githubgate/README.md"], NON_GO_STAGES + ["e2e", "docs"])
 
     def test_a_playbook_change_runs_nothing(self):
         self.check([".claude/agents/issue-worker.md"], ["docs"])
@@ -49,7 +55,7 @@ class SelectTest(unittest.TestCase):
         self.check(["docs/images/diagram.svg"], [])
 
     def test_a_docs_script_change_runs_docs_and_the_go_stages(self):
-        self.check(["scripts/docs/style_report.sh"], GO_STAGES + ["e2e", "docs"])
+        self.check(["scripts/docs/style_report.sh"], NON_GO_STAGES + ["e2e", "docs"])
 
     def test_a_checklist_change_alone_runs_the_scoreboard_and_docs(self):
         self.check(["docs/acceptance/phase-1.md"], ["docs", "scoreboard"])
@@ -61,7 +67,7 @@ class SelectTest(unittest.TestCase):
         self.check(["docs/user/policy.md", "Makefile"], GO_STAGES + ["e2e", "docs"])
 
     def test_dot_files_count_as_code(self):
-        self.check([".golangci.yml"], GO_STAGES + ["e2e"])
+        self.check([".golangci.yml"], NON_GO_STAGES + ["e2e"])
 
     def test_no_changed_file_runs_nothing(self):
         self.check([], [])

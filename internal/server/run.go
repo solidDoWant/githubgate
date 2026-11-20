@@ -27,6 +27,9 @@ const (
 	// maxConnections is the most connections each listener keeps open; the
 	// rest are closed at once.
 	maxConnections = 1024
+	// proxyProgressTimeout closes a proxy connection when no bytes move in
+	// either direction for this long.
+	proxyProgressTimeout = 5 * time.Minute
 )
 
 // HealthHandler serves /healthz, /readyz and /metrics from gatherer.
@@ -71,7 +74,7 @@ type RunOptions struct {
 
 	// Proxy, when set, receives the proxy's connections, served with TLS by
 	// ProxyHandler with ProxyTLS. The proxy has no read or write timeout,
-	// so long git transfers aren't cut off.
+	// so long git transfers aren't cut off; ProxyProgressTimeout bounds stalls.
 	Proxy        net.Listener
 	ProxyHandler http.Handler
 	// ProxyTLS returns the proxy's TLS configuration from the certificate
@@ -80,6 +83,9 @@ type RunOptions struct {
 	// ProxyCertFile and ProxyKeyFile are the proxy's certificate and key,
 	// read again whenever they change.
 	ProxyCertFile, ProxyKeyFile string
+	// ProxyProgressTimeout closes a proxy connection when no bytes move in
+	// either direction for this long (5 minutes when zero).
+	ProxyProgressTimeout time.Duration
 }
 
 // Run serves until ctx ends, then fails /readyz at once, keeps serving for
@@ -105,6 +111,10 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 
 	if options.MaxConnections == 0 {
 		options.MaxConnections = maxConnections
+	}
+
+	if options.ProxyProgressTimeout == 0 {
+		options.ProxyProgressTimeout = proxyProgressTimeout
 	}
 
 	var proxyWatcher *certwatcher.CertWatcher
@@ -158,7 +168,9 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 		}
 		servers = append(servers, proxy)
 
-		go func() { served <- proxy.ServeTLS(newLimitListener(options.Proxy, options.MaxConnections), "", "") }()
+		go func() {
+			served <- proxy.ServeTLS(newLimitListener(newProgressListener(options.Proxy, options.ProxyProgressTimeout), options.MaxConnections), "", "")
+		}()
 	}
 
 	var failure error

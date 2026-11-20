@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -364,4 +366,88 @@ func TestRunServesTheProxyWithItsOwnCertificate(t *testing.T) {
 
 		return err == nil && serial == 8
 	}, 30*time.Second, 50*time.Millisecond)
+}
+
+func TestRunClosesStalledProxyConnectionsButNotMovingOnes(t *testing.T) {
+	f := newFixture(t)
+	certFile, keyFile := writeCertificate(t, t.TempDir(), 1)
+	proxyCertFile, proxyKeyFile := writeCertificate(t, t.TempDir(), 7)
+
+	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	healthListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() {
+		done <- f.server.Run(ctx, server.RunOptions{
+			API: apiListener, Health: healthListener, CertFile: certFile, KeyFile: keyFile, Gatherer: prometheus.NewRegistry(),
+			MaxConnections: 2, ProxyProgressTimeout: time.Second,
+			Proxy: proxyListener, ProxyCertFile: proxyCertFile, ProxyKeyFile: proxyKeyFile, ProxyTLS: proxy.TLSConfig,
+			ProxyHandler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				_, _ = io.Copy(io.Discard, request.Body)
+
+				writer.WriteHeader(http.StatusAccepted)
+			}),
+		})
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(t, <-done)
+	})
+
+	address := proxyListener.Addr().String()
+
+	require.Eventually(t, func() bool {
+		serial, err := servedProxySerial(address, proxy.HostAPI)
+
+		return err == nil && serial == 7
+	}, 10*time.Second, 20*time.Millisecond)
+
+	dial := func() *tls.Conn {
+		connection, err := tls.Dial("tcp", address, &tls.Config{ServerName: proxy.HostAPI, InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}}) //nolint:gosec // see servedSerial
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = connection.Close() })
+
+		return connection
+	}
+
+	// No credential; the headers arrive and the announced body never does.
+	stalled := dial()
+	_, err = stalled.Write([]byte("POST /graphql HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: 1000\r\n\r\n{"))
+	require.NoError(t, err)
+
+	// A request that keeps sending bytes, for three times the timeout, is not cut off.
+	const bodyBytes = 30
+
+	moving := dial()
+	_, err = moving.Write([]byte("POST /graphql HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: 30\r\n\r\n"))
+	require.NoError(t, err)
+
+	for range bodyBytes {
+		time.Sleep(100 * time.Millisecond)
+
+		_, err = moving.Write([]byte("x"))
+		require.NoError(t, err)
+	}
+
+	response, err := http.ReadResponse(bufio.NewReader(moving), nil)
+	require.NoError(t, err)
+
+	_ = response.Body.Close()
+
+	assert.Equal(t, http.StatusAccepted, response.StatusCode)
+
+	// The stalled connection is closed.
+	require.Eventually(t, func() bool {
+		_ = stalled.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		_, err := io.ReadAll(stalled)
+
+		return err == nil
+	}, 15*time.Second, 50*time.Millisecond, "the stalled connection stayed open")
 }

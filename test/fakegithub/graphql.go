@@ -130,7 +130,7 @@ func (s *Server) resolveField(kind ast.Operation, field *ast.Field, vars map[str
 			return nil, &graphqlError{Type: "NOT_FOUND", Message: fmt.Sprintf("Could not resolve to a Repository with the name '%s/%s'.", owner, name)}
 		}
 
-		return repositoryFields(field, owner, name)
+		return s.repositoryFields(field, vars, owner, name)
 	case kind == ast.Mutation && field.Name == "createPullRequest":
 		return s.createPullRequest(field, args, token)
 	}
@@ -151,7 +151,7 @@ func valueOf(value *ast.Value, vars map[string]any) any {
 	return resolved
 }
 
-func repositoryFields(field *ast.Field, owner, name string) (any, *graphqlError) {
+func (s *Server) repositoryFields(field *ast.Field, vars map[string]any, owner, name string) (any, *graphqlError) {
 	out := map[string]any{}
 
 	for _, selection := range field.SelectionSet {
@@ -167,6 +167,8 @@ func repositoryFields(field *ast.Field, owner, name string) (any, *graphqlError)
 			out[sub.Alias] = name
 		case "nameWithOwner":
 			out[sub.Alias] = owner + "/" + name
+		case "release":
+			out[sub.Alias] = s.releaseFields(sub, vars, owner, name)
 		default:
 			return nil, &graphqlError{Type: "undefinedField", Message: fmt.Sprintf("Field '%s' doesn't exist on type 'Repository'", sub.Name)}
 		}
@@ -227,4 +229,38 @@ func selectFields(field *ast.Field, sub string, all map[string]any) map[string]a
 	}
 
 	return out
+}
+
+// releaseFields answers Repository.release(tagName:) for the fields gh asks
+// for (databaseId and isDraft); a tag without a release is null, as on GitHub.
+func (s *Server) releaseFields(field *ast.Field, vars map[string]any, owner, name string) any {
+	var tag string
+
+	for _, arg := range field.Arguments {
+		if arg.Name == "tagName" {
+			tag, _ = valueOf(arg.Value, vars).(string)
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, release := range s.releases {
+		if !strings.HasPrefix(key, owner+"/"+name+"#") || release.TagName != tag {
+			continue
+		}
+
+		all := map[string]any{"databaseId": release.ID, "isDraft": false}
+		out := map[string]any{}
+
+		for _, leaf := range field.SelectionSet {
+			if leafField, ok := leaf.(*ast.Field); ok {
+				out[leafField.Alias] = all[leafField.Name]
+			}
+		}
+
+		return out
+	}
+
+	return nil
 }

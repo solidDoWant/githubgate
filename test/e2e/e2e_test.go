@@ -52,17 +52,20 @@ type cluster struct {
 	context     string
 	serverImage string
 	clientImage string
-	fakeImage   string
+	// clientDigest is the client image's digest (sha256:...), which the node's image store resolves.
+	clientDigest string
+	fakeImage    string
 }
 
 func clusterFromEnv(t *testing.T) cluster {
 	t.Helper()
 
 	c := cluster{
-		context:     os.Getenv("E2E_KUBE_CONTEXT"),
-		serverImage: os.Getenv("E2E_SERVER_IMAGE"),
-		clientImage: os.Getenv("E2E_CLIENT_IMAGE"),
-		fakeImage:   os.Getenv("E2E_FAKE_IMAGE"),
+		context:      os.Getenv("E2E_KUBE_CONTEXT"),
+		serverImage:  os.Getenv("E2E_SERVER_IMAGE"),
+		clientImage:  os.Getenv("E2E_CLIENT_IMAGE"),
+		clientDigest: os.Getenv("E2E_CLIENT_IMAGE_DIGEST"),
+		fakeImage:    os.Getenv("E2E_FAKE_IMAGE"),
 	}
 	if c.context == "" || c.fakeImage == "" {
 		t.Skip("E2E_KUBE_CONTEXT and the image names are not set; run make test-e2e")

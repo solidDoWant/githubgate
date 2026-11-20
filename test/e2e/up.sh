@@ -140,6 +140,16 @@ if [[ "$preload" == 1 ]]; then
 	xargs -P 4 -I{} bash -c 'import_image "$1"' _ {} <"$work/images" >&2
 fi
 
+# The injection webhook names the client image by digest, and kind loads it by
+# tag only, so add the digest reference to the node's image store.
+node="${cluster}-control-plane"
+client_digest="$(docker exec "$node" ctr --namespace=k8s.io images ls "name==${client_image}" | awk -v ref="$client_image" '$1 == ref { print $3 }')"
+if [[ ! "$client_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+	echo "e2e-up: the client image has no digest on the node: '${client_digest}'" >&2
+	exit 1
+fi
+docker exec "$node" ctr --namespace=k8s.io images tag --force "$client_image" "${client_image%%:*}@${client_digest}" >/dev/null
+
 if [[ "$preload" == 1 ]]; then install_cert_manager; fi
 log "waiting for cert-manager"
 if ! wait "$cert_manager_pid"; then
@@ -157,6 +167,7 @@ E2E_CLUSTER=${cluster}
 E2E_KUBE_CONTEXT=kind-${cluster}
 E2E_SERVER_IMAGE=${server_image}
 E2E_CLIENT_IMAGE=${client_image}
+E2E_CLIENT_IMAGE_DIGEST=${client_digest}
 E2E_FAKE_IMAGE=${fake_image}
 ENV
 log "ready: ${env_file}"

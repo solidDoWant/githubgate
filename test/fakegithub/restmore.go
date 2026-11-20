@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -16,6 +18,8 @@ type Release struct {
 	ID      int64
 	TagName string
 	Assets  map[string][]byte
+	// AssetIDs holds each asset's ID, by asset name.
+	AssetIDs map[string]int64
 }
 
 func (s *Server) releaseKey(owner, name string, id int64) string {
@@ -54,7 +58,7 @@ func (s *Server) handleCreateRelease(writer http.ResponseWriter, request *http.R
 	}
 
 	s.nextID++
-	release := &Release{ID: s.nextID, TagName: body.TagName, Assets: map[string][]byte{}}
+	release := &Release{ID: s.nextID, TagName: body.TagName, Assets: map[string][]byte{}, AssetIDs: map[string]int64{}}
 	s.releases[s.releaseKey(owner, name, release.ID)] = release
 
 	uploadURL := fmt.Sprintf("%s/repos/%s/%s/releases/%d/assets{?name,label}", hostURL(request), owner, name, release.ID)
@@ -103,6 +107,7 @@ func (s *Server) handleUploadReleaseAsset(writer http.ResponseWriter, request *h
 	release.Assets[assetName] = data
 	s.nextID++
 	assetID := s.nextID
+	release.AssetIDs[assetName] = assetID
 	s.mu.Unlock()
 
 	writeJSON(writer, http.StatusCreated, map[string]any{"id": assetID, "name": assetName, "size": len(data), "state": "uploaded"})
@@ -171,4 +176,108 @@ func hostURL(request *http.Request) string {
 	}
 
 	return scheme + "://" + request.Host
+}
+
+// handleGetReleaseByTag returns a release with its assets:
+// https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name
+func (s *Server) handleGetReleaseByTag(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
+	owner, name, tag := request.PathValue("owner"), request.PathValue("repo"), request.PathValue("tag")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, release := range s.releases {
+		if !strings.HasPrefix(key, owner+"/"+name+"#") || release.TagName != tag {
+			continue
+		}
+
+		assets := []map[string]any{}
+
+		for _, assetName := range slices.Sorted(maps.Keys(release.Assets)) {
+			id := release.AssetIDs[assetName]
+			assets = append(assets, map[string]any{
+				"id": id, "name": assetName, "size": len(release.Assets[assetName]), "state": "uploaded",
+				"content_type": "application/octet-stream",
+				"url":          fmt.Sprintf("%s/repos/%s/%s/releases/assets/%d", hostURL(request), owner, name, id),
+			})
+		}
+
+		writeJSON(writer, http.StatusOK, map[string]any{"id": release.ID, "tag_name": release.TagName, "assets": assets})
+
+		return
+	}
+
+	writeJSONError(writer, http.StatusNotFound, "Not Found")
+}
+
+// handleDownloadReleaseAsset redirects an asset download to its storage URL
+// when the caller asks for the binary with Accept: application/octet-stream,
+// as GitHub redirects to its release storage host with a 302:
+// https://docs.github.com/en/rest/releases/assets#get-a-release-asset
+func (s *Server) handleDownloadReleaseAsset(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	owner, name := request.PathValue("owner"), request.PathValue("repo")
+
+	if err != nil || !strings.Contains(request.Header.Get("Accept"), "application/octet-stream") {
+		writeJSONError(writer, http.StatusNotFound, "Not Found")
+
+		return
+	}
+
+	s.mu.Lock()
+	found := false
+
+	for key, release := range s.releases {
+		if !strings.HasPrefix(key, owner+"/"+name+"#") {
+			continue
+		}
+
+		for _, assetID := range release.AssetIDs {
+			found = found || assetID == id
+		}
+	}
+	s.mu.Unlock()
+
+	if !found {
+		writeJSONError(writer, http.StatusNotFound, "Not Found")
+
+		return
+	}
+
+	raw := make([]byte, 8)
+	_, _ = rand.Read(raw)
+
+	base := hostURL(request)
+	if request.TLS != nil && request.Host == "api.github.com" {
+		base = "https://" + StorageHost
+	}
+
+	http.Redirect(writer, request, fmt.Sprintf("%s/_storage_asset/%s/%s/%d?sig=%s", base, owner, name, id, hex.EncodeToString(raw)), http.StatusFound)
+}
+
+// handleAssetStorage serves an asset behind its redirect without any
+// credential, like GitHub's signed storage URLs.
+func (s *Server) handleAssetStorage(writer http.ResponseWriter, request *http.Request) {
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	owner, name := request.PathValue("owner"), request.PathValue("repo")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, release := range s.releases {
+		if err != nil || !strings.HasPrefix(key, owner+"/"+name+"#") {
+			continue
+		}
+
+		for assetName, assetID := range release.AssetIDs {
+			if assetID == id {
+				writer.Header().Set("Content-Type", "application/octet-stream")
+				_, _ = writer.Write(release.Assets[assetName])
+
+				return
+			}
+		}
+	}
+
+	http.NotFound(writer, request)
 }

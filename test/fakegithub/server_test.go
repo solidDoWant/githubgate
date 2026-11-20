@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -438,3 +439,73 @@ func TestGitOverHTTPS(t *testing.T) {
 }
 
 func newBase64(w io.Writer) io.WriteCloser { return base64.NewEncoder(base64.StdEncoding, w) }
+
+func TestReleaseAssetDownloadRedirectsToStorage(t *testing.T) {
+	fix := newFixture(t)
+	token := fix.token(t, map[string]any{"repositories": []string{"one"}})
+
+	status, release := fix.do(t, "POST", "/repos/acme/one/releases", token, map[string]string{"tag_name": "v1"})
+	require.Equal(t, http.StatusCreated, status)
+
+	uploadPath := fmt.Sprintf("/repos/acme/one/releases/%d/assets?name=tool.txt", int64(release["id"].(float64)))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, fix.api.URL+uploadPath, strings.NewReader("asset-bytes"))
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	uploaded, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	require.NoError(t, uploaded.Body.Close())
+	require.Equal(t, http.StatusCreated, uploaded.StatusCode)
+
+	status, found := fix.do(t, "GET", "/repos/acme/one/releases/tags/v1", token, nil)
+	require.Equal(t, http.StatusOK, status)
+
+	assets := found["assets"].([]any)
+	require.Len(t, assets, 1)
+
+	assetURL := assets[0].(map[string]any)["url"].(string)
+
+	// Without the binary Accept header GitHub answers with JSON, not a redirect.
+	status, _ = fix.do(t, "GET", strings.TrimPrefix(assetURL, fix.api.URL), token, nil)
+	assert.Equal(t, http.StatusNotFound, status)
+
+	get, err := http.NewRequestWithContext(t.Context(), http.MethodGet, assetURL, nil)
+	require.NoError(t, err)
+	get.Header.Set("Authorization", "Bearer "+token)
+	get.Header.Set("Accept", "application/octet-stream")
+
+	response, err := http.DefaultClient.Do(get)
+	require.NoError(t, err)
+
+	defer func() { _ = response.Body.Close() }()
+
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, "asset-bytes", string(body))
+	assert.Contains(t, response.Request.URL.Path, "/_storage_asset/", "the download came from the storage path")
+}
+
+func TestGraphQLReleaseByTagFindsOnlyExistingReleases(t *testing.T) {
+	fix := newFixture(t)
+	token := fix.token(t, map[string]any{"repositories": []string{"one"}})
+
+	status, release := fix.do(t, "POST", "/repos/acme/one/releases", token, map[string]string{"tag_name": "v1"})
+	require.Equal(t, http.StatusCreated, status)
+
+	lookup := func(tag string) any {
+		status, out := fix.do(t, "POST", "/graphql", token, map[string]any{
+			"query":     `query($owner:String!,$name:String!,$tagName:String!){repository(owner:$owner,name:$name){release(tagName:$tagName){databaseId,isDraft}}}`,
+			"variables": map[string]string{"owner": "acme", "name": "one", "tagName": tag},
+		})
+		require.Equal(t, http.StatusOK, status)
+		require.NotContains(t, out, "errors")
+
+		return out["data"].(map[string]any)["repository"].(map[string]any)["release"]
+	}
+
+	found := lookup("v1").(map[string]any)
+	assert.InDelta(t, release["id"], found["databaseId"], 0)
+	assert.Equal(t, false, found["isDraft"])
+	assert.Nil(t, lookup("v2"))
+}

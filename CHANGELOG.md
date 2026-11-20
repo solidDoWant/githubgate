@@ -2,6 +2,41 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.3.1
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This patch release changes how the Helm chart gets its TLS certificates. The chart no longer makes a CA key itself. cert-manager makes every certificate, or you give each certificate as a Secret. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.3.1 --namespace githubgate --create-namespace
+```
+
+The certificate setup is in [Certificates](https://github.com/solidDoWant/githubgate/blob/master/docs/admin/token-mode-setup.md#certificates).
+
+### Upgrade notes for admins
+
+- Give the token API's CA to your clients again. The chart no longer creates the ConfigMap `githubgate-ca` by default. With cert-manager, the CA is in the Secret `<fullname>-ca`, key `ca.crt`, in the githubgate namespace. Copy it to your client namespaces, and restart the clients that read the old CA. The new CA is not the CA of 0.3.0. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- If you want the ConfigMap, set `certificate.caConfigMap.create: true` and put the CA in `certificate.caBundle`. The chart fills the ConfigMap only from that value. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- Rename your chart value `certificate.caConfigMapName` to `certificate.caConfigMap.name`. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- Replace your chart value `certificate.caDurationDays` with `certificate.caDuration`, as a duration such as `87600h`. cert-manager reads durations in this form. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+
+### Deployment
+
+- The chart reads every certificate from a Secret. With `certManager.enabled: true` (the default), cert-manager makes a CA and the certificates. The CA can sign only the names of the githubgate Service. No private key is in the rendered manifests or in the Helm release record. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- You can give your own certificates. Set `certManager.enabled: false` and name a Secret in `tls.existingSecret`, `webhook.existingSecret` and `proxy.existingSecret`, for each part that you turn on. Each value also works with cert-manager on, and it then replaces only that one certificate. If a Secret that githubgate needs is missing, the chart does not install. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- The API server must trust the webhooks. Without cert-manager, set `webhook.caBundle` or add your own annotation in `webhook.annotations`, for example `cert-manager.io/inject-ca-from`. If you set neither, the chart does not install. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- `inject.proxyCAConfigMap` is now optional. If it is empty, the interceptor trusts the `ca.crt` of the proxy certificate's Secret. ([#205](https://github.com/solidDoWant/githubgate/pull/205))
+- The images and the chart on ghcr.io now link to this repository. ([#203](https://github.com/solidDoWant/githubgate/pull/203))
+
+### Security
+
+- `github.com/google/go-github` is now v93. This version of the library sends credentials only to the API origins that it is set up for. ([#202](https://github.com/solidDoWant/githubgate/pull/202))
+
+Internal work: the end-to-end tests use the new certificate setup.
+
+### Known issues
+
+None.
+
 ## 0.3.0
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release covers phase 3 of the project: transparent interception. With interception, a pod needs no GitHub setup. githubgate adds a helper container, the interceptor, to each pod that opts in. `git`, `gh` and `curl` in the pod then work as they do against GitHub, and every request goes through the githubgate proxy. The pod never holds a GitHub token. A KubeVirt VM can use the interceptor in its launcher pod. Install or upgrade with the Helm chart:

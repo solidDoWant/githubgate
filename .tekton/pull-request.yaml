@@ -26,20 +26,8 @@ spec:
   taskRunSpecs:
     - pipelineTaskName: test-guard
       serviceAccountName: ci-report
-      metadata:
-        labels:
-          # githubgate's injection webhook adds its interceptor: GitHub
-          # requests go through githubgate's proxy as this task's
-          # ServiceAccount, with no token in the pod.
-          githubgate.soliddowant.dev/inject: "true"
     - pipelineTaskName: report
       serviceAccountName: ci-report
-      metadata:
-        labels:
-          # githubgate's injection webhook adds its interceptor: GitHub
-          # requests go through githubgate's proxy as this task's
-          # ServiceAccount, with no token in the pod.
-          githubgate.soliddowant.dev/inject: "true"
     # Every stage runs inside the dind sidecar's cgroup, so its memory is the
     # memory of all stages together. The size is max(8 GiB, 1.5 times the
     # measured peak of used memory, page cache excluded; the final stage table

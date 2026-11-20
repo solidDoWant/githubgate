@@ -7,11 +7,10 @@
 # Repository with a concurrency limit, so a superseded pull request run runs
 # to the end.
 #
-# No step that runs code from the repository gets a token that can write to
-# GitHub. Only test-guard and report reach GitHub, as the ci-report
-# ServiceAccount through githubgate's interceptor (the inject label below):
-# githubgate allows them only check-run creation and the PR's labels. They run
-# only their inline scripts in a pinned image, and no pod holds a GitHub token.
+# Only test-guard and report reach GitHub: they run as ci-report, and the CI
+# cluster adds githubgate's interceptor to every ci-report task. githubgate
+# allows ci-report only to create check runs and list the PR's labels. No pod
+# holds a GitHub token, and the build (ci-build) has no GitHub access.
 #
 # The pipeline is inline: Pipelines-as-Code here does not resolve references
 # to other .tekton/ files, and Tasks come only from ci-tekton through the
@@ -46,21 +45,9 @@ spec:
 #@pull_request {
     - pipelineTaskName: test-guard
       serviceAccountName: ci-report
-      metadata:
-        labels:
-          # githubgate's injection webhook adds its interceptor: GitHub
-          # requests go through githubgate's proxy as this task's
-          # ServiceAccount, with no token in the pod.
-          githubgate.soliddowant.dev/inject: "true"
 #@pull_request }
     - pipelineTaskName: report
       serviceAccountName: ci-report
-      metadata:
-        labels:
-          # githubgate's injection webhook adds its interceptor: GitHub
-          # requests go through githubgate's proxy as this task's
-          # ServiceAccount, with no token in the pod.
-          githubgate.soliddowant.dev/inject: "true"
     # Every stage runs inside the dind sidecar's cgroup, so its memory is the
     # memory of all stages together. The size is max(8 GiB, 1.5 times the
     # measured peak of used memory, page cache excluded; the final stage table

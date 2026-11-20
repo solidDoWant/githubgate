@@ -41,4 +41,4 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 14. **Live:** scenarios 1, 2 and 4 pass on github.com, with the interception, the proxy and the token API in-process.
     Tests: `test/live: TestLiveInterceptionAgainstGitHub`
 15. **Docs:** a user page shows how to opt a namespace in and what a pod then gets; an admin page shows how to turn the injection webhook on, how to opt in single pods, and how to set up a KubeVirt VM (the VMI label and `listen` annotation, the trust directory's `containerPath` volume, and the guest's hosts and variables).
-    Tests:
+    Tests: `docs: TestUserPageCoversInterceptionOptInAndPodChanges`, `docs: TestAdminPageCoversInjectionWebhookAndNixModule`

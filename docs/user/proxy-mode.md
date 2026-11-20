@@ -91,7 +91,7 @@ When your policy does not allow a request, githubgate answers with a status and 
 | `unknown_operation` | 403 | githubgate does not know the request, so it does not send it. | Use a different call, or ask your admin. |
 | `ambiguous_installation` | 409 | More than one installation fits. | Ask your admin to remove the overlap. |
 | `invalid_request` | 400 | The request or a push command list is not valid. | Correct the request. |
-| `too_large` | 413 | A GraphQL body is over 1 MiB, or a push has more than 1000 refs or more than 64 KiB of commands. | Send less in one request. |
+| `too_large` | 413 | A GraphQL body is over 1 MiB, or the query that githubgate makes again from it is over 1 MiB. Or a push has more than 1000 refs or more than 64 KiB of commands. | Send less in one request. |
 | `unavailable`, `not_ready`, `github_unavailable` | 503 | githubgate or GitHub cannot decide now. | Try again. |
 
 For a refused `git push`, see [A refused push in proxy mode](getting-access.md#a-refused-push-in-proxy-mode).

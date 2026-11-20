@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -442,4 +443,30 @@ func TestProxyWritesOneAuditLinePerRequest(t *testing.T) {
 
 	assert.NotContains(t, forwarding.audit.String(), installationToken)
 	assert.NotContains(t, forwarding.audit.String(), validToken)
+}
+
+// The formatter used to indent each nesting level, so a deeply nested
+// document of a few KiB printed to hundreds of MiB before any rule was
+// checked. Not parallel: the allocation count covers the whole process.
+func TestProxyRefusesADeeplyNestedGraphQLDocumentWithoutLargeAllocations(t *testing.T) {
+	forwarding := newForwardingProxy(t)
+
+	deep := strings.Repeat("{a", 998) + strings.Repeat("}", 998)
+	body := `{"query":"query {` + strings.Repeat(" a"+deep, 7) + `}"}`
+
+	var before, after runtime.MemStats
+
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	response := serve(forwarding.handler, withBody(authenticated(http.MethodPost, proxy.HostAPI, "/graphql"), body))
+
+	runtime.ReadMemStats(&after)
+
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"denied"`)
+	assert.Empty(t, forwarding.upstream.requests())
+
+	allocated := after.TotalAlloc - before.TotalAlloc
+	assert.Less(t, allocated, uint64(400*len(body)), "allocated %d bytes for a %d-byte body", allocated, len(body))
 }

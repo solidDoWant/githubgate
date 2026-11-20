@@ -30,11 +30,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	crwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	githubgatev1alpha1 "github.com/solidDoWant/githubgate/api/v1alpha1"
 	"github.com/solidDoWant/githubgate/internal/auth"
 	"github.com/solidDoWant/githubgate/internal/controller"
 	"github.com/solidDoWant/githubgate/internal/github"
+	"github.com/solidDoWant/githubgate/internal/inject"
 	"github.com/solidDoWant/githubgate/internal/model"
 	"github.com/solidDoWant/githubgate/internal/proxy"
 	"github.com/solidDoWant/githubgate/internal/server"
@@ -45,6 +47,7 @@ const (
 	defaultAudience      = "githubgate"
 	leaderElectionID     = "githubgate.githubgate.soliddowant.dev"
 	webhookPath          = "/validate"
+	injectPath           = "/inject-pod"
 	webhookPort          = 9443
 	defaultProxyAddress  = ":9443"
 	defaultShutdownDelay = 5 * time.Second
@@ -57,13 +60,20 @@ type Config struct {
 	Webhook         bool
 	WebhookCertDir  string
 	WebhookPort     int
-	CertFile        string
-	KeyFile         string
-	LeaderElect     bool
-	ShutdownDelay   time.Duration
-	APIAddress      string
-	HealthAddress   string
-	GitHubBaseURL   string
+	// Inject serves the injection webhook, with the image, proxy address
+	// and CA files of the interceptor it adds.
+	Inject             bool
+	InjectImage        string
+	InjectProxyAddress string
+	InjectProxyCAFile  string
+	InjectExtraCAFile  string
+	CertFile           string
+	KeyFile            string
+	LeaderElect        bool
+	ShutdownDelay      time.Duration
+	APIAddress         string
+	HealthAddress      string
+	GitHubBaseURL      string
 	// Proxy turns on proxy mode's listener on ProxyAddress, served with
 	// the certificate in ProxyCertFile and ProxyKeyFile.
 	Proxy         bool
@@ -110,6 +120,11 @@ func ParseFlags(args []string, getenv func(string) string) (Config, error) {
 	flags.BoolVar(&config.Webhook, "webhook", false, "serve the validating admission webhook")
 	flags.StringVar(&config.WebhookCertDir, "webhook-cert-dir", "", "directory with tls.crt and tls.key for the webhook")
 	flags.IntVar(&config.WebhookPort, "webhook-port", webhookPort, "port of the webhook")
+	flags.BoolVar(&config.Inject, "inject", false, "serve the injection webhook")
+	flags.StringVar(&config.InjectImage, "inject-image", "", "digest-pinned client image of the injected interceptor")
+	flags.StringVar(&config.InjectProxyAddress, "inject-proxy-address", "", "host:port of the proxy Service (default githubgate-proxy.<namespace>.svc:443)")
+	flags.StringVar(&config.InjectProxyCAFile, "inject-proxy-ca-file", "", "file with the proxy's CA certificate")
+	flags.StringVar(&config.InjectExtraCAFile, "inject-extra-ca-file", "", "optional file with extra CA certificates for the interceptor")
 	flags.StringVar(&config.CertFile, "tls-cert-file", "", "certificate of the token API")
 	flags.StringVar(&config.KeyFile, "tls-key-file", "", "private key of the token API")
 	flags.BoolVar(&config.LeaderElect, "leader-elect", false, "elect a leader for the status controller")
@@ -134,6 +149,10 @@ func ParseFlags(args []string, getenv func(string) string) (Config, error) {
 		if namespace = strings.TrimSpace(namespace); namespace != "" {
 			config.AdminNamespaces = append(config.AdminNamespaces, namespace)
 		}
+	}
+
+	if config.InjectProxyAddress == "" && config.Namespace != "" {
+		config.InjectProxyAddress = "githubgate-proxy." + config.Namespace + ".svc:443"
 	}
 
 	if len(config.AdminNamespaces) == 0 && config.Namespace != "" {
@@ -180,6 +199,12 @@ func (c Config) validate() error {
 		return errors.New("--tls-cert-file and --tls-key-file are required")
 	case c.Webhook && c.WebhookCertDir == "":
 		return errors.New("--webhook needs --webhook-cert-dir")
+	case c.Inject && c.WebhookCertDir == "":
+		return errors.New("--inject needs --webhook-cert-dir")
+	case c.Inject && (c.InjectImage == "" || c.InjectProxyCAFile == "" || c.InjectProxyAddress == ""):
+		return errors.New("--inject needs --inject-image, --inject-proxy-ca-file and --inject-proxy-address (or POD_NAMESPACE)")
+	case c.Inject && !strings.Contains(c.InjectImage, "@sha256:"):
+		return errors.New("--inject-image must be pinned by digest")
 	case c.LeaderElect && c.Namespace == "":
 		return errors.New("--leader-elect needs POD_NAMESPACE")
 	case c.Proxy && (c.ProxyCertFile == "" || c.ProxyKeyFile == ""):
@@ -245,7 +270,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 	managerOptions.Cache.Scheme = scheme
 
-	if config.Webhook {
+	if config.Webhook || config.Inject {
 		managerOptions.WebhookServer = crwebhook.NewServer(crwebhook.Options{
 			Port: config.WebhookPort, CertDir: config.WebhookCertDir,
 		})
@@ -292,6 +317,16 @@ func Run(ctx context.Context, config Config) error {
 		manager.GetWebhookServer().Register(webhookPath, handler)
 	}
 
+	var injector *inject.Handler
+
+	if config.Inject {
+		injector = inject.New(inject.Config{
+			Image: config.InjectImage, ProxyAddress: config.InjectProxyAddress, Audience: config.Audience,
+			ProxyCAFile: config.InjectProxyCAFile, ExtraCAFile: config.InjectExtraCAFile,
+		})
+		manager.GetWebhookServer().Register(injectPath, &admission.Webhook{Handler: injector})
+	}
+
 	api, health, err := listeners(config)
 	if err != nil {
 		return err
@@ -304,6 +339,7 @@ func Run(ctx context.Context, config Config) error {
 		GitHub:        githubRegistry,
 		Metrics:       serverMetrics,
 		Audit:         audit,
+		ReadyCheck:    injectReady(injector),
 	})
 
 	runOptions := server.RunOptions{
@@ -445,4 +481,14 @@ func (r installationReader) GetInstallation(ctx context.Context, name types.Name
 	}
 
 	return &installation, nil
+}
+
+// injectReady is the readiness check of the injection webhook: ready only
+// while the proxy CA file holds a certificate. Nil without the webhook.
+func injectReady(injector *inject.Handler) func() bool {
+	if injector == nil {
+		return nil
+	}
+
+	return injector.Ready
 }

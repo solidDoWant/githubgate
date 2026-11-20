@@ -3,6 +3,7 @@
 package live_test
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,7 +62,8 @@ func (a *authorizations) all() []string {
 func docker(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 
-	cmd := exec.CommandContext(t.Context(), "docker", args...)
+	// Not cancelled with the test, so cleanups can still run docker.
+	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "docker", args...)
 	out, err := cmd.CombinedOutput()
 
 	return string(out), err
@@ -149,21 +151,72 @@ func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener stri
 func (w *workload) run(t *testing.T, dir, name string, args ...string) (string, error) {
 	t.Helper()
 
+	return w.runWithEnv(t, nil, dir, name, args...)
+}
+
+// runWithEnv is run with extra variables, each NAME=value.
+func (w *workload) runWithEnv(t *testing.T, env []string, dir, name string, args ...string) (string, error) {
+	t.Helper()
+
 	bundle := workloadTrust + "/bundle.crt"
-	full := append([]string{
-		"exec", "-w", dir,
+
+	full := []string{"exec", "-w", dir}
+	for _, variable := range env {
+		full = append(full, "-e", variable)
+	}
+
+	full = append(full, []string{
 		"-e", "HOME=/tmp/home",
 		"-e", "SSL_CERT_FILE=" + bundle, "-e", "GIT_SSL_CAINFO=" + bundle, "-e", "CURL_CA_BUNDLE=" + bundle,
 		"-e", "GH_TOKEN=githubgate", "-e", "GH_PROMPT_DISABLED=1", "-e", "GIT_TERMINAL_PROMPT=0",
 		"-e", "GIT_AUTHOR_NAME=githubgate live test", "-e", "GIT_AUTHOR_EMAIL=live-test@example.invalid",
 		"-e", "GIT_COMMITTER_NAME=githubgate live test", "-e", "GIT_COMMITTER_EMAIL=live-test@example.invalid",
 		w.name,
-	}, inWorkload(w.network, append([]string{name}, args...)...)...)
+	}...)
+	full = append(full, inWorkload(w.network, append([]string{name}, args...)...)...)
 
 	out, err := docker(t, full...)
 	w.live.log.printf(t, "$ (container) %s %s\n%s", name, strings.Join(args, " "), out)
 
 	return out, err
+}
+
+// explainGHOnFailure registers a cleanup that, when the test failed, prints
+// what gh received for args (run again with GH_DEBUG=api and without --jq, so
+// the status, headers and body show even when the filter prints nothing), the
+// interceptor's log and the proxy's audit lines. gh masks the Authorization
+// header in its debug output, and none of these carry a token.
+func (w *workload) explainGHOnFailure(t *testing.T, args ...string) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+
+		_, _ = w.runWithEnv(t, []string{"GH_DEBUG=api"}, "/tmp", "gh", withoutJQ(args)...)
+
+		output, err := docker(t, "exec", w.name, "cat", interceptLogFile)
+		w.live.log.printf(t, "interceptor log (err %v):\n%s", err, output)
+		w.live.log.printf(t, "proxy audit lines:\n%s", strings.Join(w.live.log.linesContaining(`"msg":"proxy request"`), "\n"))
+	})
+}
+
+// withoutJQ drops a --jq flag and its filter from gh arguments.
+func withoutJQ(args []string) []string {
+	kept := make([]string, 0, len(args))
+
+	for index := 0; index < len(args); index++ {
+		if args[index] == "--jq" {
+			index++
+
+			continue
+		}
+
+		kept = append(kept, args[index])
+	}
+
+	return kept
 }
 
 func TestLiveInterceptionAgainstGitHub(t *testing.T) {
@@ -180,7 +233,10 @@ func TestLiveInterceptionAgainstGitHub(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("gh api reads an allowed repository with no setup", func(t *testing.T) {
-		out, err := box.run(t, "/tmp", "gh", "api", "repos/"+slug, "--jq", ".name")
+		args := []string{"api", "repos/" + slug, "--jq", ".name"}
+		box.explainGHOnFailure(t, args...)
+
+		out, err := box.run(t, "/tmp", "gh", args...)
 		require.NoError(t, err)
 		assert.Equal(t, live.repo, strings.TrimSpace(out))
 	})
@@ -220,8 +276,10 @@ func TestLiveInterceptionAgainstGitHub(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, out, `"name"`, "the request ran as the workload's ServiceAccount, not as the foreign credential")
 
-		out, err = box.run(t, "/tmp", "gh", "api", "repos/"+slug, "--jq", ".name",
-			"-H", "Authorization: token "+foreignCredential)
+		args := []string{"api", "repos/" + slug, "--jq", ".name", "-H", "Authorization: token " + foreignCredential}
+		box.explainGHOnFailure(t, args...)
+
+		out, err = box.run(t, "/tmp", "gh", args...)
 		require.NoError(t, err)
 		assert.Equal(t, live.repo, strings.TrimSpace(out))
 

@@ -19,6 +19,14 @@ const (
 	shutdownTimeout = 20 * time.Second
 	// readHeaderTimeout bounds reading a request's headers.
 	readHeaderTimeout = 10 * time.Second
+	// readTimeout bounds the TLS handshake and reading a whole request, so a
+	// connection that sends nothing cannot hold a slot.
+	readTimeout = 10 * time.Second
+	// idleTimeout is how long a keep-alive connection may wait for its next request.
+	idleTimeout = 60 * time.Second
+	// maxConnections is the most connections each listener keeps open; the
+	// rest are closed at once.
+	maxConnections = 1024
 )
 
 // HealthHandler serves /healthz, /readyz and /metrics from gatherer.
@@ -55,6 +63,11 @@ type RunOptions struct {
 	ShutdownDelay time.Duration
 	// Gatherer is what /metrics serves; prometheus.DefaultGatherer when nil.
 	Gatherer prometheus.Gatherer
+	// ReadTimeout, IdleTimeout and MaxConnections override the defaults (10s,
+	// 60s and 1024 connections per listener) when set.
+	ReadTimeout    time.Duration
+	IdleTimeout    time.Duration
+	MaxConnections int
 }
 
 // Run serves until ctx ends, then fails /readyz at once, keeps serving for
@@ -70,6 +83,18 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 		options.Gatherer = prometheus.DefaultGatherer
 	}
 
+	if options.ReadTimeout == 0 {
+		options.ReadTimeout = readTimeout
+	}
+
+	if options.IdleTimeout == 0 {
+		options.IdleTimeout = idleTimeout
+	}
+
+	if options.MaxConnections == 0 {
+		options.MaxConnections = maxConnections
+	}
+
 	watchCtx, stopWatching := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopWatching()
 
@@ -80,14 +105,21 @@ func (s *Server) Run(ctx context.Context, options RunOptions) error {
 	api := &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       options.ReadTimeout,
+		IdleTimeout:       options.IdleTimeout,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: watcher.GetCertificate},
 	}
-	health := &http.Server{Handler: s.HealthHandler(options.Gatherer), ReadHeaderTimeout: readHeaderTimeout}
+	health := &http.Server{
+		Handler:           s.HealthHandler(options.Gatherer),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       options.ReadTimeout,
+		IdleTimeout:       options.IdleTimeout,
+	}
 
 	served := make(chan error, 2)
 
-	go func() { served <- api.ServeTLS(options.API, "", "") }()
-	go func() { served <- health.Serve(options.Health) }()
+	go func() { served <- api.ServeTLS(newLimitListener(options.API, options.MaxConnections), "", "") }()
+	go func() { served <- health.Serve(newLimitListener(options.Health, options.MaxConnections)) }()
 
 	var failure error
 

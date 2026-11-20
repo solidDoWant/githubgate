@@ -1,4 +1,5 @@
-package server
+// Package progress closes connections on which no bytes move for a while.
+package progress
 
 import (
 	"errors"
@@ -19,7 +20,9 @@ type progressListener struct {
 	idle time.Duration
 }
 
-func newProgressListener(listener net.Listener, idle time.Duration) net.Listener {
+// NewListener wraps listener so each connection closes after idle with no
+// bytes moving in either direction.
+func NewListener(listener net.Listener, idle time.Duration) net.Listener {
 	return &progressListener{Listener: listener, idle: idle}
 }
 

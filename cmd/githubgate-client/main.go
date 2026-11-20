@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 )
@@ -22,6 +23,8 @@ commands:
   gh [--repo owner/name | --proxy] -- <gh args>
   push [--proxy] [<remote> [<branch>]]
   configure [--proxy]
+  intercept [--listen addr] [--proxy-address host:port] [--proxy-ca pem|@file] [--token-file path]
+            [--trust-dir dir] [--state-dir dir] [--base-bundle file] [--extra-ca pem|@file] [--probe]
   version
 `
 
@@ -64,6 +67,8 @@ type environment struct {
 	sleep  func(context.Context, int) error
 	// lookupHost resolves a host name; nil means the system resolver.
 	lookupHost func(context.Context, string) ([]string, error)
+	// listen opens the interceptor's listener; nil means net.Listen.
+	listen func(context.Context, string) (net.Listener, error)
 }
 
 func run(ctx context.Context, env *environment, args []string) error {
@@ -88,6 +93,8 @@ func run(ctx context.Context, env *environment, args []string) error {
 		return runPush(ctx, env, args[1:])
 	case "configure":
 		return runConfigure(ctx, env, args[1:])
+	case "intercept":
+		return runIntercept(ctx, env, args[1:])
 	default:
 		_, _ = fmt.Fprint(env.stderr, usage)
 

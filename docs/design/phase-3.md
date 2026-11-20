@@ -1,15 +1,15 @@
 # Phase 3 design: transparent interception
 
-Implements SPEC.md §4 "Transparent interception" for `docs/acceptance/phase-3.md`. Builds on `docs/design/phase-1.md` and `docs/design/phase-2.md`; everything there still holds unless this file says otherwise. Where this file and SPEC.md disagree, SPEC.md wins and this file is fixed.
+Implements SPEC.md §4 "Transparent interception" for `docs/acceptance/phase-3.md`. Builds on `docs/design/phase-1.md` and `docs/design/phase-2.md`; everything there still holds unless this file says otherwise. Where this file and SPEC.md disagree, SPEC.md wins and this file is fixed. Revised after the design review on #136.
 
 ## Overview
 
-The proxy from phase 2 stays the only place that decides and holds tokens. Phase 3 adds a small forwarder next to each workload, the **interceptor** (`githubgate-client intercept`), so the workload's tools need no setup:
+The proxy from phase 2 stays the only place that decides and holds installation tokens. Phase 3 adds a small forwarder next to each workload, the **interceptor** (`githubgate-client intercept`), so the workload's tools need no setup:
 
 ```
-gh / git / curl ──TLS (pod CA)──▶ interceptor on 127.0.0.1:443 ──TLS (proxy CA)──▶ githubgate proxy ──▶ GitHub
-                                   replaces any credential with
-                                   the pod's ServiceAccount token
+gh / git / curl ──TLS (per-pod CA)──▶ interceptor on 127.0.0.1:443 ──TLS (proxy CA only)──▶ githubgate proxy ──▶ GitHub
+                                       replaces any credential with
+                                       the pod's ServiceAccount token
 ```
 
 In pods, a mutating admission webhook served by githubgate adds the interceptor as a native sidecar. In Coder VM workspaces, a NixOS module runs it as a system service.
@@ -18,39 +18,55 @@ In pods, a mutating admission webhook served by githubgate adds the interceptor 
 
 | Need | Library |
 |---|---|
-| Per-pod CA and leaf certificate | `crypto/x509`, `crypto/ecdsa` (P-256) from the standard library |
-| System roots in a `FROM scratch` image | `golang.org/x/crypto/x509roots/fallback` (the bundle is written out, see "Trust") |
+| Per-pod CA and leaf certificate | `crypto/x509`, `crypto/ecdsa` (P-256), `encoding/pem` from the standard library |
+| Default root bundle in a `FROM scratch` image | `golang.org/x/crypto/x509roots/fallback/bundle` (`Roots()` gives the DER certificates, written out with `encoding/pem`) |
 | Forwarding | `net/http/httputil.ReverseProxy` with `Rewrite` |
-| Admission | `sigs.k8s.io/controller-runtime/pkg/webhook/admission` |
-| JSON patches | built by marshalling the mutated pod with controller-runtime's `admission.PatchResponseFromRaw` (no hand-written patches) |
+| Admission | `sigs.k8s.io/controller-runtime/pkg/webhook/admission`; patches from `admission.PatchResponseFromRaw` |
+| PodSecurity check in tests | `k8s.io/pod-security-admission/policy` |
 
 ## The interceptor
 
-`githubgate-client intercept` flags (env equivalents in brackets):
-- `--listen` (default `127.0.0.1:443`);
-- `--proxy-address` [`GITHUBGATE_PROXY_ADDRESS`], the proxy Service's host:port;
-- `--proxy-ca` [`GITHUBGATE_PROXY_CA`], PEM text or `@file`;
-- `--token-file` (default `/var/run/secrets/githubgate/token`);
-- `--trust-dir` (default `/var/run/githubgate/trust`), where it writes the trust files.
+Flags, with environment equivalents (names differ from phase 2's client on purpose, see "Names"):
 
-At start:
-1. Generates a CA key (P-256) and a self-signed CA certificate valid for 30 days, `BasicConstraints CA:true, pathlen 0`, **name constraints**: permitted DNS subtrees `api.github.com`, `uploads.github.com`, `github.com`, permitted no IP addresses. Generates a leaf key and certificate for exactly those three names, signed by the CA. Both keys stay in memory only.
-2. Writes to `--trust-dir`: `ca.crt` (the pod CA only) and `bundle.crt` (system roots from `x509roots/fallback` plus the pod CA), mode `0444`, then a `ready` file.
-3. Listens. Readiness: the startup probe (below) checks for the listener.
+| Flag | Env | Meaning |
+|---|---|---|
+| `--listen` | | default `127.0.0.1:443` |
+| `--proxy-address` | `GITHUBGATE_INTERCEPT_PROXY_ADDRESS` | the proxy Service's `host:port` |
+| `--proxy-ca` | `GITHUBGATE_INTERCEPT_PROXY_CA` | PEM text or `@file`; the only roots used to verify the proxy |
+| `--token-file` | | default `/var/run/secrets/githubgate/token` |
+| `--trust-dir` | | default `/var/run/githubgate/trust`: files the workload reads |
+| `--state-dir` | | default `/var/run/githubgate/state`: the CA key, readable only by the interceptor |
+| `--base-bundle` | | PEM file of roots to include; default the `x509roots/fallback/bundle` roots |
+| `--extra-ca` | `GITHUBGATE_INTERCEPT_EXTRA_CA` | PEM text or `@file`, appended to the bundle (private CAs, the fake's test CA in e2e) |
+| `--probe` | | run the startup check (below) and exit |
 
-Restarting the interceptor makes a new CA. Tools that cached the old one fail one TLS handshake and retry; the bundle file is replaced atomically (write and rename).
+**At start:**
+1. `--proxy-ca` must contain at least one certificate, or the interceptor exits non-zero. It is never combined with system roots.
+2. **CA:** if `--state-dir` holds `ca.key` and `ca.crt` that parse and have more than 7 days left, reuse them; otherwise create a P-256 key and a self-signed CA certificate valid **10 years**, written with mode `0600`. The CA has `BasicConstraints CA:true, pathlen 0`, **name constraints** (critical): permitted DNS subtrees `api.github.com`, `uploads.github.com`, `github.com`; excluded IP ranges `0.0.0.0/0` and `::/0` (an empty permitted IP list would mean unconstrained); `NotBefore` one hour in the past. Because the CA is stable for the life of the pod or VM, restarting the interceptor doesn't invalidate trust that running processes loaded once.
+3. **Leaf:** a key and certificate for exactly the three names, valid 30 days, held in memory, re-issued 7 days before expiry.
+4. Writes to `--trust-dir`, each atomically (write, then rename): `ca.crt` (the pod CA only) and `bundle.crt` (`--base-bundle` + `--extra-ca` + the pod CA), mode `0444`; then a `ready` file.
+5. Listens.
 
-Per request (HTTP/1.1 and HTTP/2 over TLS, SNI and `Host` must be one of the three hosts, else the handshake fails or `421`):
-- every `Authorization`, `Proxy-Authorization` and `Cookie` header from the client is removed;
-- `Authorization: Bearer <ServiceAccount token>` is set, the token read from `--token-file` on every request (rotation: scenario 10);
-- the request goes to `--proxy-address` over TLS with SNI = the request's host, verified against `--proxy-ca` for that host name; the upstream URL is built from the host table, never the request;
-- the response is streamed back unchanged.
+**`--probe`** (the startup probe, an `exec` probe so it runs in the pod's network namespace): exits 0 only if `ready` exists and a TLS dial to `127.0.0.1:443` with SNI `api.github.com` verifies against `ca.crt`.
+
+**Per request** (HTTP/1.1 and HTTP/2):
+- TLS SNI must be one of the three hosts (the handshake fails otherwise). `Host`, canonicalised with the proxy's rules (lower-case, `:443` allowed, no trailing dot), decides the upstream and must be one of the three (else `421`); it may differ from SNI (HTTP/2 connection reuse across the leaf's names).
+- Every `Authorization`, `Proxy-Authorization` and `Cookie` header is removed; `Authorization: Bearer <token>` is set from `--token-file`, read on every request.
+- Outbound: URL `https://<GitHub host>`, `out.Host` = the GitHub host, TLS `ServerName` = the GitHub host, `RootCAs` = the `--proxy-ca` pool only, a `DialContext` that always dials `--proxy-address` (never resolves the GitHub name, which `hostAliases` points back at the interceptor), and `Proxy: nil` (egress-proxy variables are ignored).
+- Timeouts as the phase 2 proxy: `ReadHeaderTimeout` 10 s, 5 minutes with no bytes moving, upstream dial 10 s, response header 60 s.
+- The response is streamed back unchanged.
+
+**Errors** (phase 2's shapes: JSON `{"message": "githubgate: …", "error": "…", "documentation_url": …}` on the API hosts, `text/plain` on `github.com`):
+
+| Condition | Answer |
+|---|---|
+| token file missing, empty or unreadable | `503 unavailable` "githubgate: can't read the ServiceAccount token"; nothing forwarded |
+| proxy unreachable, TLS verification fails, or timeout | `503 unavailable` "githubgate: proxy unavailable" |
+| `Host` not one of the three hosts | `421` |
 
 The interceptor makes no decisions and never sees an installation token. It logs only start, stop and errors (no headers).
 
 ## Trust in the workload
-
-Tools find the pod CA through environment variables pointing at the shared trust directory:
 
 | Variable | Value | Used by |
 |---|---|---|
@@ -59,56 +75,88 @@ Tools find the pod CA through environment variables pointing at the shared trust
 | `GIT_SSL_CAINFO` | `bundle.crt` | `git` |
 | `REQUESTS_CA_BUNDLE` | `bundle.crt` | Python `requests` |
 | `NODE_EXTRA_CA_CERTS` | `ca.crt` | Node.js |
-| `GH_TOKEN` | `githubgate` (a placeholder) | `gh` refuses to run without a token; the interceptor replaces it |
+| `GH_TOKEN` | `githubgate`, only if the container sets neither `GH_TOKEN` nor `GITHUB_TOKEN` | `gh` refuses to run without a token; the interceptor replaces it |
 
-The bundle includes the system roots, so other HTTPS hosts (including GitHub's storage hosts that downloads redirect to) keep working. The real GitHub can't be reached by mistake from an intercepted pod, because `hostAliases` maps the three hosts to `127.0.0.1` for every container.
+These replace the image's own bundle, so a pod that relies on private CAs lists them in the chart's `inject.extraCAConfigMap` (see "Injection webhook"); the bundle keeps the default roots for every other host, including GitHub's storage hosts.
+
+**What interception covers, and what it doesn't.** `hostAliases` maps the three hosts to `127.0.0.1` for every container, and the webhook makes egress-proxy variables skip them (below), so tools reach the interceptor. Cases outside githubgate's control remain: a tool that resolves names without `/etc/hosts`, or proxy variables set at run time. In those cases only the pod's own credential (if it has one) can reach the real GitHub, never the ServiceAccount token, which only the interceptor reads and only sends to a server verified by the proxy CA.
 
 ## Injection webhook
 
-Served by githubgate with `--inject` (chart value `inject.enabled`), path `/inject-pod`, `MutatingWebhookConfiguration` on pod `CREATE`, `namespaceSelector` `githubgate.soliddowant.dev/inject: "true"`, `failurePolicy: Fail` (scenario 8), `reinvocationPolicy: IfNeeded`, `sideEffects: None`, timeout 5 s.
+Served by githubgate with `--inject` (it starts the webhook server on its own; `--webhook` remains the validating webhook), path `/inject-pod`, `MutatingWebhookConfiguration` on pod `CREATE`, `namespaceSelector`: label `githubgate.soliddowant.dev/inject: "true"` **and** `kubernetes.io/metadata.name NotIn [<release namespace>]` (so githubgate's own pods can never depend on it), `failurePolicy: Fail` (scenario 8), `reinvocationPolicy: IfNeeded`, `sideEffects: None`, timeout 5 s.
 
-Skipped (pod returned unchanged): annotation `githubgate.soliddowant.dev/inject: "false"`; already injected (the sidecar is present).
+**Server flags and chart values:**
 
-Rejected with a message naming the reason (scenario 7): `hostNetwork: true`; `hostAliases` naming any of the three hosts; any container or init container that sets one of the variables in "Trust" itself; a container port `443` on `127.0.0.1`/all addresses; a pod sysctl `net.ipv4.ip_unprivileged_port_start` set above 443.
+| Flag | Chart value | Meaning |
+|---|---|---|
+| `--inject` | `inject.enabled` | serve the injection webhook |
+| `--inject-image` | `inject.image.digest` (with the client image repository) | digest-pinned client image, required |
+| `--inject-proxy-address` | `inject.proxyAddress` | default `githubgate-proxy.<release namespace>.svc:443` |
+| `--inject-proxy-ca-file` | `inject.proxyCAConfigMap` (a ConfigMap `ca.crt` in the release namespace) | required; re-read on change with `certwatcher` |
+| `--inject-extra-ca-file` | `inject.extraCAConfigMap` | optional; passed to the interceptor as `--extra-ca` |
 
-Changes made:
+If the proxy CA file is missing or holds no certificate, the replica isn't ready and the webhook denies with "githubgate: injection isn't configured (proxy CA)". It never mutates partially and never allows a pod unchanged.
+
+**Skipped** (returned unchanged): annotation `githubgate.soliddowant.dev/inject: "false"`.
+
+**Rejected**, with the message `githubgate: pod can't be intercepted: <reason>` (scenario 7):
+- `hostNetwork: true`;
+- `hostAliases` naming one of the three hosts (case-insensitive, trailing dot removed);
+- a container or init container whose `env` sets `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` or `NODE_EXTRA_CA_CERTS` (`env` only: `envFrom` loses to the injected `env`, so no ConfigMap lookup is needed);
+- a container port `443`;
+- a pod sysctl `net.ipv4.ip_unprivileged_port_start` above 443;
+- a container named `githubgate-intercept`, or volumes or mounts named `githubgate-token`, `githubgate-trust` or `githubgate-intercept-state`, that the webhook didn't add (no `githubgate.soliddowant.dev/injected` annotation); or that annotation on a pod without the sidecar.
+
+**Mutation is idempotent** (it runs again on reinvocation, after other webhooks): the reject checks run every time; the sidecar exists and is first in `initContainers`; every container and init container after it has the trust env and mount (and none before it); the webhook sets `githubgate.soliddowant.dev/injected: "true"`. Changes:
 - `hostAliases`: `127.0.0.1` → the three hosts.
-- `securityContext.sysctls`: `net.ipv4.ip_unprivileged_port_start=443` (a safe sysctl) unless already ≤ 443, so the interceptor binds 443 without privileges.
-- Volumes: `githubgate-token` (projected ServiceAccount token, audience from `--audience`, `expirationSeconds: 3600`), mounted **only** in the interceptor; `githubgate-trust` (`emptyDir`, medium Memory, 1 MiB).
-- Init container `githubgate-intercept` with `restartPolicy: Always` (a native sidecar), placed **first** in `initContainers` (scenario 12: every later container, init or regular, gets interception), image `ghcr.io/soliddowant/githubgate-client@<digest>` (the chart pins it), args `intercept`, env `GITHUBGATE_PROXY_ADDRESS` and `GITHUBGATE_PROXY_CA` (the PEM inline: the CA certificate is public; a CA rotation applies to new pods), `startupProbe`: `tcpSocket` on 443, period 1 s, failure threshold 30 (scenario 9: kubelet starts later containers only after a native sidecar's startup probe succeeds). Resources: requests = limits memory 64 Mi, no CPU limit; `runAsNonRoot`, read-only root filesystem, all capabilities dropped.
-- Every other container and init container gets the "Trust" variables and a read-only mount of `githubgate-trust` at `/var/run/githubgate/trust`.
+- `securityContext.sysctls`: `net.ipv4.ip_unprivileged_port_start=443` (a safe sysctl) unless already ≤ 443.
+- **Egress proxies:** in every container that sets any of `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`, `ALL_PROXY`, `all_proxy`, append `api.github.com,uploads.github.com,github.com` to `NO_PROXY` and `no_proxy` (creating them if absent).
+- Volumes: `githubgate-token` (projected ServiceAccount token, audience from `--audience`, `expirationSeconds: 3600`), `githubgate-intercept-state` (`emptyDir`, medium Memory, 1 MiB), both mounted **only** in the interceptor; `githubgate-trust` (`emptyDir`, medium Memory, 4 MiB).
+- Init container `githubgate-intercept`, `restartPolicy: Always` (native sidecar), image from `--inject-image`, args `intercept`, env `GITHUBGATE_INTERCEPT_PROXY_ADDRESS`, `GITHUBGATE_INTERCEPT_PROXY_CA` (the PEM inline; the CA certificate is public; a rotation applies to new pods) and, if configured, `GITHUBGATE_INTERCEPT_EXTRA_CA`. `startupProbe`: `exec ["/githubgate-client", "intercept", "--probe"]`, period 1 s, failure threshold 30 (scenario 9: kubelet starts later containers only after it succeeds). Security context: `runAsUser`/`runAsGroup` 65532, `runAsNonRoot`, `allowPrivilegeEscalation: false`, `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem`, `capabilities.drop: [ALL]`. Resources: memory request = limit 64 Mi, CPU request 10m, no CPU limit.
+- Every later container gets the "Trust" variables (`GH_TOKEN` only as stated there) and a read-only mount of `githubgate-trust` at `/var/run/githubgate/trust`.
 
 Pods created before the label was added aren't changed; the admin doc says to restart them.
 
 ## Coder VM workspaces
 
-The flake exports `nixosModules.githubgate-client`: options `enable`, `proxyAddress`, `proxyCA`, `tokenFile`. It sets:
-- a systemd service running `githubgate-client intercept` as a dedicated user with `AmbientCapabilities=CAP_NET_BIND_SERVICE`, restarting on failure;
+The flake exports `nixosModules.githubgate-client`: options `enable`, `proxyAddress`, `proxyCA`, `extraCA`, `tokenFile`. It sets:
+- a systemd service running `githubgate-client intercept` as a dedicated user with `AmbientCapabilities=CAP_NET_BIND_SERVICE`, `Restart=on-failure`, `RuntimeDirectory=githubgate-intercept` (mode `0700`, `RuntimeDirectoryPreserve=yes`) as `--state-dir`, and `--base-bundle /etc/ssl/certs/ca-certificates.crt` (so the VM's own CAs, including `security.pki` ones, are kept);
 - `networking.hosts."127.0.0.1"` with the three hosts;
-- the trust: the CA is made at runtime, so it can't go into the system bundle that NixOS builds (`security.pki` takes only build-time files). Instead the module sets the "Trust" variables system-wide (`environment.variables`), pointing at the service's `bundle.crt` and `ca.crt`, plus `GH_TOKEN`.
+- a `systemd.tmpfiles` rule that copies the system bundle to the trust directory's `bundle.crt` at boot, so the file always exists; the service replaces it atomically when it starts. Before the service is up, GitHub names resolve to `127.0.0.1:443` and are refused (fail closed), and every other host keeps working;
+- the "Trust" variables system-wide (`environment.variables`).
 
-Wiring the module into the owner's VM image, and giving the VM a token with audience `githubgate`, are changes in the owner's infra repository (the operator files them; they don't block this phase). Scenario 13 is checked by `nix flake check` (the module evaluates) and by a CI test that runs the same binary with the module's settings in a container (an `/etc/hosts` entry, the variables, a token file) against the fake GitHub behind the proxy.
+Wiring the module into the owner's VM image, and giving the VM a token with audience `githubgate`, are changes in the owner's infra repository (the operator files them; they don't block this phase).
+
+## Names
+
+The interceptor's variables are prefixed `GITHUBGATE_INTERCEPT_`. Phase 2's client keeps `GITHUBGATE_PROXY_ADDRESS` (an IP address, for its resolution check) and `GITHUBGATE_PROXY_CA_FILE`. The user docs list both sets in one table.
 
 ## Interaction table
 
 | Change | Effect |
 |---|---|
 | ServiceAccount token rotated in the projected volume | the next request reads the new token |
-| Interceptor restarts | new CA and bundle; in-flight requests fail and tools retry; the bundle file is replaced atomically |
-| Proxy replica killed | the interceptor's next connection goes to another replica through the Service |
-| Proxy CA rotated | running pods keep the old CA and fail TLS to the proxy until restarted; documented |
+| Leaf near expiry | re-issued in memory; the CA is unchanged |
+| Interceptor restarts | same CA from the state directory; only in-flight connections fail |
+| Proxy replica killed | the next connection goes to another replica through the Service |
+| Proxy CA rotated | running pods keep the old CA and fail TLS to the proxy (`503`) until restarted; documented |
 | Policy changes | decided at the proxy, as in phase 2 |
 | Webhook unavailable | pods in opted-in namespaces aren't created |
+| Another webhook adds a container after githubgate | reinvocation gives it the trust env and mount |
+| Pod uses phase 1's token-mode client (`githubgate-client gh`, `git-credential`) | its installation token is stripped and replaced; the request is decided by **proxy** rules, so token-only policies get `403` (admin doc: add proxy rules before opting in) |
+| Pod uses phase 2's `--proxy` client | refused by its resolution check (the hosts resolve to `127.0.0.1`); remove that setup when opting in |
 
 ## Testing
 
-- Unit: the webhook's decisions (skip, reject, mutate) as a table over pod shapes, including Tekton-like pods with several init containers; the interceptor's header handling; certificate generation (name constraints present, leaf names exact, keys never written).
-- e2e (kind): an opted-in namespace with the webhook, the proxy and the fake GitHub; plain pods with `gh`, `git`, `curl` (scenarios 1–12); the webhook scaled to zero for scenario 8; scenario 11 searches pods, events and logs for the key's PEM header.
-- Live (operator): scenarios 1, 2 and 4 with the interceptor, proxy and token API in-process, like the phase 2 live proxy test.
+- **Unit:** the webhook's decisions (skip, reject, mutate, reinvocation) as a table over pod shapes, including Tekton-like pods with several init containers, proxy variables, `GH_TOKEN`/`GITHUB_TOKEN`, and a pod in a `restricted` namespace that must pass the PodSecurity library after mutation; the interceptor's header handling and error table; certificates (name constraints critical, IP ranges excluded, a leaf with an IP SAN fails `Verify`, leaf names exact, CA reused from the state directory, keys written only there).
+- **Scenario 10:** a test in `cmd/githubgate-client` that swaps the token file the way kubelet's atomic writer does (new `..data` target, then rename) and checks the next request's credential at a stub proxy.
+- **e2e (kind):** an opted-in namespace with the webhook, the proxy and the fake GitHub, with `inject.extraCAConfigMap` holding the fake's test CA (scenario 5's storage redirect); plain pods with `gh`, `git`, `curl` (scenarios 1–7, 9, 11, 12). Scenario 8: a test-only `MutatingWebhookConfiguration` pointing at a Service with no endpoints for a separate label, removed in `t.Cleanup` (githubgate itself keeps running). Scenario 11: search pods, events and logs for key material, and assert that every file in the trust directory holds only `CERTIFICATE` blocks and that the sidecar's env and args hold no key.
+- **Scenario 13:** the container test takes its env, hosts and flags from `nix eval` of a test NixOS configuration using the module (as JSON), so it tests the module's real output.
+- **Live (operator), scenario 14:** `gh` and `git` run in a container with `--add-host` for the three names pointing at an interceptor on port 443 in front of the in-process proxy and token API, against github.com.
 
 ## Issue order
 
-1. interceptor (certificates, trust files, forwarding) ; webhook decisions and mutation (parallel)
-2. chart (webhook config, flags, client image digest) and the e2e harness (needs 1)
-3. NixOS module and its container test (needs interceptor)
+1. interceptor (certificates, state, trust files, probe, forwarding, errors); webhook decisions and mutation (parallel)
+2. chart (flags, values, ConfigMaps, webhook config) and the e2e harness (needs 1)
+3. NixOS module and its container test (needs the interceptor)
 4. docs, live

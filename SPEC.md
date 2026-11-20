@@ -181,7 +181,7 @@ GitHub marks a commit "Verified" when it creates the commit itself through its A
 
 ### Transparent interception (phase 3)
 
-A native sidecar (`githubgate-client sidecar`) listens on the pod's loopback for the GitHub hosts (via `hostAliases` to `127.0.0.1`), terminates TLS with a certificate from the same CA, replaces whatever credential the client sent (or none) with the pod's current ServiceAccount token, and forwards to githubgate's proxy. Tools then need no wrapper or helper. An admission webhook served by githubgate (opt-in per namespace label) adds the sidecar, `hostAliases`, the projected token and the CA bundle. For Coder VM workspaces the same client runs as a guest service.
+A native sidecar (`githubgate-client intercept`) listens on the pod's loopback for the GitHub hosts (via `hostAliases` to `127.0.0.1`), terminates TLS with a certificate from a per-pod CA that it generates itself, name-constrained to the GitHub hosts and trusted only inside that pod (no shared CA or proxy key ever enters a pod), replaces whatever credential the client sent (or none) with the pod's current ServiceAccount token, and forwards to githubgate's proxy. Tools then need no wrapper or helper. An admission webhook served by githubgate (opt-in per namespace label) adds the sidecar, `hostAliases`, the projected token and the CA bundle. For Coder VM workspaces the same client runs as a guest service.
 
 ### Audit, metrics, admission
 

@@ -54,7 +54,7 @@ helm template githubgate "$chart" "${required[@]}" --set inject.enabled=true --s
 # Certificates, default mode: cert-manager makes a name-constrained CA, so no
 # key or certificate is in the render (nor in Helm's release record).
 grep -qE -- 'BEGIN|tls\.key:|stringData|^kind: Secret$' <<<"$default" && fail "default render holds key or certificate material"
-for want in 'selfSigned: \{\}' 'isCA: true' 'secretName: githubgate-ca$' 'nameConstraints:' 'critical: true' '- githubgate\.githubgate\.svc$' '- githubgate\.githubgate\.svc\.cluster\.local$' 'secretName: githubgate-ca$' 'secretName: githubgate-tls$'; do
+for want in 'selfSigned: \{\}' 'isCA: true' 'secretName: githubgate-ca$' '^  nameConstraints:$' '^    critical: true$' '- githubgate\.githubgate\.svc$' '- githubgate\.githubgate\.svc\.cluster\.local$' 'secretName: githubgate-ca$' 'secretName: githubgate-tls$'; do
 	grep -qE -- "$want" <<<"$default" || fail "default render lacks the cert-manager CA: $want"
 done
 grep -qF 'kind: ConfigMap' <<<"$default" && fail "CA ConfigMap rendered while certificate.caConfigMap.create is false"

@@ -17,6 +17,13 @@ import (
 //
 // https://docs.github.com/en/get-started/git-basics/about-remote-repositories
 func (s *Server) handleGit(writer http.ResponseWriter, request *http.Request) {
+	if parts := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/"); request.Method == http.MethodGet &&
+		len(parts) == 6 && parts[2] == "releases" && parts[3] == "latest" && parts[4] == "download" {
+		s.handleLatestReleaseDownload(writer, request, parts[0], parts[1], parts[5])
+
+		return
+	}
+
 	owner := request.PathValue("owner")
 	repoDir, ok := strings.CutSuffix(request.PathValue("repo"), ".git")
 
@@ -49,7 +56,10 @@ func (s *Server) handleGit(writer http.ResponseWriter, request *http.Request) {
 	_, exists := s.repos[owner+"/"+repoDir]
 	s.mu.Unlock()
 
-	if !exists || !token.hasRepo(owner, repoDir) || !token.hasPermission("contents", "read") {
+	reachable := token.hasRepo(owner, repoDir) && token.hasPermission("contents", "read")
+	publicFetch := !isPush(request) && s.isPublic(owner, repoDir)
+
+	if !exists || (!reachable && !publicFetch) {
 		http.Error(writer, "Repository not found.", http.StatusNotFound)
 
 		return

@@ -139,6 +139,24 @@ The guest image (also the owner's) sends the three hosts to `10.0.2.1` in `/etc/
 
 These template and image changes are the owner's (the operator files them); they don't block this phase.
 
+## Public read and web paths
+
+A VM workspace also needs GitHub data that no credential protects: public repositories of other owners (`git clone`, nix flake inputs through the API's commit and tarball endpoints, `gh` reads) and web paths on `github.com` (release downloads, archives). Interception sends all of `github.com` and `api.github.com` to githubgate, so two opt-in fields on a rule's `proxy` block serve them. Both are off by default. The workspace reaches the same data over the internet, so they give no new access.
+
+**`proxy.publicRead`.** A request is a public read when all of these are true:
+
+- It goes to `api.github.com` or `github.com` (never `uploads.github.com`).
+- It is read-only: REST `GET` or `HEAD`, git `info/refs?service=git-upload-pack`, or `git-upload-pack`. GraphQL is never a public read and keeps the phase 2 rules, because a document can name any repository by node id.
+- Its owner is not the owner of the installation of any of the caller's proxy rules. A request that names no repository counts only when the phase 2 rules refuse it with `403`.
+
+A public read is allowed when one of the caller's proxy rules has `publicRead`. It is sent with the public-read token: an installation token of that rule's installation with only `metadata: read`, limited to the exact-name repositories of the installation's `publicRead` rules (at most 500, sorted). GitHub lets an installation token read public data of any owner, at the installation's rate limit. The token reads no repository contents, because it has no `contents` permission and names only the installation's own repositories. A private repository of another owner gets GitHub's own `404`. The caller's rule token is never used for a public read. When rules of several installations have `publicRead`, the installation whose `namespace/name` sorts first is used, because each reads the same public data. The CRD requires a `publicRead` rule to name at least one repository without a pattern. Writes outside the installation are refused with `403` and name the repository, as before. Requests for the installation's own owner keep the phase 2 rules, so `publicRead` never widens what a rule allows there.
+
+**`proxy.webPaths`.** A `GET` or `HEAD` on `github.com` that is not git smart HTTP is classified as a web path (kind `web`). When one of the caller's proxy rules has `webPaths`, it is forwarded with no `Authorization` header and no cookie. The response comes back unchanged, redirects included, and the client follows them to hosts that interception does not redirect (`objects.githubusercontent.com`, `codeload.github.com`). A `401` from a web path is passed on. Without `webPaths`, a web path still gets `404`.
+
+**Fake GitHub.** The fake copies three behaviours of GitHub for these tests. Any installation token reads a public repository of any owner through REST and git fetch, which GitHub documents for GitHub Apps (public resources need no permission). A private repository of another owner answers `404`, because GitHub hides private repositories. `github.com/OWNER/REPO/releases/latest/download/ASSET` redirects to the storage host for a public repository. The fake also refuses that web path with `400` when it carries an `Authorization` header, which github.com does not do, so that a test proves no credential was sent. The operator confirms the first three against github.com with the live check.
+
+**Audit.** Each proxy audit line has an `access` field: `rules` (the rules' token), `public_read` (the public-read token, with `repositories` naming the repository read) or `web` (no credential). A refused request has an empty `access`.
+
 ## Names
 
 The interceptor's variables are prefixed `GITHUBGATE_INTERCEPT_`. Phase 2's client keeps `GITHUBGATE_PROXY_ADDRESS` (an IP address, for its resolution check) and `GITHUBGATE_PROXY_CA_FILE`. The user docs list both sets in one table.

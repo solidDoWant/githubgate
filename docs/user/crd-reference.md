@@ -22,7 +22,9 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | `spec.rules[].proxy.denyMutations` | list of string |  | DenyMutations are GraphQL mutations that are refused. Deny wins over allow. At most 256. |
 | `spec.rules[].proxy.denyOperations` | list of string |  | DenyOperations are REST operations that are refused. Deny wins over allow. At most 256. |
 | `spec.rules[].proxy.enabled` | boolean | yes | Enabled turns proxy mode on for the rule. It has no default. |
+| `spec.rules[].proxy.publicRead` | boolean |  | PublicRead, when true, lets read-only requests reach repositories of owners outside the installation, and read-only REST endpoints that name no repository. They are sent with a token of the installation that has only `metadata: read`, so they reach public data only. Off by default. |
 | `spec.rules[].proxy.pushRefs` | list of string |  | PushRefs, when set, are the only refs a request may write. At most 256. |
+| `spec.rules[].proxy.webPaths` | boolean |  | WebPaths, when true, forwards `GET` and `HEAD` requests on github.com that are not git smart HTTP, such as release downloads, with no credential. Off by default. |
 | `spec.rules[].repositories` | list of string | yes | Repositories are names or `*` globs under the installation's owner. At most 256. |
 | `spec.rules[].token` | object |  | Token configures token mode. |
 | `spec.rules[].token.enabled` | boolean | yes | Enabled turns token mode on for the rule. It has no default. |

@@ -175,6 +175,8 @@ githubgate also serves `api.github.com` (REST and GraphQL), `uploads.github.com`
 
 Responses are streamed back unchanged except for headers that would leak the installation token.
 
+Two opt-in fields of a rule's `proxy` block serve data that needs no credential, for VM workspaces under interception. With `publicRead`, a read-only REST or git fetch request for an owner outside the caller's installations, or a read-only REST request that names no repository and that the rules refuse, is sent with an installation token that has only `metadata: read`. That token reads public data and no private repository contents. With `webPaths`, a `GET` or `HEAD` on `github.com` that is not git smart HTTP is sent with no credential. Writes outside the installation, and the installation's own repositories, keep the rules above. `docs/design/phase-3.md` gives the details.
+
 ### Signed commits (phase 2)
 
 GitHub marks a commit "Verified" when it creates the commit itself through its API with an App's token. `githubgate-client push <remote> <branch>` takes the local commits not yet on the remote branch and re-creates each one through GitHub's API (token or proxy mode), then resets the local branch to the signed commits. Commit ids change; messages, file contents and modes are kept. GitHub signs only commits the App itself authors, so the App's bot is the author and the original author is kept in a `Co-authored-by:` trailer. Plain `git push` keeps working and stays unsigned. It uses the Git Database REST API (checked live: Verified, and it keeps file modes and symlinks). Merge commits and submodule changes are refused.

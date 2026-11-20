@@ -34,6 +34,8 @@ const (
 	KindGitInfoRefs Kind = "git-info-refs"
 	KindGitUpload   Kind = "git-upload-pack"
 	KindGitReceive  Kind = "git-receive-pack"
+	// KindWeb is a GET or HEAD on github.com that is not git smart HTTP.
+	KindWeb Kind = "web"
 )
 
 // Request is a classified proxy request.
@@ -41,6 +43,8 @@ type Request struct {
 	// Host is the GitHub host the request is for, one of the Host constants.
 	Host string
 	Kind Kind
+	// Method is the request's method.
+	Method string
 	// Operation is the REST operation id; empty for other kinds.
 	Operation string
 	// Owner and Repo are the repository the request is for, empty when it
@@ -113,7 +117,7 @@ func classify(host string, request *http.Request) (Request, *refusal) {
 		return Request{}, failure
 	}
 
-	classified, failure := classifyKind(Request{Host: host, Path: rawPath, RawQuery: query.Encode()}, request.Method, query)
+	classified, failure := classifyKind(Request{Host: host, Method: request.Method, Path: rawPath, RawQuery: query.Encode()}, request.Method, query)
 	if failure != nil {
 		return Request{}, failure
 	}
@@ -346,22 +350,36 @@ func hasMethodField(mediaType string, params map[string]string, body []byte) boo
 	}
 }
 
-// classifyGit accepts only git smart HTTP: info/refs of upload-pack or
-// receive-pack, and the two services themselves.
+// classifyGit accepts git smart HTTP: info/refs of upload-pack or
+// receive-pack, and the two services themselves. Any other GET or HEAD is a
+// web path, which only a rule turning web paths on allows.
 func classifyGit(classified Request, method string, query map[string][]string) (Request, *refusal) {
 	notFound := refuse(http.StatusNotFound, codeNotFound, "only git smart HTTP is served on github.com")
+	readOnly := method == http.MethodGet || method == http.MethodHead
+
+	web := func() (Request, *refusal) {
+		if !readOnly {
+			return Request{}, notFound
+		}
+
+		classified.Kind = KindWeb
+
+		return classified, nil
+	}
 
 	parts := strings.Split(strings.TrimPrefix(classified.Path, "/"), "/")
 	if len(parts) < 3 {
-		return Request{}, notFound
+		return web()
 	}
 
-	classified.Owner, classified.Repo = parts[0], strings.TrimSuffix(parts[1], ".git")
-	if classified.Repo == "" {
-		return Request{}, notFound
-	}
-
+	owner, repo := parts[0], strings.TrimSuffix(parts[1], ".git")
 	service := strings.Join(parts[2:], "/")
+
+	if repo == "" || (service != "info/refs" && service != "git-upload-pack" && service != "git-receive-pack") {
+		return web()
+	}
+
+	classified.Owner, classified.Repo = owner, repo
 
 	switch {
 	case service == "info/refs" && (method == http.MethodGet || method == http.MethodHead):

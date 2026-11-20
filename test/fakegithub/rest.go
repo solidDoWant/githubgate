@@ -308,7 +308,19 @@ func (s *Server) withToken(required *need, next repoHandler) http.HandlerFunc {
 
 		if required != nil {
 			owner, name := request.PathValue("owner"), request.PathValue("repo")
-			if !token.hasRepo(owner, name) || !token.hasPermission(required.perm, required.level) {
+			reachable := token.hasRepo(owner, name) && token.hasPermission(required.perm, required.level)
+
+			switch {
+			case reachable:
+			case required.level == "read" && s.isPublic(owner, name):
+				// Any installation token reads public repositories, of any
+				// owner, whatever its permissions and repositories.
+			case owner != token.owner:
+				// GitHub hides private repositories of other owners.
+				writeJSONError(writer, http.StatusNotFound, "Not Found")
+
+				return
+			default:
 				writeJSONError(writer, http.StatusForbidden, "Resource not accessible by integration")
 
 				return
@@ -319,6 +331,16 @@ func (s *Server) withToken(required *need, next repoHandler) http.HandlerFunc {
 		writer.Header().Set("X-RateLimit-Remaining", "4999")
 		next(writer, request, token)
 	}
+}
+
+// isPublic reports whether owner/name exists and is public.
+func (s *Server) isPublic(owner, name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repo := s.repos[owner+"/"+name]
+
+	return repo != nil && !repo.Private
 }
 
 func (s *Server) handleRateLimit(writer http.ResponseWriter, _ *http.Request, _ tokenContext) {

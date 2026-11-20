@@ -186,6 +186,13 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
+	if decision.Access == AccessWeb {
+		entry.reason = "allowed"
+		f.reverseProxy(classified, "", entry).ServeHTTP(recorder, request)
+
+		return
+	}
+
 	token, githubStatus, err := f.options.Tokens.ProxyToken(request.Context(), caller, decision)
 	entry.githubStatus = githubStatus
 
@@ -211,7 +218,7 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 
 // reverseProxy returns the proxy for one request: the upstream comes from
 // the host table, the path and query from the checked request, and the
-// credential is the installation token.
+// credential is the installation token, or none when token is empty.
 func (f *HTTPForwarder) reverseProxy(classified Request, token string, entry *auditEntry) *httputil.ReverseProxy {
 	upstream := f.options.Upstreams.of(classified.Host)
 
@@ -246,9 +253,12 @@ func (f *HTTPForwarder) reverseProxy(classified Request, token string, entry *au
 			out.Out.Header.Del("Authorization")
 			out.Out.Header.Del("Proxy-Authorization")
 
-			if classified.Host == HostGit {
+			switch {
+			case token == "":
+				// A web path is sent with no credential at all.
+			case classified.Host == HostGit:
 				out.Out.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token)))
-			} else {
+			default:
 				out.Out.Header.Set("Authorization", "token "+token)
 			}
 		},
@@ -257,7 +267,7 @@ func (f *HTTPForwarder) reverseProxy(classified Request, token string, entry *au
 
 			// GitHub refusing the token githubgate just minted is not the
 			// caller's fault, and is never retried.
-			if response.StatusCode == http.StatusUnauthorized {
+			if response.StatusCode == http.StatusUnauthorized && token != "" {
 				return errUpstreamRefusedToken
 			}
 

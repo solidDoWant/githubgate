@@ -86,12 +86,28 @@ type ProxyMode struct {
 	// +kubebuilder:validation:MaxItems=256
 	// +listType=set
 	DenyMutations []MutationPattern `json:"denyMutations,omitempty"`
+
+	// PublicRead, when true, lets read-only requests reach repositories of
+	// owners outside the installation, and read-only REST endpoints that name
+	// no repository. They are sent with a token of the installation that has
+	// only `metadata: read`, so they reach public data only. Off by default.
+	//
+	// +optional
+	PublicRead bool `json:"publicRead,omitempty"`
+
+	// WebPaths, when true, forwards `GET` and `HEAD` requests on github.com
+	// that are not git smart HTTP, such as release downloads, with no
+	// credential. Off by default.
+	//
+	// +optional
+	WebPaths bool `json:"webPaths,omitempty"`
 }
 
 // AccessRule gives the policy's ServiceAccounts access through one installation.
 //
 // +kubebuilder:validation:XValidation:rule="(has(self.token) && self.token.enabled) || (has(self.proxy) && self.proxy.enabled)",message="at least one mode must be enabled"
 // +kubebuilder:validation:XValidation:rule="!(has(self.token) && self.token.enabled) || !has(self.proxy) || !(has(self.proxy.pushRefs) || has(self.proxy.allowOperations) || has(self.proxy.denyOperations) || has(self.proxy.allowMutations) || has(self.proxy.denyMutations))",message="proxy.pushRefs and the proxy operation and mutation lists need token mode off: a token in the caller's hands can't enforce them"
+// +kubebuilder:validation:XValidation:rule="!has(self.proxy) || !has(self.proxy.publicRead) || !self.proxy.publicRead || self.repositories.exists(r, !r.contains('*'))",message="proxy.publicRead needs at least one repository named without a pattern: the public-read token is limited to those repositories"
 type AccessRule struct {
 	// Name identifies the rule within the policy.
 	//

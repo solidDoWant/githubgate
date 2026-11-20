@@ -24,7 +24,8 @@ githubgate writes one JSON line to its log for each token request. The line neve
 githubgate also writes one JSON line for each request to the proxy, when the response ends. The line never holds a token, a key, a header value, the path or the query. It has the fields above, with `mode` set to `proxy`, and these fields:
 
 - `host` and `method`: the GitHub host and the HTTP method of the request.
-- `kind`: `rest`, `graphql`, `git-info-refs`, `git-upload-pack` or `git-receive-pack`.
+- `kind`: `rest`, `graphql`, `git-info-refs`, `git-upload-pack`, `git-receive-pack` or `web` (a `github.com` web path).
+- `access`: how githubgate sent an allowed request. `rules` is a token of the rules. `public_read` is the token for public data, and then `repositories` names the repository that the caller read. `web` is no credential. The field is empty when githubgate refused the request.
 - `operation`: the REST operation id, for example `repos/create-release`.
 - `mutations`: the names of the GraphQL mutations in the request.
 - `refs`: the git refs that the request writes, when githubgate read them.

@@ -226,11 +226,13 @@ spec:
   rules:
     - name: proxy
       installationRef: {namespace: %[5]s, name: acme}
-      repositories: [%[6]s]
+      repositories: [%[6]s, %[7]s]
       permissions: {contents: write, issues: write}
       proxy:
         enabled: true
         pushRefs: [refs/heads/agent/**, refs/tags/v-*]
+        publicRead: true
+        webPaths: true
 ---
 apiVersion: githubgate.soliddowant.dev/v1alpha1
 kind: GitHubAccessPolicy
@@ -244,7 +246,7 @@ spec:
       permissions: {contents: read}
       proxy:
         enabled: true
-`, interceptNamespace, plainNamespace, downNamespace, interceptAccount, gateNamespace, repository))
+`, interceptNamespace, plainNamespace, downNamespace, interceptAccount, gateNamespace, repository, publicRepository))
 	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", interceptNamespace, "githubaccesspolicy/intercept", "--timeout=2m")
 	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", plainNamespace, "githubaccesspolicy/intercept", "--timeout=2m")
 
@@ -311,6 +313,41 @@ git fetch -q origin
 test "$(git rev-parse origin/%[3]s)" = "$sha"
 `, owner, repository, branch))
 			require.NoError(t, err, out)
+		})
+
+		t.Run("a public repository of another owner can be cloned and read", func(t *testing.T) {
+			out, err := c.exec(ctx, interceptNamespace, "plain", fmt.Sprintf(`set -e
+export GIT_TERMINAL_PROMPT=0
+rm -rf /tmp/public
+git clone -q https://github.com/%[1]s/public.git /tmp/public 2>&1
+gh api repos/%[1]s/public --jq .full_name
+`, outsider))
+			require.NoError(t, err, out)
+			assert.Contains(t, out, outsider+"/public")
+		})
+
+		t.Run("a private repository of another owner gets GitHub's 404", func(t *testing.T) {
+			out, err := c.exec(ctx, interceptNamespace, "plain", fmt.Sprintf("curl -sS -w '\\nstatus=%%{http_code}' https://api.github.com/repos/%s/secret", outsider))
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "status=404")
+		})
+
+		t.Run("a write to another owner's repository is refused naming it", func(t *testing.T) {
+			out, err := c.exec(ctx, interceptNamespace, "plain", fmt.Sprintf("curl -sS -X DELETE -w '\\nstatus=%%{http_code}' https://api.github.com/repos/%s/public", outsider))
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "status=403")
+			assert.Contains(t, out, outsider+"/public")
+		})
+
+		t.Run("a release download from github.com follows the redirect with no credential", func(t *testing.T) {
+			// The fake refuses a github.com web path that carries any credential.
+			out, err := c.exec(ctx, interceptNamespace, "plain", fmt.Sprintf(`set -e
+id=$(gh api -X POST repos/%[1]s/%[2]s/releases -f tag_name=v-web-%[3]d --jq .id)
+curl -sS -f -X POST -H 'Content-Type: text/plain' --data-binary web-asset-bytes -o /dev/null "https://uploads.github.com/repos/%[1]s/%[2]s/releases/${id}/assets?name=tool.txt"
+curl -sS -f -L https://github.com/%[1]s/%[2]s/releases/latest/download/tool.txt
+`, owner, publicRepository, run))
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "web-asset-bytes")
 		})
 
 		t.Run("a push to a ref outside the rule is refused", func(t *testing.T) {

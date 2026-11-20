@@ -87,6 +87,15 @@ If a pod is not created and the message says `injection isn't configured`, tell 
 
 `git push` works with no setup, but its commits are not signed. To publish commits that GitHub signs, run `githubgate-client push --intercepted`. See [the client](client.md). Your rule needs `contents: write`, and the branch must match its `pushRefs`.
 
+## Public repositories and web pages
+
+Interception sends all requests for `github.com` and `api.github.com` to githubgate. By default, githubgate serves only the repositories that your rules allow, and only git on `github.com`. Two settings on your rule's `proxy` block change this. Your admin writes the rule. Both settings are off by default:
+
+- `publicRead: true` lets read-only requests reach repositories of other owners: `git clone`, `git fetch`, `gh api repos/OWNER/REPO`, and nix flake inputs such as `github:NixOS/nixpkgs`. It also lets read-only API requests that name no repository through, for example users, search and the rate limit. githubgate sends these requests with a token that can read public data only. A private repository of another owner gets `404` from GitHub. A write to a repository outside your installation gets `403`.
+- `webPaths: true` lets `GET` and `HEAD` requests on `github.com` through, for example `curl -L https://github.com/OWNER/REPO/releases/latest/download/ASSET`. githubgate sends them with no credential and returns redirects to you unchanged.
+
+These settings do not change the repositories of your own installation. If your rule does not cover one of them, githubgate refuses the request. GraphQL requests keep the normal rules, so a GraphQL query about another owner's repository does not work. Use the REST API for it.
+
 ## What interception does not cover
 
 - A tool that resolves names without `/etc/hosts` does not reach the helper.

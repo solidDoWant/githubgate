@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,12 +185,19 @@ func serverTLSConfig(leaves *Leaves) *tls.Config {
 	}
 }
 
-// Probe succeeds only when trustDir holds the ready file and a TLS dial to
-// address with the server name api.github.com verifies against trustDir's
-// ca.crt.
+// Probe succeeds only when trustDir holds the ready file and, for a loopback
+// address, a TLS dial to address with the server name api.github.com verifies
+// against trustDir's ca.crt. A non-loopback address may not be on an interface
+// yet (a KubeVirt guest gateway appears only after this probe passes), so it
+// is not dialled: the ready file, written once the listener is bound and the
+// leaf certificate exists, is the signal.
 func Probe(ctx context.Context, address, trustDir string) error {
 	if _, err := os.Stat(filepath.Join(trustDir, readyFile)); err != nil {
 		return fmt.Errorf("the trust files are not ready: %w", err)
+	}
+
+	if !isLoopbackAddress(address) {
+		return nil
 	}
 
 	caPEM, err := os.ReadFile(filepath.Join(trustDir, trustCAFile))
@@ -213,4 +221,17 @@ func Probe(ctx context.Context, address, trustDir string) error {
 	}
 
 	return conn.Close()
+}
+
+// isLoopbackAddress reports whether address is a host:port whose host is a
+// loopback IP. Anything else, including a name, counts as not loopback.
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+
+	ip, err := netip.ParseAddr(host)
+
+	return err == nil && ip.IsLoopback()
 }

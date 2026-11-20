@@ -300,6 +300,7 @@ func TestMutatesPod(t *testing.T) {
 	assert.Equal(t, []string{"/githubgate-client", "intercept", "--probe"}, sidecar.StartupProbe.Exec.Command)
 	assert.Equal(t, int32(1), sidecar.StartupProbe.PeriodSeconds)
 	assert.Equal(t, int32(30), sidecar.StartupProbe.FailureThreshold)
+	assert.Equal(t, int32(10), sidecar.StartupProbe.TimeoutSeconds)
 	assert.Equal(t, int64(65532), *sidecar.SecurityContext.RunAsUser)
 	assert.Equal(t, "64Mi", sidecar.Resources.Requests.Memory().String())
 	assert.Equal(t, "64Mi", sidecar.Resources.Limits.Memory().String())

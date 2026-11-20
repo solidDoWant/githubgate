@@ -312,3 +312,20 @@ func TestProbeFailsWithoutTheReadyFileOrAVerifyingInterceptor(t *testing.T) {
 		assert.Error(t, Probe(t.Context(), address, running.trustDir))
 	})
 }
+
+func TestProbePassesForAnAddressNotOnAnInterfaceOnceReady(t *testing.T) {
+	running := startInterceptor(t, nil)
+
+	// 192.0.2.0/24 is reserved for documentation: nothing can answer there, so
+	// a dial would time out.
+	const absent = "192.0.2.1:443"
+
+	start := time.Now()
+
+	require.NoError(t, Probe(t.Context(), absent, running.trustDir))
+	assert.Less(t, time.Since(start), probeTimeout)
+
+	t.Run("ready missing", func(t *testing.T) {
+		assert.Error(t, Probe(t.Context(), absent, t.TempDir()))
+	})
+}

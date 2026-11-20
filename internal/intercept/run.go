@@ -46,6 +46,12 @@ type Options struct {
 	BaseBundle []byte
 	// ExtraCA is PEM appended to bundle.crt; may be empty.
 	ExtraCA []byte
+	// Joins are the files written to TrustDir/join: a container's own CA
+	// file followed by the pod CA, rewritten when the source changes.
+	Joins []Join
+	// JoinInterval is how often the sources are read; DefaultJoinInterval
+	// when zero.
+	JoinInterval time.Duration
 	// Logger receives start, stop and errors.
 	Logger *slog.Logger
 	// Now is the clock; time.Now when nil.
@@ -105,9 +111,23 @@ func Run(ctx context.Context, options Options) error {
 		return err
 	}
 
+	joined := newJoiner(options.TrustDir, ca, options.Joins)
+	if err := joined.sync(); err != nil {
+		return fmt.Errorf("write joined files: %w", err)
+	}
+
 	if err := WriteTrust(options.TrustDir, ca, base, extra); err != nil {
 		return err
 	}
+
+	if options.JoinInterval <= 0 {
+		options.JoinInterval = DefaultJoinInterval
+	}
+
+	joinCtx, stopJoining := context.WithCancel(ctx)
+	defer stopJoining()
+
+	go joined.run(joinCtx, options.JoinInterval, options.Logger)
 
 	server := &http.Server{
 		Handler: &Forwarder{

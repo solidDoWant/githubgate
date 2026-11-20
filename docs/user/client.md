@@ -37,6 +37,14 @@ At start, the interceptor does these steps:
 3. It makes a server certificate for the three GitHub hosts. The certificate is valid for 30 days and stays in memory. The interceptor makes a new one seven days before it expires.
 4. It writes `ca.crt` (its own CA), `bundle.crt` (the base roots, the extra CAs and its own CA) and then `ready` to the trust directory.
 
+### Containers that set their own CA variable
+
+Some containers already set `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` or `NODE_EXTRA_CA_CERTS`. In an opted-in namespace, githubgate keeps the CA file of such a container and adds the pod CA to it.
+
+This works when the variable has a literal value and the file is in a ConfigMap, Secret, projected or `emptyDir` volume that the container mounts. githubgate mounts the same volume read-only in the interceptor. It points the variable at the joined file. Other hosts keep the CAs of your file.
+
+If the file is in the container image, or the variable uses `valueFrom`, githubgate rejects the pod. To fix this, put the CA in a ConfigMap and name it in the namespace annotation `githubgate.soliddowant.dev/extra-ca-configmap`. The ConfigMap must be in the namespace of the pod and must have the key `ca.crt`. githubgate adds that CA to the bundle of every pod in the namespace. If the ConfigMap does not exist, githubgate rejects the pod and names the ConfigMap. The administrator can also set one CA for the whole cluster with the chart value `inject.extraCAConfigMap`.
+
 The interceptor reads the token file on every request, so a rotated token works without a restart.
 
 Flags:
@@ -48,7 +56,8 @@ Flags:
 - `--trust-dir`: the directory for the files that your tools read. The default is `/var/run/githubgate/trust`.
 - `--state-dir`: the directory for the CA key. The default is `/var/run/githubgate/state`. Only the interceptor must be able to read it.
 - `--base-bundle`: a PEM file of roots for `bundle.crt`. The default is the built-in roots of the `golang.org/x/crypto` fallback bundle. Roots that have an extra limit in that bundle, such as a distrust date, are left out.
-- `--extra-ca`, or the variable `GITHUBGATE_INTERCEPT_EXTRA_CA`: more CA certificates for `bundle.crt`, as PEM text or as `@FILE`. Use it for private CAs.
+- `--extra-ca`, or the variable `GITHUBGATE_INTERCEPT_EXTRA_CA`: more CA certificates for `bundle.crt`, as PEM text or as `@FILE`. Use it for private CAs. You can give the flag more than once. The variable counts as one more value.
+- `--join`: `CONTAINER/VARIABLE=PATH`. The interceptor writes `join/CONTAINER/VARIABLE` in the trust directory. The file holds the file at `PATH` followed by the pod CA. The interceptor reads `PATH` again every 30 seconds and rewrites the joined file in one step when the content changes. If `PATH` does not exist, the joined file holds only the pod CA. You can give the flag more than once. githubgate adds it for you, see below.
 - `--probe`: makes sure that the interceptor is ready, then exits. It exits 0 only if the `ready` file exists and the interceptor on `--listen` shows a certificate for `api.github.com` that `ca.crt` signed.
 
 The interceptor answers these errors itself. On the API hosts, the answer is JSON. On `github.com`, the answer is plain text.

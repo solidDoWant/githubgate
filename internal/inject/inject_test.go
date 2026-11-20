@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
@@ -116,11 +117,11 @@ func TestSkipAndReject(t *testing.T) {
 		"hostAliases": {func(p *corev1.Pod) {
 			p.Spec.HostAliases = []corev1.HostAlias{{IP: "1.2.3.4", Hostnames: []string{"x", "API.GitHub.com."}}}
 		}, "hostAliases names API.GitHub.com."},
-		"SSL_CERT_FILE":       {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "x"}} }, "container main sets SSL_CERT_FILE"},
-		"CURL_CA_BUNDLE init": {func(p *corev1.Pod) { p.Spec.InitContainers[1].Env = []corev1.EnvVar{{Name: "CURL_CA_BUNDLE"}} }, "container init-b sets CURL_CA_BUNDLE"},
-		"GIT_SSL_CAINFO":      {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "GIT_SSL_CAINFO"}} }, "container main sets GIT_SSL_CAINFO"},
-		"REQUESTS_CA_BUNDLE":  {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "REQUESTS_CA_BUNDLE"}} }, "container main sets REQUESTS_CA_BUNDLE"},
-		"NODE_EXTRA_CA_CERTS": {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "NODE_EXTRA_CA_CERTS"}} }, "container main sets NODE_EXTRA_CA_CERTS"},
+		"SSL_CERT_FILE":       {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "x"}} }, "unreadable:main:SSL_CERT_FILE"},
+		"CURL_CA_BUNDLE init": {func(p *corev1.Pod) { p.Spec.InitContainers[1].Env = []corev1.EnvVar{{Name: "CURL_CA_BUNDLE"}} }, "unreadable:init-b:CURL_CA_BUNDLE"},
+		"GIT_SSL_CAINFO":      {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "GIT_SSL_CAINFO"}} }, "unreadable:main:GIT_SSL_CAINFO"},
+		"REQUESTS_CA_BUNDLE":  {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "REQUESTS_CA_BUNDLE"}} }, "unreadable:main:REQUESTS_CA_BUNDLE"},
+		"NODE_EXTRA_CA_CERTS": {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "NODE_EXTRA_CA_CERTS"}} }, "unreadable:main:NODE_EXTRA_CA_CERTS"},
 		"port 443":            {func(p *corev1.Pod) { p.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: 443}} }, "container main uses port 443"},
 		"sysctl above 443": {func(p *corev1.Pod) {
 			p.Spec.SecurityContext = &corev1.PodSecurityContext{Sysctls: []corev1.Sysctl{{Name: "net.ipv4.ip_unprivileged_port_start", Value: "444"}}}
@@ -145,7 +146,13 @@ func TestSkipAndReject(t *testing.T) {
 
 			response, _ := review(t, newHandler(t), pod)
 			require.False(t, response.Allowed)
-			assert.Equal(t, "githubgate: pod can't be intercepted: "+test.reason, response.Result.Message)
+
+			reason := test.reason
+			if parts := strings.Split(reason, ":"); len(parts) == 3 && parts[0] == "unreadable" {
+				reason = "container \"" + parts[1] + "\" sets " + parts[2] + " to a file githubgate can't read; put the CA in a ConfigMap and name it in the namespace annotation githubgate.soliddowant.dev/extra-ca-configmap"
+			}
+
+			assert.Equal(t, "githubgate: pod can't be intercepted: "+reason, response.Result.Message)
 		})
 	}
 

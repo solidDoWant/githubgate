@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"slices"
@@ -31,10 +32,18 @@ const (
 	tokenVolume = "githubgate-token"
 	trustVolume = "githubgate-trust"
 	stateVolume = "githubgate-intercept-state"
+	// extraCAVolume holds the namespace's extra CA ConfigMap, mounted only in the interceptor.
+	extraCAVolume = "githubgate-extra-ca"
 
 	tokenDir = "/var/run/secrets/githubgate"
 	trustDir = "/var/run/githubgate/trust"
 	stateDir = "/var/run/githubgate/state"
+	joinRoot = "/var/run/githubgate/join"
+	extraDir = "/var/run/githubgate/extra-ca"
+
+	// ExtraCAConfigMapAnnotation on a namespace names a ConfigMap whose ca.crt joins every bundle in the namespace's pods.
+	ExtraCAConfigMapAnnotation = "githubgate.soliddowant.dev/extra-ca-configmap"
+	extraCAKey                 = "ca.crt"
 
 	unprivilegedPortSysctl = "net.ipv4.ip_unprivileged_port_start"
 	privilegedPortLimit    = 443
@@ -49,7 +58,7 @@ const (
 
 var (
 	githubHosts   = []string{"api.github.com", "uploads.github.com", "github.com"}
-	reservedNames = []string{tokenVolume, trustVolume, stateVolume}
+	reservedNames = []string{tokenVolume, trustVolume, stateVolume, extraCAVolume}
 	proxyVars     = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"}
 	noProxyVars   = []string{"NO_PROXY", "no_proxy"}
 	// trustVars are the trust variables and the file each points at.
@@ -75,6 +84,17 @@ type Config struct {
 	ProxyCAFile string
 	// ExtraCAFile is an optional file of extra CA certificates.
 	ExtraCAFile string
+	// Cluster reads the namespace and its extra CA ConfigMap. Nil means no
+	// namespace annotation is honoured.
+	Cluster Cluster
+}
+
+// Cluster is what the webhook reads from the API server.
+type Cluster interface {
+	// NamespaceAnnotations returns the annotations of the namespace.
+	NamespaceAnnotations(ctx context.Context, namespace string) (map[string]string, error)
+	// ConfigMapHasKey reports whether the ConfigMap exists and holds the key.
+	ConfigMapHasKey(ctx context.Context, namespace, name, key string) (bool, error)
 }
 
 // Handler is the mutating webhook.
@@ -126,7 +146,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 }
 
 // Handle decides on one pod CREATE.
-func (h *Handler) Handle(_ context.Context, request admission.Request) admission.Response {
+func (h *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
 	proxyCA, err := readCertificates(h.config.ProxyCAFile)
 	if err != nil {
 		return admission.Denied(notConfigured)
@@ -149,10 +169,24 @@ func (h *Handler) Handle(_ context.Context, request admission.Request) admission
 		return admission.Allowed("githubgate: pod opted out")
 	}
 
+	namespace := request.Namespace
+	if namespace == "" {
+		namespace = pod.Namespace
+	}
+
+	extraConfigMap, denial := h.namespaceExtraCA(ctx, namespace)
+	if denial != "" {
+		return admission.Denied(denial)
+	}
+
 	injected := pod.Annotations[InjectedAnnotation] == "true"
+
+	var prior *corev1.Container
+
 	if injected {
 		// Drop what an earlier run added, so the checks see only what
 		// others set and the changes below rebuild it.
+		prior = findSidecar(&pod)
 		removeOwn(&pod)
 	}
 
@@ -160,7 +194,12 @@ func (h *Handler) Handle(_ context.Context, request admission.Request) admission
 		return admission.Denied(rejectPrefix + reason)
 	}
 
-	mutate(&pod, h.config, proxyCA, extraCA)
+	joins, reason := planJoins(&pod, prior)
+	if reason != "" {
+		return admission.Denied(rejectPrefix + reason)
+	}
+
+	mutate(&pod, h.config, proxyCA, extraCA, extraConfigMap, joins)
 
 	mutated, err := json.Marshal(&pod)
 	if err != nil {
@@ -168,6 +207,36 @@ func (h *Handler) Handle(_ context.Context, request admission.Request) admission
 	}
 
 	return admission.PatchResponseFromRaw(request.Object.Raw, mutated)
+}
+
+// namespaceExtraCA returns the ConfigMap the namespace names as its extra CA,
+// or a denial message when the namespace can't be read or the ConfigMap is
+// missing.
+func (h *Handler) namespaceExtraCA(ctx context.Context, namespace string) (name, denial string) {
+	if h.config.Cluster == nil {
+		return "", ""
+	}
+
+	annotations, err := h.config.Cluster.NamespaceAnnotations(ctx, namespace)
+	if err != nil {
+		return "", "githubgate: can't read the namespace"
+	}
+
+	name = annotations[ExtraCAConfigMapAnnotation]
+	if name == "" {
+		return "", ""
+	}
+
+	found, err := h.config.Cluster.ConfigMapHasKey(ctx, namespace, name, extraCAKey)
+	if err != nil {
+		return "", "githubgate: can't read ConfigMap " + name
+	}
+
+	if !found {
+		return "", fmt.Sprintf("%sConfigMap %q named by the %s annotation of the namespace is missing or has no %s", rejectPrefix, name, ExtraCAConfigMapAnnotation, extraCAKey)
+	}
+
+	return name, ""
 }
 
 func ownAlias(alias corev1.HostAlias) bool {
@@ -263,12 +332,6 @@ func reject(pod *corev1.Pod, injected bool) string {
 				continue
 			}
 
-			for _, variable := range trustVars {
-				if hasEnv(container, variable.name) {
-					return "container " + container.Name + " sets " + variable.name
-				}
-			}
-
 			for _, port := range container.Ports {
 				if port.ContainerPort == 443 {
 					return "container " + container.Name + " uses port 443"
@@ -312,7 +375,7 @@ func hasSidecar(containers []corev1.Container) bool {
 	return slices.ContainsFunc(containers, func(container corev1.Container) bool { return container.Name == SidecarName })
 }
 
-func mutate(pod *corev1.Pod, config Config, proxyCA, extraCA string) {
+func mutate(pod *corev1.Pod, config Config, proxyCA, extraCA, extraConfigMap string, joins []join) {
 	spec := &pod.Spec
 
 	spec.HostAliases = append(spec.HostAliases, corev1.HostAlias{IP: "127.0.0.1", Hostnames: slices.Clone(githubHosts)})
@@ -329,17 +392,17 @@ func mutate(pod *corev1.Pod, config Config, proxyCA, extraCA string) {
 	spec.InitContainers = slices.DeleteFunc(spec.InitContainers, func(container corev1.Container) bool { return container.Name == SidecarName })
 
 	for index := range spec.InitContainers {
-		prepare(&spec.InitContainers[index])
+		prepare(&spec.InitContainers[index], joins)
 	}
 
 	for index := range spec.Containers {
-		prepare(&spec.Containers[index])
+		prepare(&spec.Containers[index], joins)
 	}
 
-	spec.InitContainers = append([]corev1.Container{sidecar(config, proxyCA, extraCA)}, spec.InitContainers...)
+	spec.InitContainers = append([]corev1.Container{sidecar(config, proxyCA, extraCA, extraConfigMap, joins)}, spec.InitContainers...)
 
 	spec.Volumes = slices.DeleteFunc(spec.Volumes, func(volume corev1.Volume) bool { return slices.Contains(reservedNames, volume.Name) })
-	spec.Volumes = append(spec.Volumes, volumes(config)...)
+	spec.Volumes = append(spec.Volumes, volumes(config, extraConfigMap)...)
 
 	if pod.Annotations == nil {
 		pod.Annotations = map[string]string{}
@@ -349,7 +412,7 @@ func mutate(pod *corev1.Pod, config Config, proxyCA, extraCA string) {
 }
 
 // prepare adds the no-proxy hosts, the trust variables and the trust mount.
-func prepare(container *corev1.Container) {
+func prepare(container *corev1.Container, joins []join) {
 	if hasEnv(container, proxyVars...) {
 		for _, name := range noProxyVars {
 			addNoProxy(container, name)
@@ -357,6 +420,16 @@ func prepare(container *corev1.Container) {
 	}
 
 	for _, variable := range trustVars {
+		if joined := joinFor(joins, container.Name, variable.name); joined != nil {
+			for index := range container.Env {
+				if container.Env[index].Name == variable.name {
+					container.Env[index].Value = joined.trustPath()
+				}
+			}
+
+			continue
+		}
+
 		container.Env = append(container.Env, corev1.EnvVar{Name: variable.name, Value: trustDir + "/" + variable.file})
 	}
 
@@ -398,11 +471,11 @@ func addNoProxy(container *corev1.Container, name string) {
 	container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: strings.Join(githubHosts, ",")})
 }
 
-func volumes(config Config) []corev1.Volume {
+func volumes(config Config, extraConfigMap string) []corev1.Volume {
 	audience, expiry := config.Audience, int64(3600)
 	state, trust := resource.MustParse("1Mi"), resource.MustParse("4Mi")
 
-	return []corev1.Volume{
+	all := []corev1.Volume{
 		{Name: tokenVolume, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
 			Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
 				Audience: audience, ExpirationSeconds: &expiry, Path: "token",
@@ -411,9 +484,18 @@ func volumes(config Config) []corev1.Volume {
 		{Name: stateVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &state}}},
 		{Name: trustVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &trust}}},
 	}
+
+	if extraConfigMap != "" {
+		all = append(all, corev1.Volume{Name: extraCAVolume, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: extraConfigMap},
+			Items:                []corev1.KeyToPath{{Key: extraCAKey, Path: extraCAKey}},
+		}}})
+	}
+
+	return all
 }
 
-func sidecar(config Config, proxyCA, extraCA string) corev1.Container {
+func sidecar(config Config, proxyCA, extraCA, extraConfigMap string, joins []join) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: envProxyAddress, Value: config.ProxyAddress},
 		{Name: envProxyCA, Value: proxyCA},
@@ -423,6 +505,23 @@ func sidecar(config Config, proxyCA, extraCA string) corev1.Container {
 		env = append(env, corev1.EnvVar{Name: envExtraCA, Value: extraCA})
 	}
 
+	args := []string{"intercept"}
+	mounts := []corev1.VolumeMount{
+		{Name: tokenVolume, MountPath: tokenDir, ReadOnly: true},
+		{Name: stateVolume, MountPath: stateDir},
+		{Name: trustVolume, MountPath: trustDir},
+	}
+
+	if extraConfigMap != "" {
+		args = append(args, "--extra-ca", "@"+extraDir+"/"+extraCAKey)
+		mounts = append(mounts, corev1.VolumeMount{Name: extraCAVolume, MountPath: extraDir, ReadOnly: true})
+	}
+
+	for _, joined := range joins {
+		args = append(args, "--join", joined.container+"/"+joined.variable+"="+joined.source)
+		mounts = append(mounts, joined.mount)
+	}
+
 	always := corev1.ContainerRestartPolicyAlways
 	user := int64(65532)
 	no, yes := false, true
@@ -430,7 +529,7 @@ func sidecar(config Config, proxyCA, extraCA string) corev1.Container {
 	return corev1.Container{
 		Name:          SidecarName,
 		Image:         config.Image,
-		Args:          []string{"intercept"},
+		Args:          args,
 		Env:           env,
 		RestartPolicy: &always,
 		StartupProbe: &corev1.Probe{
@@ -449,10 +548,16 @@ func sidecar(config Config, proxyCA, extraCA string) corev1.Container {
 			Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi"), corev1.ResourceCPU: resource.MustParse("10m")},
 			Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: tokenVolume, MountPath: tokenDir, ReadOnly: true},
-			{Name: stateVolume, MountPath: stateDir},
-			{Name: trustVolume, MountPath: trustDir},
-		},
+		VolumeMounts: mounts,
 	}
+}
+
+func findSidecar(pod *corev1.Pod) *corev1.Container {
+	for index := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[index].Name == SidecarName {
+			return &pod.Spec.InitContainers[index]
+		}
+	}
+
+	return nil
 }

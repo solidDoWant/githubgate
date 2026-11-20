@@ -46,7 +46,7 @@ docs/admin/
   README.md                The pages for admins.
   token-mode-setup.md      Install, App, installation, ceiling, policy and status.
   proxy-mode-setup.md      The proxy CA, the chart values and the proxy rules.
-  interception-setup.md    The injection webhook and the NixOS module.
+  interception-setup.md    The injection webhook, pod opt-in and KubeVirt VMs.
   chart-values.md          Every Helm chart value (generated).
 
 docs/dev/

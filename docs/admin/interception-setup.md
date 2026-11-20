@@ -2,7 +2,7 @@
 
 For: admins who already run githubgate in proxy mode. You know Kubernetes, Helm and cert-manager. See [Set up proxy mode](proxy-mode-setup.md) first.
 
-Interception lets pods and VMs use `gh`, `git` and `curl` with no setup. In a pod, an injection webhook adds a helper container, the interceptor. In a VM, a NixOS module runs it as a service. Workload users read [Use GitHub with no setup](../user/interception.md).
+Interception lets pods and VMs use `gh`, `git` and `curl` with no setup. An injection webhook adds a helper container, the interceptor, to each opted-in pod. For a KubeVirt VM, the interceptor runs in the VM's launcher pod. Workload users read [Use GitHub with no setup](../user/interception.md).
 
 ## Turn on the injection webhook
 
@@ -37,6 +37,30 @@ kubectl label namespace team-a githubgate.soliddowant.dev/inject=true
 
 The webhook never runs in the githubgate namespace.
 
+## Opt in single pods
+
+In a namespace where most pods must not be intercepted, do not label the namespace. Label each pod that opts in instead:
+
+```yaml
+metadata:
+  labels:
+    githubgate.soliddowant.dev/inject: "true"
+```
+
+The webhook has two entries. One selects pods in labelled namespaces. The other selects labelled pods in all other namespaces, so the webhook gets each pod only once. Both entries skip the githubgate namespace.
+
+## Change the listen address
+
+The interceptor listens on `127.43.0.1:443` by default. To use another address, set this pod annotation:
+
+```yaml
+metadata:
+  annotations:
+    githubgate.soliddowant.dev/listen: "10.0.2.1:443"
+```
+
+The value must be a specific IP address with port 443. If it is not, the webhook rejects the pod and names the annotation. The pod `hostAliases` then point the three GitHub names to this IP address. The interceptor binds an address that does not exist yet, and serves it when it appears.
+
 ## It fails closed
 
 The webhook has `failurePolicy: Fail`. If it is not available, pods in labelled namespaces are not created. This includes pods with the opt-out annotation `githubgate.soliddowant.dev/inject: "false"`.
@@ -51,32 +75,20 @@ If the proxy CA ConfigMap is missing or has no certificate, the webhook is not r
 
 ## VM workspaces
 
-The flake exports `nixosModules.githubgate-client`. Add it to the NixOS configuration of the VM image:
+A KubeVirt VM runs in a pod, the virt-launcher pod. The interceptor runs in that pod, not in the VM. Nothing of githubgate runs in the VM, and the ServiceAccount token never enters the VM. With masquerade networking, the VM uses `10.0.2.1` as its gateway. This address is in the launcher pod. Only the VM and the pod itself can reach it.
 
-```nix
-{
-  imports = [ inputs.githubgate.nixosModules.githubgate-client ];
+Make these changes in the VM template, on the VirtualMachineInstance. KubeVirt copies its labels and annotations to the launcher pod.
 
-  services.githubgate-client = {
-    enable = true;
-    package = inputs.githubgate.packages.${pkgs.system}.githubgate-client; # any package with bin/githubgate-client
-    proxyAddress = "githubgate-proxy.githubgate.svc:443";
-    proxyCA = "/etc/githubgate/proxy-ca.crt";
-    extraCA = "/etc/githubgate/extra-ca.crt"; # optional: private CAs
-    # tokenFile = "/var/run/secrets/githubgate/token"; # the default
-  };
-}
-```
+1. Add the label `githubgate.soliddowant.dev/inject: "true"`.
+2. Add the annotation `githubgate.soliddowant.dev/listen: "10.0.2.1:443"`.
+3. Add a `containerPath` volume that shows the directory `/var/run/githubgate/trust` to the VM. The webhook mounts this directory into every container after the interceptor, `compute` included.
 
-| Option | Meaning |
-|---|---|
-| `enable` | Run the interceptor service. |
-| `package` | A package with `bin/githubgate-client`. Required. |
-| `proxyAddress` | The `host:port` of the proxy. The VM must reach it. |
-| `proxyCA` | A file with the proxy CA certificate. |
-| `extraCA` | A file with extra CA certificates that the VM's tools trust. Default: none. |
-| `tokenFile` | The file with a ServiceAccount token for the audience `githubgate`. The service user must read it. |
+Make these changes in the VM image:
 
-The module runs the service as its own user, maps the three GitHub names to `127.0.0.1`, and sets the trust variables for the whole system. The VM's own CAs stay in the trust bundle. Before the service starts, requests for GitHub are refused, and other hosts keep working.
+1. In `/etc/hosts`, point `api.github.com`, `uploads.github.com` and `github.com` to `10.0.2.1`.
+2. Set the trust variables to the files of the shared trust directory, as the webhook does in a pod. See the table of trust variables in [Use GitHub with no setup](../user/interception.md).
+3. Set `GH_TOKEN=githubgate`. `gh` refuses to run without a token. The interceptor replaces it.
 
-You must give the VM image a token file, and the proxy address must be reachable from the VM. Both come from your own VM image setup.
+A program in the VM can send requests through the interceptor. The policy of the launcher pod ServiceAccount limits these requests. The program cannot read the token.
+
+A live migration creates a new launcher pod. The new pod has a new interceptor and a new CA. New programs read the new trust files. A long-running program that loaded the old CA fails on GitHub until you restart it.

@@ -134,6 +134,11 @@ func TestSkipAndReject(t *testing.T) {
 		"reserved token mount": {func(p *corev1.Pod) {
 			p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "githubgate-token"}}
 		}, "a mount is named githubgate-token"},
+		"listen without port":        {listenAnnotation("10.0.2.1"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1" isn't a specific IP with port 443`},
+		"listen on another port":     {listenAnnotation("10.0.2.1:8443"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1:8443" isn't a specific IP with port 443`},
+		"listen on 0.0.0.0":          {listenAnnotation("0.0.0.0:443"), `the githubgate.soliddowant.dev/listen annotation "0.0.0.0:443" isn't a specific IP with port 443`},
+		"listen on ::":               {listenAnnotation("[::]:443"), `the githubgate.soliddowant.dev/listen annotation "[::]:443" isn't a specific IP with port 443`},
+		"listen on a host name":      {listenAnnotation("localhost:443"), `the githubgate.soliddowant.dev/listen annotation "localhost:443" isn't a specific IP with port 443`},
 		"annotation without sidecar": {func(p *corev1.Pod) { p.Annotations = map[string]string{inject.InjectedAnnotation: "true"} }, "the injected annotation is set without the githubgate-intercept init container"},
 	}
 
@@ -251,7 +256,7 @@ func TestMutatesPod(t *testing.T) {
 
 	hosts := "api.github.com,uploads.github.com,github.com"
 
-	assert.Equal(t, []corev1.HostAlias{{IP: "127.0.0.1", Hostnames: []string{"api.github.com", "uploads.github.com", "github.com"}}}, mutated.Spec.HostAliases)
+	assert.Equal(t, []corev1.HostAlias{{IP: "127.43.0.1", Hostnames: []string{"api.github.com", "uploads.github.com", "github.com"}}}, mutated.Spec.HostAliases)
 	assert.Equal(t, []corev1.Sysctl{{Name: "net.ipv4.ip_unprivileged_port_start", Value: "443"}}, mutated.Spec.SecurityContext.Sysctls)
 
 	init0 := mutated.Spec.InitContainers[1]
@@ -319,6 +324,41 @@ func TestMutatesPod(t *testing.T) {
 
 	assert.False(t, mounted["githubgate-token"])
 	assert.False(t, mounted["githubgate-intercept-state"])
+}
+
+func listenAnnotation(value string) func(*corev1.Pod) {
+	return func(pod *corev1.Pod) { pod.Annotations = map[string]string{inject.ListenAnnotation: value} }
+}
+
+func TestListenAnnotationSetsTheInterceptorAddressAndHostAliases(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ annotation, ip string }{
+		{annotation: "10.0.2.1:443", ip: "10.0.2.1"},
+		{annotation: "[fd00::1]:443", ip: "fd00::1"},
+	} {
+		t.Run(test.annotation, func(t *testing.T) {
+			t.Parallel()
+
+			handler := newHandler(t)
+			pod := basePod()
+			listenAnnotation(test.annotation)(pod)
+
+			_, mutated := review(t, handler, pod)
+			require.NotNil(t, mutated)
+
+			assert.Equal(t, []corev1.HostAlias{{IP: test.ip, Hostnames: []string{"api.github.com", "uploads.github.com", "github.com"}}}, mutated.Spec.HostAliases)
+
+			sidecar := mutated.Spec.InitContainers[0]
+			assert.Equal(t, []string{"intercept", "--listen", test.annotation}, sidecar.Args)
+			assert.Equal(t, []string{"/githubgate-client", "intercept", "--probe", "--listen", test.annotation}, sidecar.StartupProbe.Exec.Command)
+
+			// A reinvocation replaces its own alias rather than rejecting it.
+			_, twice := review(t, handler, mutated)
+			require.NotNil(t, twice)
+			assert.Equal(t, mutated.Spec.HostAliases, twice.Spec.HostAliases)
+		})
+	}
 }
 
 func TestMutationIsIdempotentOnReinvocation(t *testing.T) {

@@ -49,7 +49,7 @@ The interceptor reads the token file on every request, so a rotated token works 
 
 Flags:
 
-- `--listen`: the address to listen on. The default is `127.0.0.1:443`.
+- `--listen`: the address to listen on. The default is `127.43.0.1:443`. It must be a specific IP address, not `0.0.0.0` or `::`. githubgate-client binds an address that is not a loopback address even before the address exists.
 - `--proxy-address`, or the variable `GITHUBGATE_INTERCEPT_PROXY_ADDRESS`: the `host:port` of the proxy Service.
 - `--proxy-ca`, or the variable `GITHUBGATE_INTERCEPT_PROXY_CA`: the CA of the proxy, as PEM text or as `@FILE`.
 - `--token-file`: the ServiceAccount token file. The default is `/var/run/secrets/githubgate/token`.

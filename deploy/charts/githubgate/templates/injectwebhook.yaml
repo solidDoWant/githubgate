@@ -34,4 +34,35 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE"]
         resources: ["pods"]
+  - name: inject-pod.githubgate.soliddowant.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    reinvocationPolicy: IfNeeded
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: {{ $fullname }}
+        namespace: {{ .Release.Namespace }}
+        port: 9443
+        path: /inject-pod
+    # Pods opted in by their own label, in namespaces that aren't opted in,
+    # so no pod is sent twice. KubeVirt copies a VMI's labels to its
+    # virt-launcher pod, so this also opts in VM workspaces.
+    namespaceSelector:
+      matchExpressions:
+        - key: githubgate.soliddowant.dev/inject
+          operator: NotIn
+          values: ["true"]
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: [{{ .Release.Namespace | quote }}]
+    objectSelector:
+      matchLabels:
+        githubgate.soliddowant.dev/inject: "true"
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
 {{- end }}

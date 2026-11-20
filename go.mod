@@ -15,6 +15,7 @@ require (
 	github.com/vektah/gqlparser/v2 v2.5.64
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261115193255-739070949446
 	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.48.0
 	k8s.io/api v0.37.2
 	k8s.io/apiextensions-apiserver v0.37.2
 	k8s.io/apimachinery v0.37.2
@@ -71,7 +72,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

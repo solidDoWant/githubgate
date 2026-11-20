@@ -44,6 +44,10 @@ inject=$(helm template githubgate "$chart" --namespace githubgate "${required[@]
 for want in 'kind: MutatingWebhookConfiguration' 'path: /inject-pod' 'failurePolicy: Fail' 'reinvocationPolicy: IfNeeded' 'timeoutSeconds: 5' 'sideEffects: None' 'githubgate.soliddowant.dev/inject' 'kubernetes.io/metadata.name' 'NotIn' '"githubgate"' 'inject-ca-from: githubgate/githubgate-webhook' '- --inject$' '- --inject-image=ghcr.io/soliddowant/githubgate-client@sha256:1111' '- --inject-proxy-ca-file=/var/run/githubgate/inject-proxy-ca/ca.crt' '- --inject-extra-ca-file=' 'name: proxy-ca-public' 'name: githubgate-webhook$'; do
 	grep -qE -- "$want" <<<"$inject" || fail "inject render lacks: $want"
 done
+for want in 'name: inject-pod.githubgate.soliddowant.dev' 'objectSelector:'; do
+	grep -qF -- "$want" <<<"$inject" || fail "inject render lacks the pod-label entry: $want"
+done
+[ "$(grep -c 'values: \["githubgate"\]' <<<"$inject")" -eq 2 ] || fail "both inject entries must exclude the release namespace"
 grep -qF -- '--inject-proxy-address' <<<"$inject" && fail "inject proxy address set without a value"
 helm template githubgate "$chart" "${required[@]}" --set inject.enabled=true --set inject.proxyCAConfigMap=x >/dev/null 2>&1 && fail "inject.enabled without a digest rendered"
 helm template githubgate "$chart" "${required[@]}" --set inject.enabled=true --set inject.image.digest=sha256:1 >/dev/null 2>&1 && fail "inject.enabled without proxyCAConfigMap rendered"

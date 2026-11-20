@@ -24,10 +24,18 @@ metadata:
     githubgate.soliddowant.dev/inject: "false"
 ```
 
+In a namespace without the label, one pod can opt in with the same name as a pod label:
+
+```yaml
+metadata:
+  labels:
+    githubgate.soliddowant.dev/inject: "true"
+```
+
 ## What a pod gets
 
 - A first init container, `githubgate-intercept`. It runs for the life of the pod (a native sidecar). The other containers start only after it is ready.
-- `hostAliases` that point the three GitHub names to `127.0.0.1`.
+- `hostAliases` that point the three GitHub names to the address of the helper, `127.43.0.1` by default. The pod annotation `githubgate.soliddowant.dev/listen` sets another address.
 - The sysctl `net.ipv4.ip_unprivileged_port_start=443`, so the helper can listen on port 443. It is not added if the value is already 443 or lower.
 - A read-only mount of the trust files at `/var/run/githubgate/trust`, in every container.
 - The trust variables in every container (see the table below).
@@ -64,12 +72,13 @@ If a container already sets `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`,
 
 githubgate refuses to create a pod it cannot make safe. The error starts with `githubgate: pod can't be intercepted:` and gives the reason. A pod is rejected when:
 
-- it sets `hostNetwork: true`. The pod would not use its own `127.0.0.1` and `hostAliases`.
+- it sets `hostNetwork: true`. The pod would not use its own loopback address and `hostAliases`.
 - its `hostAliases` name `github.com`, `api.github.com` or `uploads.github.com`. They would override the redirect.
 - a container uses port `443`. The helper needs it.
 - the pod sets the sysctl `net.ipv4.ip_unprivileged_port_start` above 443. The helper could not listen.
 - a container sets one of the CA variables to a file in the image, or through `valueFrom`. githubgate cannot read that file. Put the CA in a ConfigMap and name it in the namespace annotation `githubgate.soliddowant.dev/extra-ca-configmap`.
 - the namespace annotation names a ConfigMap that does not exist.
+- the annotation `githubgate.soliddowant.dev/listen` is not a specific IP address with port 443, for example `10.0.2.1:443`.
 - it already uses a name that githubgate reserves: a container `githubgate-intercept`, or a volume or mount `githubgate-token`, `githubgate-trust` or `githubgate-intercept-state`.
 
 If a pod is not created and the message says `injection isn't configured`, tell your admin. See [Set up interception](../admin/interception-setup.md).
@@ -81,10 +90,11 @@ If a pod is not created and the message says `injection isn't configured`, tell 
 - In these cases, only a credential that the pod has by itself can reach the real GitHub. The ServiceAccount token cannot, because only the helper reads it and it sends the token only to a server that the proxy CA verifies.
 - A process that loaded a CA file keeps it. It does not see a later change until it restarts.
 - When your admin rotates the proxy CA, running pods fail with `503` until you restart them.
+- A KubeVirt VM gets a new CA when it moves to another node (live migration). A program that loaded the old CA, for example a Node process that read `NODE_EXTRA_CA_CERTS` once, fails on GitHub until you restart it.
 
 ## Remove old setup
 
 When your namespace opts in, remove the earlier setups:
 
 - **Token mode** (`githubgate-client gh`, `githubgate-client git-credential`, see [Get GitHub access](getting-access.md)): the helper strips the installation token and uses your ServiceAccount token. The proxy then decides the request by your **proxy** rules. A policy that has only token rules gets `403`. Ask your admin to add proxy rules first.
-- **Proxy mode** with `--proxy` (see [Use proxy mode](proxy-mode.md)): remove it, with its `hostAliases`, CA mount and token volume. The client stops, because the three names now resolve to `127.0.0.1`.
+- **Proxy mode** with `--proxy` (see [Use proxy mode](proxy-mode.md)): remove it, with its `hostAliases`, CA mount and token volume. The client stops, because the three names now resolve to the address of the helper.

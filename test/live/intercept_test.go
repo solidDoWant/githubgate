@@ -3,6 +3,7 @@
 package live_test
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,7 +62,8 @@ func (a *authorizations) all() []string {
 func docker(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 
-	cmd := exec.CommandContext(t.Context(), "docker", args...)
+	// Not cancelled with the test, so cleanups can still run docker.
+	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "docker", args...)
 	out, err := cmd.CombinedOutput()
 
 	return string(out), err

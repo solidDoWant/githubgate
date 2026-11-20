@@ -73,15 +73,15 @@ test-guard: ## Fail if HEAD deletes, unlists or skips a test named on a `Tests:`
 	./scripts/ci/test-guard.py --base $(or $(BASE),origin/master)
 
 .PHONY: test-integration
-test-integration: ## Run the integration-tagged tests (envtest from the dev shell's KUBEBUILDER_ASSETS, the server and the fake GitHub in-process). GO_TEST_JSON=file also writes the go test -json events there. Passes with "no tests yet" until there are any.
+test-integration: ## Run the integration-tagged tests (envtest from the dev shell's KUBEBUILDER_ASSETS, the server and the fake GitHub in-process). GO_TEST_JSON=file also writes the go test -json events there.
 	./scripts/test-tagged.sh integration
 
 .PHONY: test-e2e
-test-e2e: ## Run the e2e-tagged tests with the fake GitHub and the chart on the kind cluster E2E_CLUSTER (default githubgate-e2e, ImageVolume on). Passes with "no tests yet" until there are any.
+test-e2e: ## Run the e2e-tagged tests with the fake GitHub and the chart on the kind cluster E2E_CLUSTER (default githubgate-e2e, ImageVolume on).
 	E2E_CLUSTER="$(E2E_CLUSTER)" ./scripts/test-tagged.sh e2e
 
 .PHONY: test-live
-test-live: ## Run the live-tagged tests against github.com with the owner's test App, its private key in the file GITHUBGATE_LIVE_KEY_FILE; they skip without it. Operator only, never in CI. Passes with "no tests yet" until there are any.
+test-live: ## Run the live-tagged tests against github.com with the owner's test App, its private key in the file GITHUBGATE_LIVE_KEY_FILE; they skip without it. Operator only, never in CI.
 	./scripts/test-tagged.sh live
 
 .PHONY: acceptance

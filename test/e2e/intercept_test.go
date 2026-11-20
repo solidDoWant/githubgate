@@ -117,6 +117,7 @@ func (container interceptContainer) yaml(image string) string {
 type interceptPod struct {
 	name, namespace string
 	annotations     string // YAML, indented under metadata
+	labels          string // YAML, indented under metadata
 	spec            string // YAML lines at the pod spec's level
 	initContainers  []interceptContainer
 	containers      []interceptContainer
@@ -148,6 +149,9 @@ func (c cluster) interceptManifest(pod interceptPod) string {
 
 	// kubectl exec and logs then pick the pod's own container, not the sidecar.
 	annotations := "  annotations:\n    kubectl.kubernetes.io/default-container: main\n" + pod.annotations
+	if pod.labels != "" {
+		annotations += "  labels:\n" + pod.labels
+	}
 
 	// The storage host is not one of the three intercepted names; it reaches
 	// the fake directly, as GitHub's storage hosts are reached directly.
@@ -234,8 +238,22 @@ spec:
       proxy:
         enabled: true
         pushRefs: [refs/heads/agent/**, refs/tags/v-*]
+---
+apiVersion: githubgate.soliddowant.dev/v1alpha1
+kind: GitHubAccessPolicy
+metadata: {name: intercept, namespace: %[2]s}
+spec:
+  serviceAccounts: [%[4]s]
+  rules:
+    - name: proxy
+      installationRef: {namespace: %[5]s, name: acme}
+      repositories: [%[6]s]
+      permissions: {contents: read}
+      proxy:
+        enabled: true
 `, interceptNamespace, plainNamespace, downNamespace, interceptAccount, gateNamespace, repository))
 	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", interceptNamespace, "githubaccesspolicy/intercept", "--timeout=2m")
+	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", plainNamespace, "githubaccesspolicy/intercept", "--timeout=2m")
 
 	// Names a rerun on the same cluster must not collide with.
 	run := time.Now().UnixNano()
@@ -372,6 +390,31 @@ echo cloned
 			assert.Empty(t, c.initContainerNames(t, interceptNamespace, "opt-out"))
 			assert.Empty(t, c.kubectl(t, "", "get", "pod", "-n", interceptNamespace, "opt-out", "-o", "jsonpath={.spec.containers[0].env}"))
 		})
+	})
+
+	t.Run("a pod opted in by its own label with a listen annotation is intercepted on that address", func(t *testing.T) {
+		// Another loopback address stands in for a KubeVirt launcher pod's
+		// guest gateway.
+		const listenIP = "127.43.0.2"
+
+		c.startInterceptPod(t, interceptPod{
+			name: "pod-label", namespace: plainNamespace,
+			labels:      "    githubgate.soliddowant.dev/inject: \"true\"\n",
+			annotations: "    githubgate.soliddowant.dev/listen: \"" + listenIP + ":443\"\n",
+			containers:  []interceptContainer{{name: "main", script: "sleep infinity"}},
+		})
+
+		names := c.initContainerNames(t, plainNamespace, "pod-label")
+		require.NotEmpty(t, names)
+		assert.Equal(t, "githubgate-intercept", names[0])
+		assert.Contains(t, c.kubectl(t, "", "get", "pod", "-n", plainNamespace, "pod-label", "-o", "jsonpath={.spec.hostAliases}"), `"ip":"`+listenIP+`"`)
+
+		out, err := c.exec(ctx, plainNamespace, "pod-label", fmt.Sprintf(`set -e
+grep api.github.com /etc/hosts
+curl -sS -w '\nstatus=%%{http_code}' https://api.github.com/repos/%s/%s`, owner, repository))
+		require.NoError(t, err, out)
+		assert.Contains(t, out, listenIP)
+		assert.Contains(t, out, "status=200")
 	})
 
 	t.Run("a pod that cannot be intercepted safely is rejected naming the reason", func(t *testing.T) {

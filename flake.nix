@@ -7,30 +7,7 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
-    {
-      nixosModules.githubgate-client = import ./nix/githubgate-client-module.nix;
-
-      # A NixOS configuration that uses the module. Only its evaluated
-      # settings are used (the container test reads them with `nix eval`), so
-      # it never builds.
-      nixosConfigurations.githubgate-test-vm = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          self.nixosModules.githubgate-client
-          ({ pkgs, ... }: {
-            boot.isContainer = true;
-            system.stateVersion = "25.05";
-            services.githubgate-client = {
-              enable = true;
-              package = pkgs.writeShellScriptBin "githubgate-client" "";
-              proxyAddress = "10.96.0.50:443";
-              proxyCA = "/var/run/githubgate-proxy/ca.crt";
-              extraCA = "/var/run/githubgate-extra/ca.crt";
-            };
-          })
-        ];
-      };
-    } // flake-utils.lib.eachDefaultSystem (system:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
 

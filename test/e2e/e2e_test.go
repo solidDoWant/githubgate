@@ -1003,10 +1003,6 @@ if [ -n "$(git ls-remote origin refs/heads/outside)" ]; then echo "outside reach
 		assert.Contains(t, out, `ref "refs/heads/outside" is outside pushRefs`)
 	})
 
-	t.Run("a VM workspace configured by the NixOS module reaches the proxy with gh, git and curl", func(t *testing.T) {
-		c.vmWorkspaceScenarios(ctx, t)
-	})
-
 	t.Run("killing a replica during a stream of proxied requests fails no request beyond the one in flight", func(t *testing.T) {
 		killDuringStream(t, "ci-proxied", fmt.Sprintf(
 			`curl -sSf --cacert /var/run/secrets/githubgate-proxy/ca.crt -H "Authorization: token $(cat /var/run/secrets/githubgate/token)" https://api.github.com/repos/%s/%s`,

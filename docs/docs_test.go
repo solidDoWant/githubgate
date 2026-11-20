@@ -111,7 +111,7 @@ func TestUserPageCoversInterceptionOptInAndPodChanges(t *testing.T) {
 	}
 }
 
-func TestAdminPageCoversInjectionWebhookAndNixModule(t *testing.T) {
+func TestAdminPageCoversInjectionWebhookAndVMSetup(t *testing.T) {
 	pages := markdownFiles(t, "admin")
 	for _, term := range []string{
 		"inject.enabled",
@@ -119,8 +119,11 @@ func TestAdminPageCoversInjectionWebhookAndNixModule(t *testing.T) {
 		"inject.proxyAddress",
 		"inject.proxyCAConfigMap",
 		"inject.extraCAConfigMap",
-		"nixosModules.githubgate-client",
 		"extraCA",
+		"githubgate.soliddowant.dev/listen",
+		"containerPath",
+		"/etc/hosts",
+		"10.0.2.1",
 		"failurePolicy: Fail",
 	} {
 		assert.True(t, anyPage(pages, func(page string) bool { return strings.Contains(page, term) }), "%q missing on an admin page", term)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -25,6 +26,12 @@ const (
 	InjectAnnotation = "githubgate.soliddowant.dev/inject"
 	// InjectedAnnotation marks a pod the webhook has mutated.
 	InjectedAnnotation = "githubgate.soliddowant.dev/injected"
+
+	// ListenAnnotation on a pod sets the interceptor's listen address,
+	// "<IP>:443", in place of DefaultListen.
+	ListenAnnotation = "githubgate.soliddowant.dev/listen"
+	// DefaultListen is the interceptor's own loopback address.
+	DefaultListen = "127.43.0.1:443"
 
 	// SidecarName is the interceptor's container name.
 	SidecarName = "githubgate-intercept"
@@ -179,6 +186,11 @@ func (h *Handler) Handle(ctx context.Context, request admission.Request) admissi
 		return admission.Denied(denial)
 	}
 
+	listen, reason := listenAddress(&pod)
+	if reason != "" {
+		return admission.Denied(rejectPrefix + reason)
+	}
+
 	injected := pod.Annotations[InjectedAnnotation] == "true"
 
 	var prior *corev1.Container
@@ -187,7 +199,7 @@ func (h *Handler) Handle(ctx context.Context, request admission.Request) admissi
 		// Drop what an earlier run added, so the checks see only what
 		// others set and the changes below rebuild it.
 		prior = findSidecar(&pod)
-		removeOwn(&pod)
+		removeOwn(&pod, listen)
 	}
 
 	if reason := reject(&pod, injected); reason != "" {
@@ -199,7 +211,7 @@ func (h *Handler) Handle(ctx context.Context, request admission.Request) admissi
 		return admission.Denied(rejectPrefix + reason)
 	}
 
-	mutate(&pod, h.config, proxyCA, extraCA, extraConfigMap, joins)
+	mutate(&pod, h.config, listen, proxyCA, extraCA, extraConfigMap, joins)
 
 	mutated, err := json.Marshal(&pod)
 	if err != nil {
@@ -239,8 +251,28 @@ func (h *Handler) namespaceExtraCA(ctx context.Context, namespace string) (name,
 	return name, ""
 }
 
-func ownAlias(alias corev1.HostAlias) bool {
-	return alias.IP == "127.0.0.1" && slices.Equal(alias.Hostnames, githubHosts)
+// listenAddress returns the interceptor's listen address from the pod's
+// annotation, or the default, or why the annotation is refused: it must be
+// a specific IP (anything that reaches an unspecified one could make
+// requests as the pod's ServiceAccount) with port 443.
+func listenAddress(pod *corev1.Pod) (netip.AddrPort, string) {
+	value, set := pod.Annotations[ListenAnnotation]
+	if !set {
+		return netip.MustParseAddrPort(DefaultListen), ""
+	}
+
+	addrPort, err := netip.ParseAddrPort(value)
+	if err != nil || addrPort.Port() != privilegedPortLimit || addrPort.Addr().IsUnspecified() || addrPort.Addr().Zone() != "" {
+		return netip.AddrPort{}, fmt.Sprintf("the %s annotation %q isn't a specific IP with port 443", ListenAnnotation, value)
+	}
+
+	return addrPort, ""
+}
+
+func ownAlias(listen netip.AddrPort) func(corev1.HostAlias) bool {
+	return func(alias corev1.HostAlias) bool {
+		return alias.IP == listen.Addr().String() && slices.Equal(alias.Hostnames, githubHosts)
+	}
 }
 
 // ownTrustValue reports whether name=value is one the webhook sets.
@@ -258,8 +290,8 @@ func ownTrustValue(name, value string) bool {
 // the host alias, so a reinvocation starts from what others left. The
 // sidecar and its volumes stay for the sidecar-presence check; mutate
 // replaces them.
-func removeOwn(pod *corev1.Pod) {
-	pod.Spec.HostAliases = slices.DeleteFunc(pod.Spec.HostAliases, ownAlias)
+func removeOwn(pod *corev1.Pod, listen netip.AddrPort) {
+	pod.Spec.HostAliases = slices.DeleteFunc(pod.Spec.HostAliases, ownAlias(listen))
 
 	strip := func(container *corev1.Container) {
 		container.Env = slices.DeleteFunc(container.Env, func(env corev1.EnvVar) bool {
@@ -375,10 +407,10 @@ func hasSidecar(containers []corev1.Container) bool {
 	return slices.ContainsFunc(containers, func(container corev1.Container) bool { return container.Name == SidecarName })
 }
 
-func mutate(pod *corev1.Pod, config Config, proxyCA, extraCA, extraConfigMap string, joins []join) {
+func mutate(pod *corev1.Pod, config Config, listen netip.AddrPort, proxyCA, extraCA, extraConfigMap string, joins []join) {
 	spec := &pod.Spec
 
-	spec.HostAliases = append(spec.HostAliases, corev1.HostAlias{IP: "127.0.0.1", Hostnames: slices.Clone(githubHosts)})
+	spec.HostAliases = append(spec.HostAliases, corev1.HostAlias{IP: listen.Addr().String(), Hostnames: slices.Clone(githubHosts)})
 
 	if spec.SecurityContext == nil {
 		spec.SecurityContext = &corev1.PodSecurityContext{}
@@ -399,7 +431,7 @@ func mutate(pod *corev1.Pod, config Config, proxyCA, extraCA, extraConfigMap str
 		prepare(&spec.Containers[index], joins)
 	}
 
-	spec.InitContainers = append([]corev1.Container{sidecar(config, proxyCA, extraCA, extraConfigMap, joins)}, spec.InitContainers...)
+	spec.InitContainers = append([]corev1.Container{sidecar(config, listen, proxyCA, extraCA, extraConfigMap, joins)}, spec.InitContainers...)
 
 	spec.Volumes = slices.DeleteFunc(spec.Volumes, func(volume corev1.Volume) bool { return slices.Contains(reservedNames, volume.Name) })
 	spec.Volumes = append(spec.Volumes, volumes(config, extraConfigMap)...)
@@ -495,7 +527,7 @@ func volumes(config Config, extraConfigMap string) []corev1.Volume {
 	return all
 }
 
-func sidecar(config Config, proxyCA, extraCA, extraConfigMap string, joins []join) corev1.Container {
+func sidecar(config Config, listen netip.AddrPort, proxyCA, extraCA, extraConfigMap string, joins []join) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: envProxyAddress, Value: config.ProxyAddress},
 		{Name: envProxyCA, Value: proxyCA},
@@ -506,6 +538,14 @@ func sidecar(config Config, proxyCA, extraCA, extraConfigMap string, joins []joi
 	}
 
 	args := []string{"intercept"}
+	probe := []string{"/githubgate-client", "intercept", "--probe"}
+
+	// The interceptor's own default is DefaultListen; only another address is passed.
+	if listen.String() != DefaultListen {
+		args = append(args, "--listen", listen.String())
+		probe = append(probe, "--listen", listen.String())
+	}
+
 	mounts := []corev1.VolumeMount{
 		{Name: tokenVolume, MountPath: tokenDir, ReadOnly: true},
 		{Name: stateVolume, MountPath: stateDir},
@@ -533,7 +573,7 @@ func sidecar(config Config, proxyCA, extraCA, extraConfigMap string, joins []joi
 		Env:           env,
 		RestartPolicy: &always,
 		StartupProbe: &corev1.Probe{
-			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/githubgate-client", "intercept", "--probe"}}},
+			ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: probe}},
 			PeriodSeconds:    1,
 			FailureThreshold: 30,
 		},

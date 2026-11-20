@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultInterceptListen    = "127.0.0.1:443"
+	defaultInterceptListen    = intercept.DefaultListen
 	defaultInterceptTokenFile = "/var/run/secrets/githubgate/token"
 	defaultTrustDir           = "/var/run/githubgate/trust"
 	defaultStateDir           = "/var/run/githubgate/state"
@@ -64,6 +64,10 @@ func runIntercept(ctx context.Context, env *environment, args []string) error {
 
 	if flags.NArg() != 0 {
 		return errors.New("intercept takes no arguments")
+	}
+
+	if _, err := intercept.ListenAddress(*listen); err != nil {
+		return fmt.Errorf("--listen: %w", err)
 	}
 
 	if *probe {
@@ -137,7 +141,5 @@ func (e *environment) listener(ctx context.Context, address string) (net.Listene
 		return e.listen(ctx, address)
 	}
 
-	var config net.ListenConfig
-
-	return config.Listen(ctx, "tcp", address)
+	return intercept.Listen(ctx, address)
 }

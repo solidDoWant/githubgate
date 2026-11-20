@@ -19,7 +19,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 6. A pod in a namespace without the label, or with the opt-out annotation in an opted-in namespace, is created unchanged.
    Tests: `test/e2e: TestInterceptionOnKind/namespaces and pods that are not intercepted/a pod in a namespace without the label is created unchanged`, `test/e2e: TestInterceptionOnKind/namespaces and pods that are not intercepted/a pod with the opt-out annotation in an opted-in namespace is created unchanged`
 7. A pod in an opted-in namespace that can't be intercepted safely (host network, its own `hostAliases` for the GitHub hosts, or a CA variable pointing at a file githubgate can't read) is rejected with a message naming the reason; a pod whose container sets a CA variable to a file in a mounted volume runs, trusting both its own CA and the pod's.
-   Tests: `test/e2e: TestInterceptionOnKind/a pod that cannot be intercepted safely is rejected naming the reason`
+   Tests: `test/e2e: TestInterceptionOnKind/a pod that cannot be intercepted safely is rejected naming the reason`, `test/e2e: TestInterceptionOnKind/a pod whose CA variable points into a mounted volume runs and trusts both CAs`
 8. While the injection webhook is unavailable, pods in opted-in namespaces are not created (fail closed), and pods elsewhere are created as usual.
    Tests: `test/e2e: TestInterceptionOnKind/pods are not created while the injection webhook is unavailable`
 9. The pod's first GitHub request succeeds: the interception is ready before the pod's own containers start.

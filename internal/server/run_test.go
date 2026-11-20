@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -219,4 +220,83 @@ func TestRunShutsDownGracefullyAfterTheShutdownDelay(t *testing.T) {
 
 	_, err := net.Dial("tcp", r.api)
 	require.Error(t, err)
+}
+
+func TestRunClosesIdleConnectionsAndRefusesExcessOnes(t *testing.T) {
+	f := newFixture(t)
+	certFile, keyFile := writeCertificate(t, t.TempDir(), 1)
+
+	apiListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	healthListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() {
+		done <- f.server.Run(ctx, server.RunOptions{
+			API: apiListener, Health: healthListener, CertFile: certFile, KeyFile: keyFile,
+			Gatherer: prometheus.NewRegistry(), ReadTimeout: 8 * time.Second, IdleTimeout: 500 * time.Millisecond, MaxConnections: 3,
+		})
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		assert.NoError(t, <-done)
+	})
+
+	// closed reports whether the server closes a plain connection within the deadline.
+	closed := func(connection net.Conn, within time.Duration) bool {
+		require.NoError(t, connection.SetReadDeadline(time.Now().Add(within)))
+
+		_, err := connection.Read(make([]byte, 1))
+
+		return !errors.Is(err, os.ErrDeadlineExceeded)
+	}
+
+	// Idle health connection after a request is closed.
+	idle, err := net.Dial("tcp", healthListener.Addr().String())
+	require.NoError(t, err)
+
+	defer func() { _ = idle.Close() }()
+
+	_, err = idle.Write([]byte("GET /healthz HTTP/1.1\r\nHost: x\r\n\r\n"))
+	require.NoError(t, err)
+
+	buffer := make([]byte, 4096)
+	_, err = idle.Read(buffer)
+	require.NoError(t, err)
+	assert.True(t, closed(idle, 4*time.Second), "idle keep-alive connection stays open")
+
+	// Connections over the limit are closed at once while the held ones stay.
+	held := make([]net.Conn, 3)
+	for index := range held {
+		held[index], err = net.Dial("tcp", apiListener.Addr().String())
+		require.NoError(t, err)
+
+		defer func() { _ = held[index].Close() }()
+	}
+
+	require.Eventually(t, func() bool {
+		extra, err := net.Dial("tcp", apiListener.Addr().String())
+		if err != nil {
+			return false
+		}
+
+		defer func() { _ = extra.Close() }()
+
+		return closed(extra, 2*time.Second)
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Held connections that never send anything are closed too, which frees
+	// the slots for a real caller.
+	require.Eventually(t, func() bool {
+		connection, err := tls.Dial("tcp", apiListener.Addr().String(), &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test
+		if err != nil {
+			return false
+		}
+
+		return connection.Close() == nil
+	}, 20*time.Second, 50*time.Millisecond)
 }

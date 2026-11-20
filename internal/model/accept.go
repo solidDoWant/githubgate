@@ -116,8 +116,17 @@ func Admits(allowed githubgatev1alpha1.AllowedNamespaces, ownNamespace, namespac
 }
 
 func invalidRule(rule githubgatev1alpha1.AccessRule) string {
-	if rule.Token == nil || !rule.Token.Enabled {
+	token := rule.Token != nil && rule.Token.Enabled
+	if !token && (rule.Proxy == nil || !rule.Proxy.Enabled) {
 		return "the rule enables no mode"
+	}
+
+	if token && hasProxyLists(rule.Proxy) {
+		return "proxy.pushRefs and the proxy operation and mutation lists need token mode off"
+	}
+
+	if field, message := InvalidProxyMode(rule.Proxy); field != "" {
+		return field + ": " + message
 	}
 
 	if message := invalidPermissionSet(rule.Repositories, rule.Permissions); message != "" {

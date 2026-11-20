@@ -75,6 +75,10 @@ type Rule struct {
 	Installation *Installation
 	Repositories []string
 	Permissions  map[string]permissions.Level
+	// Token is whether the rule enables token mode.
+	Token bool
+	// Proxy is the rule's proxy mode, or nil when it doesn't enable it.
+	Proxy *ProxyRule
 }
 
 // PolicyRule is the acceptance decision on one rule of a policy.
@@ -373,6 +377,8 @@ func buildPolicy(object *githubgatev1alpha1.GitHubAccessPolicy, snapshot *Snapsh
 			Installation: installation,
 			Repositories: grant.Repositories,
 			Permissions:  grant.Permissions,
+			Token:        rule.Token != nil && rule.Token.Enabled,
+			Proxy:        proxyRuleOf(rule.Proxy),
 		})
 	}
 

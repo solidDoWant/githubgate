@@ -88,6 +88,101 @@ spec:
                         levels.
                       minProperties: 1
                       type: object
+                    proxy:
+                      description: Proxy configures proxy mode.
+                      properties:
+                        allowMutations:
+                          description: |-
+                            AllowMutations, when set, are the only GraphQL mutations allowed.
+                            At most 256.
+                          items:
+                            description: |-
+                              MutationPattern is a GitHub GraphQL mutation name, such as
+                              `mergePullRequest`, or a pattern of them. A `*` matches one or more
+                              characters.
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[A-Za-z0-9*]+$
+                            type: string
+                          maxItems: 256
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        allowOperations:
+                          description: |-
+                            AllowOperations, when set, are the only REST operations allowed.
+                            At most 256.
+                          items:
+                            description: |-
+                              OperationPattern is a GitHub REST operation id, such as
+                              `repos/create-release`, or a pattern of them. A `*` matches one or more
+                              characters within one segment.
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[a-z0-9*/-]+$
+                            type: string
+                          maxItems: 256
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        denyMutations:
+                          description: |-
+                            DenyMutations are GraphQL mutations that are refused. Deny wins over
+                            allow. At most 256.
+                          items:
+                            description: |-
+                              MutationPattern is a GitHub GraphQL mutation name, such as
+                              `mergePullRequest`, or a pattern of them. A `*` matches one or more
+                              characters.
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[A-Za-z0-9*]+$
+                            type: string
+                          maxItems: 256
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        denyOperations:
+                          description: |-
+                            DenyOperations are REST operations that are refused. Deny wins over
+                            allow. At most 256.
+                          items:
+                            description: |-
+                              OperationPattern is a GitHub REST operation id, such as
+                              `repos/create-release`, or a pattern of them. A `*` matches one or more
+                              characters within one segment.
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[a-z0-9*/-]+$
+                            type: string
+                          maxItems: 256
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        enabled:
+                          description: Enabled turns proxy mode on for the rule. It
+                            has no default.
+                          type: boolean
+                        pushRefs:
+                          description: PushRefs, when set, are the only refs a request
+                            may write. At most 256.
+                          items:
+                            description: |-
+                              RefPattern is a git ref, or a pattern of refs, starting with `refs/`. A `*`
+                              matches one or more characters within one segment; a `**` segment matches
+                              one or more whole segments. The webhook also rejects what
+                              `git check-ref-format` refuses, such as `..` and `@{`.
+                            maxLength: 255
+                            minLength: 6
+                            pattern: ^refs/[^\x00-\x20\x7f~^:?\[\\]+$
+                            type: string
+                          maxItems: 256
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - enabled
+                      type: object
                     repositories:
                       description: |-
                         Repositories are names or `*` globs under the installation's owner.
@@ -119,11 +214,18 @@ spec:
                   - name
                   - permissions
                   - repositories
-                  - token
                   type: object
                   x-kubernetes-validations:
                   - message: at least one mode must be enabled
-                    rule: has(self.token) && self.token.enabled
+                    rule: (has(self.token) && self.token.enabled) || (has(self.proxy)
+                      && self.proxy.enabled)
+                  - message: 'proxy.pushRefs and the proxy operation and mutation
+                      lists need token mode off: a token in the caller''s hands can''t
+                      enforce them'
+                    rule: '!(has(self.token) && self.token.enabled) || !has(self.proxy)
+                      || !(has(self.proxy.pushRefs) || has(self.proxy.allowOperations)
+                      || has(self.proxy.denyOperations) || has(self.proxy.allowMutations)
+                      || has(self.proxy.denyMutations))'
                 maxItems: 256
                 type: array
                 x-kubernetes-list-map-keys:

@@ -16,13 +16,21 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/solidDoWant/githubgate/test/fakegithub"
 )
+
+// slicesCompactSorted returns the distinct values of items.
+func slicesCompactSorted(items []string) []string {
+	return slices.Compact(slices.Sorted(slices.Values(items)))
+}
 
 // Pinned images of cert-manager, which the chart needs for its certificates.
 // Each is the repository, the tag and the digest.
@@ -38,6 +46,7 @@ const (
 	appID           = 4242
 	owner           = "acme"
 	repository      = "project"
+	otherRepository = "private"
 	clientBinary    = "/opt/client/githubgate-client"
 	fakeAPI         = "http://fakegithub.fake.svc:8080"
 	gateNamespace   = "githubgate"
@@ -220,6 +229,7 @@ func (c cluster) configure(t *testing.T) string {
 	c.control(t, "/apps", map[string]any{"id": appID, "name": "e2e", "public_key_pem": publicKeyPEM(t, key)})
 	c.control(t, "/installations", map[string]any{"id": 1, "app_id": appID, "owner": owner, "permissions": map[string]string{"contents": "write"}})
 	c.control(t, "/repositories", map[string]any{"owner": owner, "name": repository})
+	c.control(t, "/repositories", map[string]any{"owner": owner, "name": otherRepository})
 
 	c.kubectl(t, keyPEM, "create", "secret", "generic", "app-key", "-n", gateNamespace, "--from-file=private-key.pem=/dev/stdin")
 	c.apply(t, fmt.Sprintf(`
@@ -260,6 +270,18 @@ spec:
 ---
 apiVersion: githubgate.soliddowant.dev/v1alpha1
 kind: GitHubAccessPolicy
+metadata: {name: ci-client, namespace: %[2]s}
+spec:
+  serviceAccounts: [ci-client]
+  rules:
+    - name: write
+      installationRef: {namespace: %[1]s, name: acme}
+      repositories: [%[5]s]
+      permissions: {contents: write}
+      token: {enabled: true}
+---
+apiVersion: githubgate.soliddowant.dev/v1alpha1
+kind: GitHubAccessPolicy
 metadata: {name: ci-release, namespace: %[2]s}
 spec:
   serviceAccounts: [ci-release]
@@ -275,7 +297,7 @@ spec:
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", gateNamespace, kind, "--timeout=2m")
 	}
 
-	for _, policy := range []string{"ci-build", "ci-release"} {
+	for _, policy := range []string{"ci-build", "ci-release", "ci-client"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", callerNamespace, "githubaccesspolicy/"+policy, "--timeout=2m")
 	}
 
@@ -336,7 +358,7 @@ func TestTokenModeOnKind(t *testing.T) {
 	ca := c.kubectl(t, "", "get", "configmap", "githubgate-ca", "-n", gateNamespace, "-o", "jsonpath={.data.ca\\.crt}")
 	c.kubectl(t, ca, "create", "configmap", "githubgate-ca", "-n", callerNamespace, "--from-file=ca.crt=/dev/stdin")
 
-	for _, name := range []string{"ci-build", "ci-release"} {
+	for _, name := range []string{"ci-build", "ci-release", "ci-client"} {
 		c.startCallerPod(t, name)
 	}
 
@@ -417,6 +439,125 @@ done`, clientBinary, repository)
 		assert.LessOrEqual(t, failures, 1, "at most the request in flight may fail; errors: %s", out)
 	})
 
+	// This runs before the git subtests: the ServiceAccount has no cached token
+	// on any of the three replicas yet, so every token the gh calls get is minted
+	// with the short lifetime.
+	t.Run("gh calls succeed with a fresh token each time after the token's lifetime has passed", func(t *testing.T) {
+		const secondsLeft = 60 // below the server's cache minimum, so a cached token is never reused
+
+		stub := `set -e
+mkdir -p /tmp/bin
+cat >/tmp/bin/gh <<'STUB'
+#!/bin/bash
+echo "$GH_TOKEN" >>/tmp/gh-tokens
+exit 0
+STUB
+chmod +x /tmp/bin/gh
+rm -f /tmp/gh-tokens
+`
+		out, err := c.exec(ctx, callerNamespace, "ci-client", stub)
+		require.NoError(t, err, out)
+
+		var before []fakegithub.MintEntry
+
+		c.controlGet(t, "/mint-log", &before)
+
+		// GitHub's tokens always live one hour. The server's cache runs on the real
+		// clock, so moving the fake's clock cannot make a token look old without the
+		// fake refusing the server's own App JWTs; a short lifetime stands in for
+		// "one hour has passed".
+		c.control(t, "/token-lifetime", map[string]any{"seconds": secondsLeft})
+		t.Cleanup(func() {
+			_, _ = c.tryKubectl(ctx, `{"seconds":0}`, "create", "--raw", "/api/v1/namespaces/fake/services/fakegithub:control/proxy/token-lifetime", "-f", "-")
+		})
+
+		gh := func(args string) {
+			out, err := c.exec(ctx, callerNamespace, "ci-client", fmt.Sprintf("PATH=/tmp/bin:$PATH %s gh --repo %s/%s -- %s", clientBinary, owner, repository, args))
+			require.NoError(t, err, out)
+		}
+
+		for range 2 {
+			gh("pr create --title t --body b")
+			gh("issue comment 1 --body hi")
+		}
+
+		out, err = c.exec(ctx, callerNamespace, "ci-client", "cat /tmp/gh-tokens")
+		require.NoError(t, err, out)
+
+		tokens := strings.Fields(out)
+		require.Len(t, tokens, 4, "every call reached gh")
+		assert.Len(t, slicesCompactSorted(tokens), 4, "each call after the lifetime ran out got a different token")
+
+		var after []fakegithub.MintEntry
+
+		c.controlGet(t, "/mint-log", &after)
+		assert.GreaterOrEqual(t, len(after)-len(before), 4, "the fake minted a token for every call")
+
+		var issued []fakegithub.IssuedToken
+
+		c.controlGet(t, "/tokens", &issued)
+
+		known := map[string]bool{}
+		for _, token := range issued[len(before):] {
+			known[token.Token] = true
+		}
+
+		for _, token := range tokens {
+			assert.True(t, known[token], "the token was minted after the lifetime was set")
+		}
+	})
+
+	// The client's git credential helper serves https://github.com, and the
+	// fake listens on plain http. git rewrites the URL before it asks for
+	// credentials, so a one-line wrapper maps the fake's host back to github.com
+	// for the real helper. Everything else is the documented setup.
+	gitSetup := fmt.Sprintf(`set -e
+cat >/tmp/credential-wrapper <<'WRAPPER'
+#!/bin/bash
+sed -e 's|^protocol=http$|protocol=https|' -e 's|^host=fakegithub.fake.svc:8080$|host=github.com|' | %[1]s git-credential "$@"
+WRAPPER
+chmod +x /tmp/credential-wrapper
+%[1]s configure
+git config --global url."http://fakegithub.fake.svc:8080/".insteadOf https://github.com/
+git config --global credential."http://fakegithub.fake.svc:8080".helper '!/tmp/credential-wrapper'
+git config --global credential."http://fakegithub.fake.svc:8080".useHttpPath true
+git config --global user.name e2e
+git config --global user.email e2e@example.com
+export GIT_TERMINAL_PROMPT=0
+`, clientBinary)
+
+	t.Run("git clone, fetch and push of an allowed repository work after configure", func(t *testing.T) {
+		script := gitSetup + fmt.Sprintf(`rm -rf /tmp/one /tmp/two
+git clone -q https://github.com/%[1]s/%[2]s.git /tmp/one
+git clone -q https://github.com/%[1]s/%[2]s.git /tmp/two
+cd /tmp/one
+git commit -q --allow-empty -m pushed-by-e2e
+git push -q origin HEAD:refs/heads/e2e-push
+sha=$(git rev-parse HEAD)
+cd /tmp/two
+git fetch -q origin
+test "$(git rev-parse origin/e2e-push)" = "$sha"
+git ls-remote https://github.com/%[1]s/%[2]s.git refs/heads/e2e-push | grep "^$sha"
+`, owner, repository)
+
+		out, err := c.exec(ctx, callerNamespace, "ci-client", script)
+		require.NoError(t, err, out)
+		clientOutput = append(clientOutput, out)
+	})
+
+	t.Run("git against a repository the policy does not allow fails and the client prints the reason", func(t *testing.T) {
+		script := gitSetup + fmt.Sprintf(`rm -rf /tmp/denied
+git clone https://github.com/%s/%s.git /tmp/denied 2>&1
+`, owner, otherRepository)
+
+		out, err := c.exec(ctx, callerNamespace, "ci-client", script)
+		require.Error(t, err, "the clone of a repository outside the policy must fail; output: %s", out)
+		clientOutput = append(clientOutput, out)
+		assert.Contains(t, out, "githubgate-client:", "the client prints its reason")
+		assert.Contains(t, out, otherRepository, "the reason names the repository")
+		assert.Contains(t, out, "fatal:", "git reports its own failure")
+	})
+
 	t.Run("no key or token appears in logs, events, status, metrics or errors", func(t *testing.T) {
 		var tokens []struct {
 			Token string `json:"token"`
@@ -435,7 +576,7 @@ done`, clientBinary, repository)
 			secrets = append(secrets, token.Token)
 		}
 
-		for _, pod := range []string{"ci-build", "ci-release"} {
+		for _, pod := range []string{"ci-build", "ci-release", "ci-client"} {
 			secrets = append(secrets, strings.TrimSpace(c.kubectl(t, "", "exec", "-n", callerNamespace, pod, "--", "cat", "/var/run/secrets/githubgate/token")))
 		}
 

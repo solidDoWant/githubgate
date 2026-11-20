@@ -19,6 +19,7 @@ func (s *Server) ControlHandler() http.Handler {
 	mux.HandleFunc("POST /installations/{id}/suspend", s.controlSuspend)
 	mux.HandleFunc("POST /repositories", s.controlCreateRepository)
 	mux.HandleFunc("POST /clock/advance", s.controlAdvanceClock)
+	mux.HandleFunc("POST /token-lifetime", s.controlSetTokenLifetime)
 	mux.HandleFunc("GET /mint-log", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.MintLog()) })
 	mux.HandleFunc("GET /tokens", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.Tokens()) })
 	mux.HandleFunc("GET /jwts", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.JWTs()) })
@@ -141,5 +142,17 @@ func (s *Server) controlAdvanceClock(writer http.ResponseWriter, request *http.R
 	}
 
 	s.AdvanceClock(time.Duration(body.Seconds) * time.Second)
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) controlSetTokenLifetime(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Seconds int64 `json:"seconds"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	s.SetTokenLifetime(time.Duration(body.Seconds) * time.Second)
 	writer.WriteHeader(http.StatusNoContent)
 }

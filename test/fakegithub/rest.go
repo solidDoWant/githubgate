@@ -214,7 +214,7 @@ func (s *Server) handleAccessTokens(writer http.ResponseWriter, request *http.Re
 		InstallationID: inst.ID,
 		Repositories:   append([]string{}, repoNames...),
 		Permissions:    perms,
-		ExpiresAt:      now.Add(tokenLifetime).UTC(),
+		ExpiresAt:      now.Add(s.tokenLifetime).UTC(),
 	}
 	s.tokens = append(s.tokens, issued)
 	s.mints = append(s.mints, MintEntry{InstallationID: inst.ID, Repositories: issued.Repositories, Permissions: perms, Time: now})

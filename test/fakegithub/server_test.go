@@ -341,6 +341,19 @@ func TestControlAPI(t *testing.T) {
 
 	status, _ := fix.do(t, http.MethodPost, "/app/installations/90/access_tokens", fix.goodJWT(t), nil)
 	assert.Equal(t, http.StatusNotFound, status, "the first app does not own installation 90")
+
+	lifetimeOf := func() time.Duration {
+		_, out := fix.mint(t, map[string]any{"repositories": []string{"one"}})
+		expires, err := time.Parse(time.RFC3339, out["expires_at"].(string))
+		require.NoError(t, err)
+
+		return time.Until(expires)
+	}
+
+	require.Equal(t, 204, post("/token-lifetime", map[string]any{"seconds": 60}))
+	assert.Less(t, lifetimeOf(), 2*time.Minute, "tokens minted after the call live the set time")
+	require.Equal(t, 204, post("/token-lifetime", map[string]any{"seconds": 0}))
+	assert.Greater(t, lifetimeOf(), 50*time.Minute, "zero restores the one hour default")
 }
 
 func wrap64(raw []byte) string {

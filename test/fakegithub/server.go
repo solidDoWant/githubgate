@@ -23,9 +23,14 @@ import (
 // Permission levels in increasing order of power.
 var levelRank = map[string]int{"read": 1, "write": 2, "admin": 3}
 
-// tokenLifetime is how long an installation token lives.
+// defaultTokenLifetime is how long an installation token lives. GitHub's
+// installation tokens always expire one hour after the mint (`expires_at`).
 // https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app
-const tokenLifetime = time.Hour
+//
+// SetTokenLifetime shortens it as a test-only stand-in for "one hour has
+// passed": a client whose cache runs on the real clock sees a token that is
+// about to expire, which moving the fake's clock cannot show.
+const defaultTokenLifetime = time.Hour
 
 // App is a registered GitHub App.
 type App struct {
@@ -83,6 +88,7 @@ type Server struct {
 	repos         map[string]*Repository
 	mints         []MintEntry
 	tokens        []IssuedToken
+	tokenLifetime time.Duration
 	jwts          []string
 }
 
@@ -103,6 +109,7 @@ func New(gitRoot string) (*Server, error) {
 		apps:          map[int64]*App{},
 		installations: map[int64]*Installation{},
 		repos:         map[string]*Repository{},
+		tokenLifetime: defaultTokenLifetime,
 	}, nil
 }
 
@@ -115,6 +122,19 @@ func (s *Server) Now() time.Time {
 }
 
 func (s *Server) nowLocked() time.Time { return time.Now().Add(s.offset) }
+
+// SetTokenLifetime sets the lifetime of the tokens minted from now on; a value
+// of zero or less restores the default of one hour.
+func (s *Server) SetTokenLifetime(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if d <= 0 {
+		d = defaultTokenLifetime
+	}
+
+	s.tokenLifetime = d
+}
 
 // AdvanceClock moves the fake's clock forward, for example to expire tokens.
 func (s *Server) AdvanceClock(d time.Duration) {

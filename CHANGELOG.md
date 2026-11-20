@@ -2,6 +2,32 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.4.0
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release adds a new mode to the client: a pod that uses interception can now publish commits that GitHub signs. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.4.0 --namespace githubgate --create-namespace
+```
+
+### Upgrade notes for admins
+
+None. Policies, chart values and clients of 0.3.1 work without a change.
+
+### Client (`git`, `gh`)
+
+- `githubgate-client push --intercepted` publishes your local commits so that GitHub signs them, in a pod with [interception](https://github.com/solidDoWant/githubgate/blob/master/docs/user/interception.md). The client sends its requests to `api.github.com` with no token, and the interceptor adds the ServiceAccount token of the pod. Your rule needs `contents: write`, and the branch must match its `pushRefs`. You cannot use `--intercepted` together with `--proxy`. Use it only in a pod that interception changed, because in other pods GitHub refuses the request. The details are in [the client](https://github.com/solidDoWant/githubgate/blob/master/docs/user/client.md). ([#212](https://github.com/solidDoWant/githubgate/pull/212))
+
+### Fixes
+
+- When the interceptor stops, it now waits for all of its work to end before it exits. Before, one part of it could still run for a short time after the stop. ([#208](https://github.com/solidDoWant/githubgate/pull/208))
+
+Internal work: CI gets its GitHub access from githubgate, through the interceptor, and a release now creates its GitHub release itself ([#209](https://github.com/solidDoWant/githubgate/pull/209), [#210](https://github.com/solidDoWant/githubgate/pull/210)).
+
+### Known issues
+
+None.
+
 ## 0.3.1
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This patch release changes how the Helm chart gets its TLS certificates. The chart no longer makes a CA key itself. cert-manager makes every certificate, or you give each certificate as a Secret. Install or upgrade with the Helm chart:

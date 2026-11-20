@@ -606,11 +606,22 @@ done`, request)
 		before := count("ok")
 
 		require.Eventually(t, func() bool {
-			out, _ := c.tryKubectl(ctx, "", "get", "deployment", "githubgate", "-n", gateNamespace, "-o", "jsonpath={.status.readyReplicas}")
+			// Read the pods themselves: the deployment's status can lag behind the deletion.
+			out, _ := c.tryKubectl(ctx, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate",
+				"-o", `jsonpath={range .items[*]}{.metadata.name}={.metadata.deletionTimestamp}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`)
 
-			names, _ := c.tryKubectl(ctx, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "-o", "jsonpath={.items[*].metadata.name}")
+			lines := strings.Fields(out)
+			if len(lines) != 3 {
+				return false
+			}
 
-			return strings.TrimSpace(out) == "3" && !strings.Contains(names, pods[0])
+			for _, line := range lines {
+				if strings.HasPrefix(line, pods[0]+"=") || !strings.HasSuffix(line, "==True") {
+					return false
+				}
+			}
+
+			return true
 		}, 3*time.Minute, time.Second)
 		require.Eventually(t, func() bool { return count("ok") >= before+10 }, 2*time.Minute, time.Second)
 

@@ -63,7 +63,7 @@ When the rule that allows a request has `pushRefs`, every ref the request writes
 |---|---|---|
 | `git/create-ref` | body `ref` | must match `pushRefs` |
 | `git/update-ref`, `git/delete-ref` | `refs/` + path `{ref}` | must match `pushRefs` |
-| `repos/create-release`, `repos/update-release` | `refs/tags/` + body `tag_name` (creates the tag if missing) | must match `pushRefs`; a body without `tag_name` on update writes nothing |
+| `repos/create-release`, `repos/update-release` | `refs/tags/` + body `tag_name` (creates the tag if missing) | must match `pushRefs`. On update without `tag_name`: refused if the body sets `draft` to `false` (publishing a draft creates its tag, which the proxy can't see without a lookup); otherwise it writes nothing |
 | `repos/create-or-update-file-contents`, `repos/delete-file` | `refs/heads/` + body `branch` (default branch if absent) | refused (the default branch can't be known without a lookup) |
 | `repos/merge`, `repos/rename-branch`, `repos/merge-upstream`, `pulls/merge`, `pulls/update-branch` | a branch | refused |
 | GraphQL `createRef`, `updateRef`, `updateRefs`, `deleteRef`, `createCommitOnBranch`, `mergeBranch`, `mergePullRequest`, `enablePullRequestAutoMerge`, `updatePullRequestBranch`, `revertPullRequest`, and every other mutation the table marks as writing refs | refs by node id | refused |
@@ -91,7 +91,7 @@ As phase 1: one `Authorization` header (`Bearer`, `token`, or Basic password = S
 
 Before anything is forwarded:
 
-1. **Refused outright** (`400`): methods `CONNECT`, `TRACE`, `OPTIONS`; any `Upgrade` header; method-override headers (`X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`) or a `_method` query or form field. A request `Content-Encoding` other than `identity` → `415`.
+1. **Refused outright** (`400`): methods `CONNECT`, `TRACE`, `OPTIONS`; any `Upgrade` header; method-override headers (`X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`) or a `_method` query or form field. A request `Content-Encoding` other than `identity` → `415`, with one exception: `gzip` is accepted on `git-upload-pack` (git compresses that body when it is over 1 KiB) and forwarded unchanged, because the proxy never reads that body to decide. Bodies the proxy reads to decide (GraphQL, the ref-writing REST operations, `git-receive-pack`) still get `415` for any encoding.
 2. **Path hygiene** (`400`): `.`/`..` segments, empty segments, `%2F`, `%5C`, percent-encoding of unreserved characters. Every query is parsed with `url.ParseQuery` and re-encoded; an unparseable query → `400`. The forwarded URL is rebuilt from the parsed parts.
 3. **Host `api.github.com`:** `POST /graphql` → GraphQL (below); anything else → REST: match the catalogue; unknown → `403 unknown_operation`.
 4. **Host `uploads.github.com`:** REST against the same catalogue.
@@ -178,7 +178,7 @@ Every proxied request runs against one snapshot and one token. What happens when
 ## Client changes
 
 - `configure --proxy`: sets `credential.https://github.com.helper` to `!githubgate-client git-credential --proxy` (answers `username=x-access-token` and the ServiceAccount token, read fresh; never calls the token API), and `http.https://github.com/.sslCAInfo` to the proxy CA file **only** (not added to the system bundle). A pod or VM that reaches the real github.com by mistake then fails TLS instead of sending the ServiceAccount token to GitHub.
-- `gh --proxy -- …`: runs `gh` with `GH_TOKEN` set to the ServiceAccount token and `SSL_CERT_FILE` set to the proxy CA only, for the same reason.
+- `gh --proxy -- …`: runs `gh` with `GH_TOKEN` set to the ServiceAccount token and `SSL_CERT_FILE` set to a bundle of the proxy CA **and** the system CAs, so `gh` can follow GitHub's redirects to its storage hosts (`codeload.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`) for downloads. Because the system CAs would also accept the real GitHub, `gh --proxy` first resolves `api.github.com`, `uploads.github.com` and `github.com` and refuses to run (naming the host) unless every address of each is the proxy's address (`GITHUBGATE_PROXY_ADDRESS`, set by the user guide's pod setup, or the addresses of the proxy Service's name `GITHUBGATE_PROXY_HOST`). A pod without the `hostAliases` then fails before any token is sent.
 
 ## Signed commits: `githubgate-client push [--proxy] [<remote> [<branch>]]`
 

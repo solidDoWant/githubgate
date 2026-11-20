@@ -16,25 +16,33 @@ For: admins who install githubgate with its Helm chart.
 | `fullnameOverride` | `""` | Override the full resource name. |
 | `adminNamespaces` | `[]` | Namespaces that may hold GitHubApp and GitHubInstallation objects, and whose Secrets githubgate may read. Defaults to the release namespace. |
 | `githubBaseURL` | `""` | GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double. |
-| `webhook.enabled` | `false` | Serve the validating admission webhook (needs cert-manager). |
+| `certManager.enabled` | `true` | Make the certificates with cert-manager: a self-signed Issuer, a name-constrained CA `Certificate` (Secret `<fullname>-ca`), and the serving certificates. Set to false to give every certificate as an existing Secret instead. |
+| `tls.existingSecret` | `""` | Name of an existing Secret (`tls.crt`, `tls.key`) with the token API's serving certificate. Required when `certManager.enabled` is false. |
+| `webhook.enabled` | `false` | Serve the validating admission webhook. |
 | `webhook.failurePolicy` | `Fail` | What the API server does when the webhook is unreachable. |
-| `inject.enabled` | `false` | Serve the mutating admission webhook that adds the interceptor sidecar to pods in labelled namespaces (needs cert-manager, `proxy.enabled` and `inject.proxyCAConfigMap`). |
+| `webhook.existingSecret` | `""` | Name of an existing Secret (`tls.crt`, `tls.key`) with the webhook server's certificate. Required when `certManager.enabled` is false and a webhook is on. |
+| `webhook.caBundle` | `""` | CA that signs the webhook server's certificate, as base64 PEM, for the webhooks' `caBundle`. Rendered only when set. Leave it empty when cainjector fills `caBundle`. |
+| `webhook.annotations` | `{}` | Annotations on the validating and mutating webhook configurations, for example `cert-manager.io/inject-ca-from`. |
+| `inject.enabled` | `false` | Serve the mutating admission webhook that adds the interceptor sidecar to pods in labelled namespaces. Needs `proxy.enabled` or `inject.proxyCAConfigMap`. |
 | `inject.image.repository` | `ghcr.io/soliddowant/githubgate-client` | Client image repository. The injected sidecar runs it. |
 | `inject.image.digest` | `""` | Client image digest (`sha256:...`). Required when `inject.enabled` is true. |
 | `inject.proxyAddress` | `""` | Address pods use for the proxy. Empty means `githubgate-proxy.<release namespace>.svc:443`. |
-| `inject.proxyCAConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds the CA that signs the proxy certificate. Required when `inject.enabled` is true. |
+| `inject.proxyCAConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds the CA that signs the proxy certificate. Empty means the `ca.crt` of the proxy certificate's Secret. |
 | `inject.extraCAConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds extra CA certificates for the injected pods. Empty means none. |
-| `proxy.enabled` | `false` | Serve proxy mode: a second TLS listener behind the `githubgate-proxy` Service (port 443). Needs cert-manager and `proxy.ca`. |
+| `proxy.enabled` | `false` | Serve proxy mode: a second TLS listener behind the `githubgate-proxy` Service (port 443). Needs `proxy.ca` or `proxy.existingSecret`. |
+| `proxy.existingSecret` | `""` | Name of an existing Secret (`tls.crt`, `tls.key`, `ca.crt`) with the proxy certificate. Required when `certManager.enabled` is false and `proxy.enabled` is true. |
 | `proxy.clusterIP` | `""` | Fixed cluster IP of the `githubgate-proxy` Service, so pods can name it in `hostAliases`. Empty means the cluster picks one. |
-| `proxy.ca.name` | `""` | Name of the cert-manager Issuer or ClusterIssuer that signs the proxy certificate. Use the admin's name-constrained CA (permitted subtree `github.com`). Required when `proxy.enabled` is true. |
+| `proxy.ca.name` | `""` | Name of the cert-manager Issuer or ClusterIssuer that signs the proxy certificate. Use the admin's name-constrained CA (permitted subtree `github.com`). Required when cert-manager makes the proxy certificate. |
 | `proxy.ca.kind` | `Issuer` | Kind of the issuer. |
 | `proxy.ca.group` | `cert-manager.io` | API group of the issuer. |
 | `proxy.upstreams.api` | `""` | Where proxied `api.github.com` requests go. Empty means `https://api.github.com`. |
 | `proxy.upstreams.uploads` | `""` | Where proxied `uploads.github.com` requests go. Empty means `https://uploads.github.com`. |
 | `proxy.upstreams.git` | `""` | Where proxied `github.com` git requests go. Empty means `https://github.com`. |
 | `proxy.upstreams.caConfigMap` | `""` | Name of a ConfigMap in the release namespace whose `ca.crt` holds extra CA certificates the upstreams may use. Empty means only the system CAs. |
-| `certificate.caConfigMapName` | `githubgate-ca` | Name of the ConfigMap that publishes the CA for clients. |
-| `certificate.caDurationDays` | `3650` | Validity of the generated CA, in days. |
+| `certificate.caConfigMap.create` | `false` | Create a ConfigMap that publishes the token API's CA for clients, filled from `certificate.caBundle`. |
+| `certificate.caConfigMap.name` | `githubgate-ca` | Name of that ConfigMap. |
+| `certificate.caBundle` | `""` | The token API's CA certificate, as PEM. Required when `certificate.caConfigMap.create` is true. |
+| `certificate.caDuration` | `87600h` | Validity of the CA that cert-manager makes. |
 | `certificate.duration` | `2160h` | Validity of the serving certificates. |
 | `certificate.renewBefore` | `720h` | How long before expiry cert-manager renews the serving certificates. |
 | `podDisruptionBudget.enabled` | `true` | Create a PodDisruptionBudget. |

@@ -9,7 +9,7 @@ githubgate gives your pod a GitHub token that is limited to the repositories and
 Ask your admin for these items:
 
 - A `GitHubAccessPolicy` in your namespace that names the ServiceAccount your pod runs as. The policy lists the repositories and permissions you get.
-- The address of githubgate and its certificate authority (CA). The certificate authority is the certificate that signs the githubgate server certificate. The chart publishes it in the ConfigMap `githubgate-ca`.
+- The address of githubgate and its certificate authority (CA). The certificate authority is the certificate that signs the githubgate server certificate. Your admin gives it to you in a ConfigMap, usually `githubgate-ca` in your namespace. If your admin changes the CA, restart your pods so that they read the new one.
 
 Your pod must mount the ServiceAccount token at `/var/run/secrets/githubgate/token` and the CA at `/var/run/secrets/githubgate/ca.crt`. The token must be a projected token with the audience that your admin configured for githubgate. If the address is not `https://githubgate.githubgate.svc:8443`, set `GITHUBGATE_URL`. See [the client](client.md) for all settings.
 

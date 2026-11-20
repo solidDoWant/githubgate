@@ -32,7 +32,7 @@ proxy:
     group: cert-manager.io
 ```
 
-The chart makes the Service `githubgate-proxy` (port 443) and a certificate for the three hosts. The proxy refuses a TLS connection for any other name. Set `proxy.upstreams.*` only to point at a test double or GitHub Enterprise Server. The [chart values](chart-values.md) page lists every value. The proxy listens on port 9443. If you also use the webhook, give one of them another port (see [Server flags](README.md#server-flags)).
+The chart makes the Service `githubgate-proxy` (port 443) and a cert-manager certificate for the three hosts. If you do not use cert-manager, make the certificate yourself and set `proxy.existingSecret` instead of `proxy.ca`. The Secret holds `tls.crt`, `tls.key` and `ca.crt` (see [Certificates](token-mode-setup.md#certificates)). The proxy refuses a TLS connection for any other name. Set `proxy.upstreams.*` only to point at a test double or GitHub Enterprise Server. The [chart values](chart-values.md) page lists every value. The proxy listens on port 9443. If you also use the webhook, give one of them another port (see [Server flags](README.md#server-flags)).
 
 ## 3. Give the CA to the tenants
 

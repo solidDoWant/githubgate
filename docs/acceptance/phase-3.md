@@ -34,7 +34,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Coder VM workspaces
 
 13. The NixOS module in this repository's flake sets up the guest service, the host names and the CA trust, and a VM-less test of the guest service (the same binary and settings in a container) passes scenarios 1–3 against the fake GitHub.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/a VM workspace configured by the NixOS module reaches the proxy with gh, git and curl`
 
 ## Live and docs
 

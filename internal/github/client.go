@@ -6,6 +6,7 @@ package github
 import (
 	"context"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -152,7 +153,7 @@ type installationCache struct {
 	group singleflight.Group
 
 	mu       sync.Mutex
-	byOwner  map[string]int64
+	byOwner  map[string]InstallationInfo
 	listedAt time.Time
 }
 
@@ -166,17 +167,50 @@ func (c *AppClient) InstallationID(ctx context.Context, owner string) (int64, er
 }
 
 func (c *AppClient) installationID(ctx context.Context, owner string, refresh bool) (int64, error) {
+	info, err := c.installation(ctx, owner, refresh)
+
+	return info.ID, err
+}
+
+// InstallationInfo is what GitHub says about one installation of the App.
+type InstallationInfo struct {
+	ID int64
+	// Permissions is the installation's grant.
+	Permissions map[string]string
+	Suspended   bool
+}
+
+// Installation returns the App's installation on owner, compared
+// case-insensitively, from the same listing InstallationID uses.
+func (c *AppClient) Installation(ctx context.Context, owner string) (InstallationInfo, error) {
+	return c.installation(ctx, owner, false)
+}
+
+// App returns the App's slug, as GitHub reports it.
+func (c *AppClient) App(ctx context.Context) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+
+	app, _, err := c.api.Apps.Get(callCtx, "")
+	if err != nil {
+		return "", classify(err, c.now())
+	}
+
+	return app.GetSlug(), nil
+}
+
+func (c *AppClient) installation(ctx context.Context, owner string, refresh bool) (InstallationInfo, error) {
 	key := strings.ToLower(owner)
 	cache := c.installations
 
 	cache.mu.Lock()
-	id, found := cache.byOwner[key]
+	info, found := cache.byOwner[key]
 	listed := cache.byOwner != nil
 	age := c.now().Sub(cache.listedAt)
 	cache.mu.Unlock()
 
 	if found && listed && age < installationTTL && !refresh {
-		return id, nil
+		return info, nil
 	}
 
 	// Listings are shared by concurrent callers and limited to one per
@@ -186,19 +220,19 @@ func (c *AppClient) installationID(ctx context.Context, owner string, refresh bo
 			return nil, c.listInstallations(context.WithoutCancel(ctx))
 		})
 		if err != nil {
-			return 0, err
+			return InstallationInfo{}, err
 		}
 	}
 
 	cache.mu.Lock()
-	id, found = cache.byOwner[key]
+	info, found = cache.byOwner[key]
 	cache.mu.Unlock()
 
 	if !found {
-		return 0, &Error{Reason: ReasonUnavailable, Message: "the App has no installation on " + owner, Condition: ConditionInstallationNotFound}
+		return InstallationInfo{}, &Error{Reason: ReasonUnavailable, Message: "the App has no installation on " + owner, Condition: ConditionInstallationNotFound}
 	}
 
-	return id, nil
+	return info, nil
 }
 
 func (c *AppClient) listInstallations(ctx context.Context) error {
@@ -212,7 +246,7 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 		return nil
 	}
 
-	byOwner := map[string]int64{}
+	byOwner := map[string]InstallationInfo{}
 	options := &gogithub.ListOptions{PerPage: 100}
 
 	for {
@@ -227,7 +261,12 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 
 		for _, installation := range page {
 			if login := installation.GetAccount().GetLogin(); login != "" {
-				byOwner[strings.ToLower(login)] = installation.GetID()
+				info := InstallationInfo{ID: installation.GetID(), Suspended: installation.SuspendedAt != nil}
+				if granted := installation.GetPermissions(); granted != nil {
+					info.Permissions = grantedPermissions(granted)
+				}
+
+				byOwner[strings.ToLower(login)] = info
 			}
 		}
 
@@ -244,4 +283,20 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 	cache.mu.Unlock()
 
 	return nil
+}
+
+// grantedPermissions flattens go-github's permissions struct to a map of
+// permission name to level through its JSON form, so names follow GitHub's.
+func grantedPermissions(granted *gogithub.InstallationPermissions) map[string]string {
+	raw, err := json.Marshal(granted)
+	if err != nil {
+		return nil
+	}
+
+	out := map[string]string{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+
+	return out
 }

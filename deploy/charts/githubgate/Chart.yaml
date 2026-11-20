@@ -2,5 +2,5 @@ apiVersion: v2
 name: githubgate
 description: Gives Kubernetes workloads limited GitHub access through GitHub Apps, by ServiceAccount, without handing them the App's private key.
 type: application
-version: 0.0.0
-appVersion: 0.0.0
+version: 0.1.0
+appVersion: 0.1.0

@@ -33,8 +33,9 @@ const (
 // The three GitHub names resolve to the container itself, where the
 // interceptor listens on port 443 and forwards to the in-process proxy.
 type workload struct {
-	name string
-	live *liveEnv
+	name    string
+	live    *liveEnv
+	network string
 }
 
 // authorizations remembers every Authorization header the proxy receives.
@@ -117,8 +118,8 @@ func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener stri
 		require.NoError(t, err, text)
 	}
 
-	// --add-host would resolve on the daemon's side too; /etc/hosts is edited in the container.
-	text, err = docker(t, "exec", name, "sh", "-c", "echo '"+hostsEntry()+"' >> /etc/hosts")
+	// --add-host would resolve on the daemon's side too; the names are set up in the container.
+	text, err = docker(t, "exec", name, "sh", "-c", hostsSetupCommand(network))
 	require.NoError(t, err, text)
 
 	_, port, ok := strings.Cut(proxyListener, ":")
@@ -127,10 +128,10 @@ func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener stri
 	text, err = docker(t, interceptExecArgs(name, network, port)...)
 	require.NoError(t, err, text)
 
-	w := &workload{name: name, live: l}
+	w := &workload{name: name, live: l, network: network}
 
 	require.Eventually(t, func() bool {
-		_, err := docker(t, "exec", name, workloadWork+"/"+clientBinary, "intercept", "--probe")
+		_, err := docker(t, append([]string{"exec", name}, inWorkload(network, workloadWork+"/"+clientBinary, "intercept", "--probe")...)...)
 
 		return err == nil
 	}, time.Minute, time.Second, "the interceptor never became ready")
@@ -151,8 +152,8 @@ func (w *workload) run(t *testing.T, dir, name string, args ...string) (string, 
 		"-e", "GH_TOKEN=githubgate", "-e", "GH_PROMPT_DISABLED=1", "-e", "GIT_TERMINAL_PROMPT=0",
 		"-e", "GIT_AUTHOR_NAME=githubgate live test", "-e", "GIT_AUTHOR_EMAIL=live-test@example.invalid",
 		"-e", "GIT_COMMITTER_NAME=githubgate live test", "-e", "GIT_COMMITTER_EMAIL=live-test@example.invalid",
-		w.name, name,
-	}, args...)
+		w.name,
+	}, inWorkload(w.network, append([]string{name}, args...)...)...)
 
 	out, err := docker(t, full...)
 	w.live.log.printf(t, "$ (container) %s %s\n%s", name, strings.Join(args, " "), out)

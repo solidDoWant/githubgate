@@ -37,6 +37,9 @@ type Decided struct {
 	// RefsUnknown is true when the request writes refs the proxy has not
 	// read (a git push), so a rule with pushRefs can't allow it.
 	RefsUnknown bool
+	// push is a git push's command section, kept to answer a refusal in
+	// git's protocol.
+	push *receiveCommands
 }
 
 // Decision is the outcome of deciding a request against the caller's rules.
@@ -280,6 +283,32 @@ func refusedBy(rule *model.Rule, request Decided) string {
 	}
 
 	return ""
+}
+
+// refusedRefs returns, for each ref of a refused push, why the push would
+// be refused if it wrote that ref alone. A ref that would be allowed alone
+// is left out; when every ref would be, the push is refused for what the
+// refs need together, and each ref gets that reason.
+func refusedRefs(rules []*model.Rule, request Decided) map[string]string {
+	reasons := map[string]string{}
+
+	for _, ref := range request.Refs {
+		alone := request
+		alone.Refs = []string{ref}
+
+		if decision := Decide(rules, alone); !decision.Allowed() {
+			reasons[ref] = decision.Message
+		}
+	}
+
+	if len(reasons) == 0 {
+		whole := Decide(rules, request)
+		for _, ref := range request.Refs {
+			reasons[ref] = whole.Message
+		}
+	}
+
+	return reasons
 }
 
 func refsRefused(proxy *model.ProxyRule, check operations.RefCheck, request Decided) string {

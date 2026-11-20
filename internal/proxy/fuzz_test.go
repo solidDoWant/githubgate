@@ -96,3 +96,54 @@ type acceptingAuthenticator struct{}
 func (acceptingAuthenticator) Authenticate(context.Context, *http.Request) (auth.Identity, error) {
 	return auth.Identity{Namespace: "ci-a", ServiceAccount: "builder"}, nil
 }
+
+// FuzzReceivePackCommands checks that whatever a push sends, it reaches
+// GitHub only unchanged and only when every ref it writes matches pushRefs;
+// anything else is refused with nothing forwarded.
+func FuzzReceivePackCommands(f *testing.F) {
+	for _, seed := range []string{
+		pushBody("report-status side-band-64k", "refs/heads/agent/x"),
+		pushBody("report-status", "refs/heads/agent/x", "refs/heads/master"),
+		pkt("shallow "+oldID+"\n", oldID+" "+newID+" refs/heads/agent/x\x00report-status") + flush + packData,
+		pkt("push-cert\x00report-status", "push-cert-end\n") + flush,
+		"zzzz", "", flush, "0004" + flush, "fff0",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, body string) {
+		forwarding := newForwardingProxy(t, agentRule())
+
+		response := serve(forwarding.handler, pushRequest(body))
+
+		received := forwarding.upstream.requests()
+		if len(received) == 0 {
+			return
+		}
+
+		if received[0].body != body {
+			t.Fatalf("the push reached GitHub changed: %q became %q", body, received[0].body)
+		}
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("a forwarded push answered %d", response.Code)
+		}
+
+		lines := forwarding.auditLines(t)
+		if len(lines) != 1 {
+			t.Fatalf("%d audit lines", len(lines))
+		}
+
+		refs, _ := lines[0]["refs"].([]any)
+		if len(refs) == 0 {
+			t.Fatalf("a push writing no known ref was forwarded: %q", body)
+		}
+
+		for _, ref := range refs {
+			name, _ := ref.(string)
+			if !strings.HasPrefix(name, "refs/heads/agent/") || !strings.Contains(body, name) {
+				t.Fatalf("ref %q outside pushRefs was forwarded", name)
+			}
+		}
+	})
+}

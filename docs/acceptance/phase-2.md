@@ -29,7 +29,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 11. `git clone` and `git fetch` of an allowed repository work from a proxied pod after `githubgate-client configure --proxy`.
     Tests:
 12. With `pushRefs: [refs/heads/agent/**]`, pushing `agent/x` works, while pushing `master` or a tag is refused with git showing githubgate's message naming the ref, and nothing reaches GitHub.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/with pushRefs a push to an allowed branch works and a push to master or a tag is refused naming the ref`, `internal/proxy: TestProxyForwardsAPushOfAllowedRefsUnchanged`, `internal/proxy: TestProxyRefusesAPushOutsidePushRefsInGitsProtocol`
 13. Uploading a release asset through `uploads.github.com` follows the same operation rules as the API.
     Tests: `test/e2e: TestTokenModeOnKind/a release asset upload follows the same operation rules as the API`, `internal/proxy: TestProxyRefusesRequestsOutsideTheRulesWithoutForwarding/a release asset upload outside allowOperations`
 14. Downloading a repository archive (a redirect to GitHub's storage) works from a proxied pod.

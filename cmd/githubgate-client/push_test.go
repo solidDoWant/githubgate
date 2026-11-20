@@ -435,3 +435,87 @@ func TestPushLeavesTheLocalBranchWhenTheTreesDiffer(t *testing.T) {
 	assert.Contains(t, out, gitIn(t, fix.work, "rev-parse", "HEAD^{tree}"))
 	assert.Equal(t, local, gitIn(t, fix.work, "rev-parse", "HEAD"))
 }
+
+func TestPushInterceptedSendsNoCredentialAndPublishes(t *testing.T) {
+	fix := newPushFixture(t)
+	gitIn(t, fix.work, "checkout", "-q", "-b", "feature")
+	fix.commit("new.txt", "new content\n", "add a file")
+
+	beforeTree := gitIn(t, fix.work, "rev-parse", "HEAD^{tree}")
+	token := fix.mintToken(fix.key)
+
+	// The hook plays the interceptor: it adds the credential the client lacks.
+	var sawCredential bool
+
+	fix.intercept = func(_ http.ResponseWriter, r *http.Request, _ []byte) bool {
+		fix.mu.Lock()
+		if r.Header.Get("Authorization") != "" {
+			sawCredential = true
+		}
+		fix.mu.Unlock()
+
+		r.Header.Set("Authorization", "Bearer "+token)
+
+		return false
+	}
+
+	// No token API and no ServiceAccount token: the client must not need them.
+	vars := map[string]string{"GITHUBGATE_GITHUB_API_URL": fix.api.URL}
+
+	out, _, err := runClient(t, vars, "", "push", "--intercepted", "origin", "feature")
+	require.NoError(t, err)
+	assert.Contains(t, out, "published 1 commit(s)")
+
+	tip := fix.remoteTip("feature")
+	assert.Equal(t, beforeTree, gitIn(t, fix.bare, "rev-parse", tip+"^{tree}"))
+	assert.Contains(t, gitIn(t, fix.bare, "log", "-1", "--format=%B", tip), "Co-authored-by: Ann Author <ann@example.com>")
+
+	fix.mu.Lock()
+	defer fix.mu.Unlock()
+
+	assert.False(t, sawCredential, "the client sends no Authorization header")
+
+	for _, request := range fix.requests {
+		if strings.HasSuffix(request.path, "/git/commits") {
+			assert.NotContains(t, request.body, "author")
+			assert.NotContains(t, request.body, "committer")
+		}
+	}
+}
+
+func TestPushInterceptedPrintsTheDenialAndPublishesNothing(t *testing.T) {
+	fix := newPushFixture(t)
+	gitIn(t, fix.work, "checkout", "-q", "-b", "feature")
+	fix.commit("new.txt", "new content\n", "add a file")
+
+	token := fix.mintToken(fix.key)
+
+	fix.intercept = func(w http.ResponseWriter, r *http.Request, _ []byte) bool {
+		r.Header.Set("Authorization", "Bearer "+token)
+
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"githubgate: ref refs/heads/feature is not allowed by pushRefs"}`))
+
+			return true
+		}
+
+		return false
+	}
+
+	vars := map[string]string{"GITHUBGATE_GITHUB_API_URL": fix.api.URL}
+
+	_, _, err := runClient(t, vars, "", "push", "--intercepted")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "403")
+	assert.Contains(t, err.Error(), "refs/heads/feature")
+	assert.Empty(t, gitIn(t, fix.bare, "for-each-ref", "refs/heads/feature"))
+}
+
+func TestPushRefusesProxyWithIntercepted(t *testing.T) {
+	fix := newPushFixture(t)
+
+	_, err := fix.push("--proxy", "--intercepted")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be used together")
+}

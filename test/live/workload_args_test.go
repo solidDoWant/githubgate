@@ -3,10 +3,14 @@
 package live_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // proxyListenAddress is where the in-process proxy listens: loopback when the
@@ -78,6 +82,19 @@ func inWorkload(network string, command ...string) []string {
 
 	return append([]string{"unshare", "-m", "sh", "-c",
 		"mount --bind " + workloadHostsFile + " /etc/hosts && exec \"$@\"", "sh"}, command...)
+}
+
+// workloadRuns holds each command's output and exit code in the container.
+const workloadRuns = workloadWork + "/runs"
+
+// recordedCommand wraps a command so its shell writes the command's
+// standard output to base.out, its standard error to base.err and, once the
+// command has ended, its exit code to base.rc. The exit code file appears
+// whole (written aside, then renamed), so a reader never sees half of it.
+func recordedCommand(base string, command ...string) []string {
+	script := `"$@" >"$0.out" 2>"$0.err"; echo $? >"$0.rc.tmp" && mv "$0.rc.tmp" "$0.rc"`
+
+	return append([]string{"sh", "-c", script, base}, command...)
 }
 
 // interceptLogFile holds the interceptor's output inside the container.
@@ -154,6 +171,21 @@ func TestWorkloadDockerArguments(t *testing.T) {
 			assert.Contains(t, start, shared)
 			assert.Contains(t, probe, "intercept --probe "+shared)
 		}
+	})
+
+	t.Run("a recorded command leaves its output and exit code in files once it ends", func(t *testing.T) {
+		base := filepath.Join(t.TempDir(), "1")
+		command := recordedCommand(base, "sh", "-c", "echo out; echo err >&2; exit 3")
+
+		require.NoError(t, exec.CommandContext(t.Context(), command[0], command[1:]...).Run())
+
+		for suffix, want := range map[string]string{".out": "out\n", ".err": "err\n", ".rc": "3\n"} {
+			got, err := os.ReadFile(base + suffix)
+			require.NoError(t, err)
+			assert.Equal(t, want, string(got), suffix)
+		}
+
+		assert.NoFileExists(t, base+".rc.tmp")
 	})
 
 	t.Run("hosts and listen address use the interceptor address and no bind mounts", func(t *testing.T) {

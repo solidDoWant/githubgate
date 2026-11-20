@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +41,9 @@ type workload struct {
 	name    string
 	live    *liveEnv
 	network string
+
+	mu   sync.Mutex
+	runs int
 }
 
 // authorizations remembers every Authorization header the proxy receives,
@@ -154,7 +159,7 @@ func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener stri
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 
 	// Nothing is bind mounted: the daemon may not see this machine's paths.
-	text, err = docker(t, "exec", name, "mkdir", "-p", workloadWork)
+	text, err = docker(t, "exec", name, "mkdir", "-p", workloadWork, workloadRuns)
 	require.NoError(t, err, text)
 
 	for _, file := range []string{clientBinary, "token", "proxy-ca.crt"} {
@@ -196,26 +201,85 @@ func (w *workload) run(t *testing.T, dir, name string, args ...string) (string, 
 	return w.runWithEnv(t, nil, dir, name, args...)
 }
 
-// runWithEnv is run with extra variables, each NAME=value.
+// runWithEnv is run with extra variables, each NAME=value. It returns the
+// command's standard output followed by its standard error.
 func (w *workload) runWithEnv(t *testing.T, env []string, dir, name string, args ...string) (string, error) {
 	t.Helper()
 
-	out, err := docker(t, w.execArgs(env, dir, name, args...)...)
-	w.live.log.printf(t, "$ (container) %s %s\n%s", name, strings.Join(args, " "), out)
+	stdout, stderr, err := w.runSplitOutput(t, env, dir, name, args...)
 
-	return out, err
+	return stdout + stderr, err
 }
 
-// runSplit is runWithEnv with the command's standard output and standard
-// error returned apart; it prints both and the exit code.
+// runSplit is runWithEnv with only the command's standard output returned.
 func (w *workload) runSplit(t *testing.T, env []string, dir, name string, args ...string) (string, error) {
 	t.Helper()
 
-	stdout, stderr, err := dockerSplit(t, w.execArgs(env, dir, name, args...)...)
-	w.live.log.printf(t, "$ (container) %s %s %s\nexit code %d\nstdout (%d bytes):\n%s\nstderr:\n%s",
-		strings.Join(env, " "), name, strings.Join(args, " "), exitCode(err), len(stdout), stdout, stderr)
+	stdout, _, err := w.runSplitOutput(t, env, dir, name, args...)
 
 	return stdout, err
+}
+
+// runSplitOutput runs a command in the container and returns what the
+// command itself wrote and how it exited, as recorded inside the container.
+// docker exec can return before the command ends (it then reports exit code
+// 0 and whatever output it had copied so far), so the result is read from
+// files the command's shell writes when the command has really finished.
+func (w *workload) runSplitOutput(t *testing.T, env []string, dir, name string, args ...string) (string, string, error) {
+	t.Helper()
+
+	w.mu.Lock()
+	w.runs++
+	base := fmt.Sprintf("%s/%d", workloadRuns, w.runs)
+	w.mu.Unlock()
+
+	recorded := recordedCommand(base, append([]string{name}, args...)...)
+
+	execOut, execErr, err := dockerSplit(t, w.execArgs(env, dir, recorded[0], recorded[1:]...)...)
+	if err != nil || execOut != "" || execErr != "" {
+		w.live.log.printf(t, "docker exec (exit code %d, err %v) printed:\n%s%s", exitCode(err), err, execOut, execErr)
+	}
+
+	code, finished := w.recordedExitCode(t, base)
+	if !finished {
+		w.live.log.printf(t, "docker exec returned (exit code %d) before %s ended; waiting for it", exitCode(err), name)
+
+		require.Eventually(t, func() bool {
+			code, finished = w.recordedExitCode(t, base)
+
+			return finished
+		}, 5*time.Minute, 500*time.Millisecond, "%s never ended in the container", name)
+	}
+
+	stdout, _ := docker(t, "exec", w.name, "cat", base+".out")
+	stderr, _ := docker(t, "exec", w.name, "cat", base+".err")
+
+	w.live.log.printf(t, "$ (container) %s %s %s\nexit code %d\nstdout (%d bytes):\n%s\nstderr:\n%s",
+		strings.Join(env, " "), name, strings.Join(args, " "), code, len(stdout), stdout, stderr)
+
+	if code != 0 {
+		return stdout, stderr, fmt.Errorf("%s exited with code %d", name, code)
+	}
+
+	return stdout, stderr, nil
+}
+
+// recordedExitCode reads the exit code recordedCommand wrote for base, and
+// whether the command has ended.
+func (w *workload) recordedExitCode(t *testing.T, base string) (int, bool) {
+	t.Helper()
+
+	text, err := docker(t, "exec", w.name, "cat", base+".rc")
+	if err != nil {
+		return 0, false
+	}
+
+	code, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil {
+		return 0, false
+	}
+
+	return code, true
 }
 
 // execArgs are the docker arguments that run a command in the container as

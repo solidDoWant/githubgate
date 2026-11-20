@@ -12,15 +12,16 @@ import (
 const DefaultListen = "127.43.0.1:443"
 
 // ListenAddress parses address as a specific IP and port. An unspecified
-// address (0.0.0.0, ::) is refused: anything that reaches the pod IP could
-// then make requests as the pod's ServiceAccount.
+// address (0.0.0.0, ::, or an IPv4-mapped ::ffff:0.0.0.0, which the kernel
+// binds as the wildcard too) is refused: anything that reaches the pod IP
+// could then make requests as the pod's ServiceAccount.
 func ListenAddress(address string) (netip.AddrPort, error) {
 	addrPort, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return netip.AddrPort{}, fmt.Errorf("listen address %q must be a specific IP and port", address)
 	}
 
-	if addrPort.Addr().IsUnspecified() || addrPort.Addr().Zone() != "" {
+	if addrPort.Addr().Unmap().IsUnspecified() || addrPort.Addr().Zone() != "" {
 		return netip.AddrPort{}, fmt.Errorf("listen address %q must be a specific IP, not an unspecified one", address)
 	}
 

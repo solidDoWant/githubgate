@@ -16,6 +16,8 @@ func TestListenAddressAcceptsOnlyASpecificIP(t *testing.T) {
 		{address: "[fd00::1]:443"},
 		{address: "0.0.0.0:443", assertError: require.Error},
 		{address: "[::]:443", assertError: require.Error},
+		{address: "[::ffff:0.0.0.0]:443", assertError: require.Error},
+		{address: "[::ffff:0:0]:443", assertError: require.Error},
 		{address: ":443", assertError: require.Error},
 		{address: "localhost:443", assertError: require.Error},
 		{address: "10.0.2.1", assertError: require.Error},
@@ -35,7 +37,7 @@ func TestListenAddressAcceptsOnlyASpecificIP(t *testing.T) {
 }
 
 func TestListenRefusesAnUnspecifiedAddress(t *testing.T) {
-	for _, address := range []string{"0.0.0.0:0", "[::]:0"} {
+	for _, address := range []string{"0.0.0.0:0", "[::]:0", "[::ffff:0.0.0.0]:0", "[::ffff:0:0]:0"} {
 		listener, err := Listen(t.Context(), address)
 		if listener != nil {
 			_ = listener.Close()

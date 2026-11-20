@@ -53,11 +53,13 @@ docs/dev/
 docs/acceptance/
   phase-1.md               The owner's checklist for phase 1: token mode.
   phase-2.md               The owner's checklist for phase 2: proxy mode and signed commits.
+  phase-3.md               The owner's checklist for phase 3: transparent interception.
 
 docs/design/
   README.md                Where the designs go.
   phase-1.md               Phase 1 design: token mode.
   phase-2.md               Phase 2 design: proxy mode and signed commits.
+  phase-3.md               Phase 3 design: transparent interception.
 
 docs/agents/               Instructions for the agents (not for people).
   planner.md               The planner's playbook.

@@ -275,6 +275,21 @@ func TestCRDValidation(t *testing.T) {
 
 			return policy
 		}},
+		{name: "proxy rule with public read and web paths", object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{PublicRead: true, WebPaths: true})
+		}},
+		{name: "proxy rule with public read and only repository patterns", invalid: true, object: func(n string) client.Object {
+			policy := proxyPolicy(n, githubgatev1alpha1.ProxyMode{PublicRead: true})
+			policy.Spec.Rules[0].Repositories = []githubgatev1alpha1.Repository{"app-*"}
+
+			return policy
+		}},
+		{name: "proxy rule with web paths and only repository patterns", object: func(n string) client.Object {
+			policy := proxyPolicy(n, githubgatev1alpha1.ProxyMode{WebPaths: true})
+			policy.Spec.Rules[0].Repositories = []githubgatev1alpha1.Repository{"app-*"}
+
+			return policy
+		}},
 		{name: "proxy rule with empty pushRefs", invalid: true, object: func(n string) client.Object {
 			return emptyProxyListPolicy(n, "pushRefs")
 		}},

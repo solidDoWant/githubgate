@@ -162,6 +162,13 @@ spec:
                           description: Enabled turns proxy mode on for the rule. It
                             has no default.
                           type: boolean
+                        publicRead:
+                          description: |-
+                            PublicRead, when true, lets read-only requests reach repositories of
+                            owners outside the installation, and read-only REST endpoints that name
+                            no repository. They are sent with a token of the installation that has
+                            only `metadata: read`, so they reach public data only. Off by default.
+                          type: boolean
                         pushRefs:
                           description: PushRefs, when set, are the only refs a request
                             may write. At most 256.
@@ -179,6 +186,12 @@ spec:
                           minItems: 1
                           type: array
                           x-kubernetes-list-type: set
+                        webPaths:
+                          description: |-
+                            WebPaths, when true, forwards `GET` and `HEAD` requests on github.com
+                            that are not git smart HTTP, such as release downloads, with no
+                            credential. Off by default.
+                          type: boolean
                       required:
                       - enabled
                       type: object
@@ -225,6 +238,11 @@ spec:
                       || !(has(self.proxy.pushRefs) || has(self.proxy.allowOperations)
                       || has(self.proxy.denyOperations) || has(self.proxy.allowMutations)
                       || has(self.proxy.denyMutations))'
+                  - message: 'proxy.publicRead needs at least one repository named
+                      without a pattern: the public-read token is limited to those
+                      repositories'
+                    rule: '!has(self.proxy) || !has(self.proxy.publicRead) || !self.proxy.publicRead
+                      || self.repositories.exists(r, !r.contains(''*''))'
                 maxItems: 256
                 type: array
                 x-kubernetes-list-map-keys:

@@ -88,6 +88,13 @@ Make these changes in the VM image:
 2. Set the trust variables to the files of the shared trust directory, as the webhook does in a pod. See the table of trust variables in [Use GitHub with no setup](../user/interception.md).
 3. Set `GH_TOKEN=githubgate`. `gh` refuses to run without a token. The interceptor replaces it.
 
+A VM workspace also reads public repositories of other owners and downloads releases from `github.com`. Interception sends these requests to githubgate too. To let them through, set `publicRead: true` and `webPaths: true` in the `proxy` block of a rule of the workspace's policy. Both settings are off by default:
+
+- `publicRead` sends read-only requests outside the installation with an installation token that has only `metadata: read`. This token reads public data and no private repository contents. It keeps the rate limit of the installation. The rule must name at least one repository without a `*`, because githubgate limits this token to those repositories.
+- `webPaths` sends `GET` and `HEAD` requests on `github.com` that are not git with no credential.
+
+Writes outside the installation are still refused. The repositories of the installation still follow the rules. See [Public repositories and web pages](../user/interception.md#public-repositories-and-web-pages).
+
 A program in the VM can send requests through the interceptor. The policy of the launcher pod ServiceAccount limits these requests. The program cannot read the token.
 
 A live migration creates a new launcher pod. The new pod has a new interceptor and a new CA. New programs read the new trust files. A long-running program that loaded the old CA fails on GitHub until you restart it.

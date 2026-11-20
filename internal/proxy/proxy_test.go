@@ -550,9 +550,9 @@ func TestProxyServesOnlyGitSmartHTTPOnGitHubCom(t *testing.T) {
 		method string
 		target string
 	}{
-		{method: http.MethodGet, target: "/o/foo"},
-		{method: http.MethodGet, target: "/o/foo/archive/refs/heads/main.zip"},
-		{method: http.MethodGet, target: "/repos/o/foo"},
+		{method: http.MethodPost, target: "/o/foo"},
+		{method: http.MethodPut, target: "/o/foo/archive/refs/heads/main.zip"},
+		{method: http.MethodDelete, target: "/repos/o/foo"},
 		{method: http.MethodGet, target: "/o/foo/info/refs"},
 		{method: http.MethodGet, target: "/o/foo/info/refs?service=git-upload-archive"},
 		{method: http.MethodGet, target: "/o/foo/info/refs?service=git-upload-pack&service=git-receive-pack"},
@@ -563,9 +563,8 @@ func TestProxyServesOnlyGitSmartHTTPOnGitHubCom(t *testing.T) {
 		{method: http.MethodPost, target: "/o/.git/git-upload-pack"},
 		{method: http.MethodPost, target: "/o/foo/bar/git-upload-pack"},
 		{method: http.MethodPost, target: "/o/foo/info/git-upload-pack"},
-		{method: http.MethodGet, target: "/o/foo/HEAD"},
-		{method: http.MethodGet, target: "/o/foo/objects/info/packs"},
-		{method: http.MethodGet, target: "/"},
+		{method: http.MethodPatch, target: "/o/foo/HEAD"},
+		{method: http.MethodPost, target: "/"},
 	}
 
 	for _, test := range tests {
@@ -578,6 +577,36 @@ func TestProxyServesOnlyGitSmartHTTPOnGitHubCom(t *testing.T) {
 			assert.Equal(t, "text/plain; charset=utf-8", response.Header().Get("Content-Type"))
 			assert.True(t, strings.HasPrefix(response.Body.String(), "githubgate: "))
 			assert.Zero(t, forwarder.count())
+		})
+	}
+}
+
+func TestProxyClassifiesOtherGitHubComReadsAsWebPaths(t *testing.T) {
+	tests := []struct {
+		method string
+		target string
+	}{
+		{method: http.MethodGet, target: "/o/foo"},
+		{method: http.MethodGet, target: "/o/foo/archive/refs/heads/main.zip"},
+		{method: http.MethodHead, target: "/o/foo/releases/latest/download/asset.tar.gz"},
+		{method: http.MethodGet, target: "/repos/o/foo"},
+		{method: http.MethodGet, target: "/o/foo/HEAD"},
+		{method: http.MethodGet, target: "/o/foo/objects/info/packs"},
+		{method: http.MethodGet, target: "/"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.method+" "+test.target, func(t *testing.T) {
+			handler, forwarder := newHandler(t)
+
+			response := serve(handler, authenticated(test.method, proxy.HostGit, test.target))
+
+			require.Equal(t, http.StatusTeapot, response.Code, response.Body.String())
+
+			classified := forwarder.requests[0]
+			assert.Equal(t, proxy.KindWeb, classified.Kind)
+			assert.Empty(t, classified.Owner)
+			assert.Empty(t, classified.Repo)
 		})
 	}
 }

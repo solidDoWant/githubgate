@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/solidDoWant/githubgate/internal/auth"
+	"github.com/solidDoWant/githubgate/internal/model"
 )
 
 // auditEntry is what one proxied request's audit line says. It never holds
@@ -44,9 +45,12 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 	installation := ""
 	rules := []string{}
 
+	access := ""
+
 	if result := e.decisionResult; result != nil && result.Allowed() {
+		access = string(result.Access)
 		repositories = result.Repositories
-		installation = result.Installation.String()
+		installation = installationName(result.Installation)
 
 		parts := make([]string, 0, len(result.Permissions))
 		for name, level := range result.Permissions {
@@ -59,8 +63,15 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 		for _, rule := range result.Rules {
 			rules = append(rules, rule.Policy.String()+"/"+rule.Name)
 		}
-	} else if e.decided.Repo != "" {
+	}
+
+	// A public read names the repository it reads, not the ones its token
+	// is limited to; a refused request names the repository it asked for.
+	switch {
+	case (access == string(AccessPublicRead) || access == "") && e.decided.Repo != "":
 		repositories = []string{unescaped(e.decided.Owner) + "/" + unescaped(e.decided.Repo)}
+	case access == string(AccessPublicRead):
+		repositories = []string{}
 	}
 
 	refs := e.decided.Refs
@@ -82,6 +93,7 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 		slog.String("host", e.host),
 		slog.String("method", e.method),
 		slog.String("kind", string(e.decided.Kind)),
+		slog.String("access", access),
 		slog.String("operation", e.decided.Operation),
 		slog.Any("mutations", mutations),
 		slog.Any("refs", refs),
@@ -96,6 +108,14 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 		slog.Int64("bytes", e.bytes),
 		slog.Duration("duration", time.Since(e.started)),
 	)
+}
+
+func installationName(installation *model.Installation) string {
+	if installation == nil {
+		return ""
+	}
+
+	return installation.String()
 }
 
 func requestID() string {

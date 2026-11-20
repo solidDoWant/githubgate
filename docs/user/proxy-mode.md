@@ -73,6 +73,8 @@ githubgate-client configure --proxy
 
 Then `git clone`, `git fetch` and `git push` work as usual. For `gh`, run `githubgate-client gh --proxy -- pr create --fill`.
 
+If your rule sets `publicRead` or `webPaths`, you can also read public repositories of other owners and download from `github.com`. See [Public repositories and web pages](interception.md#public-repositories-and-web-pages).
+
 ## Push signed commits
 
 A plain `git push` works, but GitHub does not sign those commits. To get commits that GitHub shows as Verified, run:

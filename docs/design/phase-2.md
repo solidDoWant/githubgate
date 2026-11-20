@@ -95,7 +95,7 @@ Before anything is forwarded:
 2. **Path hygiene** (`400`): `.`/`..` segments, empty segments, `%2F`, `%5C`, percent-encoding of unreserved characters. Every query is parsed with `url.ParseQuery` and re-encoded; an unparseable query → `400`. The forwarded URL is rebuilt from the parsed parts.
 3. **Host `api.github.com`:** `POST /graphql` → GraphQL (below); anything else → REST: match the catalogue; unknown → `403 unknown_operation`.
 4. **Host `uploads.github.com`:** REST against the same catalogue.
-5. **Host `github.com`:** only git smart HTTP for `/<owner>/<repo>(.git)/info/refs?service=git-upload-pack|git-receive-pack`, `…/git-upload-pack`, `…/git-receive-pack`. Anything else → `404`.
+5. **Host `github.com`:** only git smart HTTP for `/<owner>/<repo>(.git)/info/refs?service=git-upload-pack|git-receive-pack`, `…/git-upload-pack`, `…/git-receive-pack`. Anything else → `404`, except a `GET` or `HEAD` web path that a rule's `webPaths` allows (`docs/design/phase-3.md`).
 
 Result: the owner and repository (if any), the operation id or mutation names, the refs written, and the level the request needs (git fetch: `contents: read`; push: `contents: write`; REST/GraphQL: left to GitHub).
 

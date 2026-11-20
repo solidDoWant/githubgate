@@ -15,6 +15,11 @@ type ProxyRule struct {
 	DenyOperations  []string
 	AllowMutations  []string
 	DenyMutations   []string
+	// PublicRead lets read-only requests outside the installation through
+	// with a metadata-only token.
+	PublicRead bool
+	// WebPaths forwards github.com web paths with no credential.
+	WebPaths bool
 }
 
 // InvalidProxyMode describes the first entry of a rule's proxy lists that is
@@ -81,6 +86,8 @@ func proxyRuleOf(proxy *githubgatev1alpha1.ProxyMode) *ProxyRule {
 		DenyOperations:  stringsOf(proxy.DenyOperations),
 		AllowMutations:  stringsOf(proxy.AllowMutations),
 		DenyMutations:   stringsOf(proxy.DenyMutations),
+		PublicRead:      proxy.PublicRead,
+		WebPaths:        proxy.WebPaths,
 	}
 }
 

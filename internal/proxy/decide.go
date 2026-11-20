@@ -60,7 +60,24 @@ type Decision struct {
 	Permissions  map[string]permissions.Level
 	// Rules are the rules that allowed the request.
 	Rules []*model.Rule
+	// Access is how an allowed request is sent: with the rules' token, with
+	// the public-read token, or with no credential.
+	Access Access
 }
+
+// Access is the credential an allowed request is forwarded with.
+type Access string
+
+// The ways an allowed request is forwarded.
+const (
+	// AccessRules forwards with a token of the rules that allowed it.
+	AccessRules Access = "rules"
+	// AccessPublicRead forwards with a token of the installation that has
+	// only metadata: read and so reads public data only.
+	AccessPublicRead Access = "public_read"
+	// AccessWeb forwards a github.com web path with no credential.
+	AccessWeb Access = "web"
+)
 
 // Allowed reports whether the request may be forwarded.
 func (d Decision) Allowed() bool { return d.Status == 0 }
@@ -78,11 +95,129 @@ func Decide(rules []*model.Rule, request Decided) Decision {
 		}
 	}
 
+	if request.Kind == KindWeb {
+		return decideWeb(candidates)
+	}
+
 	if request.Repo != "" {
+		if publicReadApplies(candidates, request) {
+			return decidePublicRead(candidates)
+		}
+
 		return decideRepository(candidates, request)
 	}
 
-	return decideWithoutRepository(candidates, request)
+	decision := decideWithoutRepository(candidates, request)
+	if !decision.Allowed() && decision.Status == http.StatusForbidden && publicReadApplies(candidates, request) {
+		return decidePublicRead(candidates)
+	}
+
+	return decision
+}
+
+// decideWeb allows a github.com web path when a rule turns web paths on.
+func decideWeb(candidates []*model.Rule) Decision {
+	allowing := []*model.Rule{}
+
+	for _, rule := range candidates {
+		if rule.Proxy.WebPaths {
+			allowing = append(allowing, rule)
+		}
+	}
+
+	if len(allowing) == 0 {
+		return Decision{Status: http.StatusNotFound, Code: codeNotFound, Message: "only git smart HTTP is served on github.com"}
+	}
+
+	return Decision{Rules: allowing, Access: AccessWeb}
+}
+
+// publicReadApplies reports whether request is a read-only request outside
+// every installation of the caller's proxy rules: the installations' own
+// owners always keep the rules' decision, so public read never widens what
+// a rule allows there. GraphQL and the uploads host are never public reads.
+func publicReadApplies(candidates []*model.Rule, request Decided) bool {
+	switch {
+	case request.Host != HostAPI && request.Host != HostGit:
+		return false
+	case request.Kind == KindREST:
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			return false
+		}
+	case request.Kind == KindGitInfoRefs || request.Kind == KindGitUpload:
+		if request.Contents != permissions.LevelRead {
+			return false
+		}
+	default:
+		return false
+	}
+
+	owner := unescaped(request.Owner)
+
+	for _, rule := range candidates {
+		if owner != "" && strings.EqualFold(rule.Installation.Owner, owner) {
+			return false
+		}
+	}
+
+	return slices.ContainsFunc(candidates, func(rule *model.Rule) bool { return rule.Proxy.PublicRead })
+}
+
+// decidePublicRead gives a public read the public-read token: a token of
+// one installation with only metadata: read, limited to the repositories
+// its public-read rules name exactly. It reads public data of any owner and
+// no private contents. When rules of several installations turn public read
+// on, the installation that sorts first is used, as any of them reads the
+// same public data.
+func decidePublicRead(candidates []*model.Rule) Decision {
+	allowing := []*model.Rule{}
+
+	for _, rule := range candidates {
+		if rule.Proxy.PublicRead {
+			allowing = append(allowing, rule)
+		}
+	}
+
+	slices.SortStableFunc(allowing, func(left, right *model.Rule) int {
+		return strings.Compare(left.Installation.String(), right.Installation.String())
+	})
+
+	installation := allowing[0].Installation
+	rules := []*model.Rule{}
+	repositories := []string{}
+	seen := map[string]bool{}
+
+	for _, rule := range allowing {
+		if rule.Installation.NamespacedName != installation.NamespacedName {
+			continue
+		}
+
+		rules = append(rules, rule)
+
+		for _, name := range exactNames(rule) {
+			if !seen[strings.ToLower(name)] {
+				seen[strings.ToLower(name)] = true
+				repositories = append(repositories, name)
+			}
+		}
+	}
+
+	if len(repositories) == 0 {
+		return denied("public read needs a proxy rule that names a repository without a pattern")
+	}
+
+	sort.Strings(repositories)
+
+	if len(repositories) > maxTokenRepositories {
+		repositories = repositories[:maxTokenRepositories]
+	}
+
+	decision := grantDecision(installation, repositories, map[string]permissions.Level{"metadata": permissions.LevelRead}, rules)
+	if decision.Allowed() {
+		decision.Access = AccessPublicRead
+	}
+
+	return decision
 }
 
 func decideRepository(candidates []*model.Rule, request Decided) Decision {
@@ -419,7 +554,7 @@ func grantDecision(installation *model.Installation, repositories []string, set 
 		}
 	}
 
-	return Decision{Installation: installation, Repositories: repositories, Permissions: set, Rules: rules}
+	return Decision{Installation: installation, Repositories: repositories, Permissions: set, Rules: rules, Access: AccessRules}
 }
 
 func denied(message string) Decision {

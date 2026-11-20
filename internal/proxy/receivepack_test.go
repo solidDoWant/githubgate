@@ -102,6 +102,45 @@ func TestProxyForwardsAPushWithShallowLines(t *testing.T) {
 	assert.Equal(t, body, received[0].body)
 }
 
+func TestProxyForwardsGitsPushProbe(t *testing.T) {
+	forwarding := newForwardingProxy(t, agentRule())
+
+	response := serve(forwarding.handler, pushRequest(flush))
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	received := forwarding.upstream.requests()
+	require.Len(t, received, 1)
+	assert.Equal(t, "/git/acme/foo.git/git-receive-pack", received[0].path)
+	assert.Equal(t, flush, received[0].body)
+
+	lines := forwarding.auditLines(t)
+	require.Len(t, lines, 1)
+	assert.Equal(t, []any{}, lines[0]["refs"])
+}
+
+func TestProxyRefusesGitsPushProbeWithoutAPushRule(t *testing.T) {
+	tests := []struct {
+		name string
+		rule *model.Rule
+	}{
+		{name: "read access only", rule: proxyRule("a", app1Installation, []string{"foo"}, read("contents"), pushRefs("refs/heads/agent/**"))},
+		{name: "another repository", rule: proxyRule("a", app1Installation, []string{"bar"}, write("contents"), pushRefs("refs/heads/agent/**"))},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			forwarding := newForwardingProxy(t, test.rule)
+
+			response := serve(forwarding.handler, pushRequest(flush))
+
+			assert.NotEqual(t, http.StatusOK, response.Code, response.Body.String())
+			assert.True(t, strings.HasPrefix(response.Body.String(), "githubgate: "), response.Body.String())
+			assert.Empty(t, forwarding.upstream.requests(), "a refused probe reached GitHub")
+		})
+	}
+}
+
 // reportOf decodes a receive-pack result, through the side-band when
 // asked, and returns the report and the side-band progress text.
 func reportOf(t *testing.T, body []byte, band sideband.Type) (*packp.ReportStatus, string) {
@@ -250,6 +289,9 @@ func TestProxyRefusesMalformedOrOversizedPushes(t *testing.T) {
 		{name: "a bad pkt-line length", body: "zzzz" + flush, expectedStatus: http.StatusBadRequest},
 		{name: "a truncated pkt-line", body: "00ff" + oldID, expectedStatus: http.StatusBadRequest},
 		{name: "only a flush packet", body: flush + packData, expectedStatus: http.StatusBadRequest},
+		{name: "a flush packet and one byte", body: flush + "P", expectedStatus: http.StatusBadRequest},
+		{name: "two flush packets", body: flush + flush, expectedStatus: http.StatusBadRequest},
+		{name: "shallow lines and no command", body: pkt("shallow "+oldID+"\n") + flush, expectedStatus: http.StatusBadRequest},
 		{name: "a push certificate", body: pkt("push-cert\x00report-status", "certificate version 0.1\n", "push-cert-end\n") + flush, expectedStatus: http.StatusBadRequest},
 		{name: "a first command without capabilities", body: pkt(oldID+" "+newID+" refs/heads/agent/x") + flush, expectedStatus: http.StatusBadRequest},
 		{name: "a short object id", body: pkt(oldID[1:]+" "+newID+" refs/heads/agent/x\x00report-status") + flush, expectedStatus: http.StatusBadRequest},

@@ -313,6 +313,49 @@ func TestProxyRefusesMethodsUpgradesOverridesAndEncodings(t *testing.T) {
 	}
 }
 
+// TestProxyAcceptsGzipOnlyOnGitUploadPack covers git compressing an
+// upload-pack body: the proxy never reads that body, so it forwards it,
+// while every body it reads to decide keeps refusing any encoding.
+func TestProxyAcceptsGzipOnlyOnGitUploadPack(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		target   string
+		encoding string
+		expected int
+	}{
+		{name: "gzip upload-pack", host: proxy.HostGit, target: "/acme/foo.git/git-upload-pack", encoding: "gzip", expected: http.StatusTeapot},
+		{name: "identity and gzip upload-pack", host: proxy.HostGit, target: "/acme/foo.git/git-upload-pack", encoding: "identity, GZIP", expected: http.StatusTeapot},
+		{name: "deflate upload-pack", host: proxy.HostGit, target: "/acme/foo.git/git-upload-pack", encoding: "deflate", expected: http.StatusUnsupportedMediaType},
+		{name: "gzip then br upload-pack", host: proxy.HostGit, target: "/acme/foo.git/git-upload-pack", encoding: "gzip, br", expected: http.StatusUnsupportedMediaType},
+		{name: "gzip receive-pack", host: proxy.HostGit, target: "/acme/foo.git/git-receive-pack", encoding: "gzip", expected: http.StatusUnsupportedMediaType},
+		{name: "gzip GraphQL", host: proxy.HostAPI, target: "/graphql", encoding: "gzip", expected: http.StatusUnsupportedMediaType},
+		{name: "gzip ref-writing REST", host: proxy.HostAPI, target: "/repos/acme/foo/git/refs", encoding: "gzip", expected: http.StatusUnsupportedMediaType},
+		{name: "gzip upload", host: proxy.HostUploads, target: "/repos/acme/foo/releases/1/assets?name=a", encoding: "gzip", expected: http.StatusUnsupportedMediaType},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler, forwarder := newHandler(t)
+
+			request := authenticated(http.MethodPost, test.host, test.target)
+			request.Body = readCloser("compressed")
+			request.Header.Set("Content-Encoding", test.encoding)
+
+			response := serve(handler, request)
+
+			assert.Equal(t, test.expected, response.Code, response.Body.String())
+
+			if test.expected == http.StatusTeapot {
+				require.Equal(t, 1, forwarder.count())
+				assert.Equal(t, test.encoding, forwarder.headers[0].Get("Content-Encoding"))
+			} else {
+				assert.Zero(t, forwarder.count())
+			}
+		})
+	}
+}
+
 func TestProxyRefusesAmbiguousPaths(t *testing.T) {
 	refused := []string{
 		"/repos/o/foo/./issues",

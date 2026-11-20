@@ -113,20 +113,34 @@ func classify(host string, request *http.Request) (Request, *refusal) {
 		return Request{}, failure
 	}
 
-	classified := Request{Host: host, Path: rawPath, RawQuery: query.Encode()}
+	classified, failure := classifyKind(Request{Host: host, Path: rawPath, RawQuery: query.Encode()}, request.Method, query)
+	if failure != nil {
+		return Request{}, failure
+	}
 
-	switch host {
+	if failure := refuseGzippedBody(request, classified); failure != nil {
+		return Request{}, failure
+	}
+
+	return classified, nil
+}
+
+// classifyKind says what kind of request a checked request is.
+func classifyKind(classified Request, method string, query url.Values) (Request, *refusal) {
+	rawPath := classified.Path
+
+	switch classified.Host {
 	case HostGit:
-		return classifyGit(classified, request.Method, query)
+		return classifyGit(classified, method, query)
 	case HostAPI:
-		if request.Method == http.MethodPost && rawPath == "/graphql" {
+		if method == http.MethodPost && rawPath == "/graphql" {
 			classified.Kind = KindGraphQL
 
 			return classified, nil
 		}
 	}
 
-	match, ok := operations.MatchREST(request.Method, rawPath)
+	match, ok := operations.MatchREST(method, rawPath)
 	if !ok {
 		return Request{}, refuse(http.StatusForbidden, codeUnknownOperation,
 			"the request matches no operation of GitHub's REST API description")
@@ -140,7 +154,8 @@ func classify(host string, request *http.Request) (Request, *refusal) {
 }
 
 // refuseOutright refuses methods, upgrades, method overrides and encodings
-// the proxy never forwards.
+// the proxy never forwards. A gzipped body is checked once the request is
+// classified.
 func refuseOutright(request *http.Request) *refusal {
 	switch request.Method {
 	case http.MethodConnect, http.MethodTrace, http.MethodOptions:
@@ -157,12 +172,42 @@ func refuseOutright(request *http.Request) *refusal {
 		}
 	}
 
+	if _, ok := bodyEncoding(request); !ok {
+		return refuseEncoding()
+	}
+
+	return nil
+}
+
+// bodyEncoding reports whether request's body is gzipped, and whether its
+// Content-Encoding names only identity and gzip.
+func bodyEncoding(request *http.Request) (gzipped, ok bool) {
 	for _, value := range request.Header.Values("Content-Encoding") {
 		for _, encoding := range strings.Split(value, ",") {
-			if !strings.EqualFold(strings.TrimSpace(encoding), "identity") {
-				return refuse(http.StatusUnsupportedMediaType, codeUnsupportedMediaType, "a request body encoding other than identity is not accepted")
+			switch encoding = strings.TrimSpace(encoding); {
+			case strings.EqualFold(encoding, "identity"):
+			case strings.EqualFold(encoding, "gzip"):
+				gzipped = true
+			default:
+				return gzipped, false
 			}
 		}
+	}
+
+	return gzipped, true
+}
+
+func refuseEncoding() *refusal {
+	return refuse(http.StatusUnsupportedMediaType, codeUnsupportedMediaType,
+		"a request body encoding other than identity is not accepted, except gzip on git-upload-pack")
+}
+
+// refuseGzippedBody refuses a gzipped body on anything but git-upload-pack.
+// git gzips an upload-pack body over 1 KiB, and the proxy never reads that
+// body to decide; every other body may be read to decide.
+func refuseGzippedBody(request *http.Request, classified Request) *refusal {
+	if gzipped, _ := bodyEncoding(request); gzipped && classified.Kind != KindGitUpload {
+		return refuseEncoding()
 	}
 
 	return nil

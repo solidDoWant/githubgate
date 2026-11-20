@@ -1290,6 +1290,7 @@ class Scheduler:
         self.repo = repo_dir
         self.pm = repo_dir / ".pm"
         self.cfg = load_config(self.pm / "scheduler.json")
+        self.config_error = ""
         self.dry_run = dry_run
         self.out = out
         self.log_dir = log_dir or Path(os.environ.get("PM_LOG_DIR") or Path.home() / ".pm-logs")
@@ -1941,7 +1942,27 @@ class Scheduler:
 
     # The poll ----------------------------------------------------------
 
+    def reload_config(self) -> None:
+        """Pick up changes to .pm/scheduler.json. A file that cannot be read
+        keeps the last good configuration. The repository stays as at start:
+        the GitHub client derived its owner and name from it."""
+        try:
+            cfg = load_config(self.pm / "scheduler.json")
+        except (OSError, ValueError) as err:
+            if str(err) != self.config_error:
+                self.event("config_error", error=str(err)[:300])
+            self.config_error = str(err)
+            return
+        self.config_error = ""
+        cfg["repo"] = self.cfg["repo"]
+        if cfg != self.cfg:
+            self.event("config_reloaded")
+        self.cfg = cfg
+        if hasattr(self.github, "cfg"):
+            self.github.cfg = cfg
+
     def poll(self) -> None:
+        self.reload_config()
         now = now_utc()
         self.reap()
         self.consume_queue()

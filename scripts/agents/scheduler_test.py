@@ -765,6 +765,29 @@ class SchedulerTest(unittest.TestCase):
             self.sched.reap()
         self.assertEqual(self.sched.state["running"], {})
 
+    def write_config(self, text):
+        (self.repo / ".pm").mkdir(exist_ok=True)
+        (self.repo / ".pm" / "scheduler.json").write_text(text)
+
+    def test_config_change_applies_on_the_next_poll(self):
+        self.disable_planner()
+        self.gh.snap = snap([issue(1, milestone=MS1), issue(3, milestone=MS2)])
+        self.sched.poll()
+        self.assertIn(("#3", "outside the current phase (later_phase_work off)"), self.sched.last_plan.skipped)
+        self.write_config('{"current_phase": 2}')
+        self.sched.poll()
+        self.assertIn(("#1", "outside the current phase (later_phase_work off)"), self.sched.last_plan.skipped)
+        self.assertNotIn(("#3", "outside the current phase (later_phase_work off)"), self.sched.last_plan.skipped)
+
+    def test_invalid_config_keeps_the_last_good_one(self):
+        self.disable_planner()
+        self.write_config('{"current_phase": 2}')
+        self.sched.poll()
+        self.write_config("{not json")
+        self.sched.poll()
+        self.assertEqual(self.sched.cfg["current_phase"], 2)
+        self.assertEqual(len(self.events("config_error")), 1)
+
     def events(self, kind):
         log = self.sched.event_log
         return [e for e in map(json.loads, log.read_text().splitlines()) if e["event"] == kind] if log.exists() else []
@@ -977,7 +1000,7 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(self.sched.state["specials"], {})
 
     def test_planner_runs_on_triggers_in_reserved_slot(self):
-        self.sched.cfg["max_new_work_slots"] = 5  # fill every slot with new work
+        self.write_config(json.dumps({"max_new_work_slots": 5}))  # fill every slot with new work
         self.gh.snap = snap([issue(n) for n in range(1, 8)] + [issue(50, status="status:triage")])
         self.sched.poll()
         self.wait_idle()

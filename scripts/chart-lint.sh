@@ -32,6 +32,12 @@ webhook=$(helm template githubgate "$chart" --namespace githubgate "${required[@
 for want in 'kind: ValidatingWebhookConfiguration' 'githubgate-webhook'; do
 	grep -qF -- "$want" <<<"$webhook" || fail "webhook render lacks: $want"
 done
+proxy=$(helm template githubgate "$chart" --namespace githubgate "${required[@]}" --set proxy.enabled=true --set proxy.ca.name=proxy-ca --set proxy.clusterIP=10.96.0.50 --set webhook.enabled=true)
+for want in 'name: githubgate-proxy' 'clusterIP: "10.96.0.50"' '- --proxy$' 'api.github.com' 'uploads.github.com' '- github.com' 'name: proxy-ca' 'port: 443'; do
+	grep -qE -- "$want" <<<"$proxy" || fail "proxy render lacks: $want"
+done
+grep -qF 'name: githubgate-proxy' <<<"$default" && fail "proxy rendered while disabled"
+helm template githubgate "$chart" "${required[@]}" --set proxy.enabled=true >/dev/null 2>&1 && fail "proxy.enabled without proxy.ca.name rendered"
 # Every image is pinned by digest.
 grep -E '^ +image:' <<<"$default" | grep -qv '@sha256:' && fail "an image is not pinned by digest"
 echo "chart-lint: passed"

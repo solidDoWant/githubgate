@@ -41,6 +41,12 @@ spec:
             {{- if .Values.webhook.enabled }}
             - --webhook
             - --webhook-cert-dir=/var/run/githubgate/webhook
+            - --webhook-port=9444
+            {{- end }}
+            {{- if .Values.proxy.enabled }}
+            - --proxy
+            - --proxy-tls-cert-file=/var/run/githubgate/proxy/tls.crt
+            - --proxy-tls-key-file=/var/run/githubgate/proxy/tls.key
             {{- end }}
           env:
             - name: POD_NAMESPACE
@@ -54,6 +60,10 @@ spec:
               containerPort: 8080
             {{- if .Values.webhook.enabled }}
             - name: webhook
+              containerPort: 9444
+            {{- end }}
+            {{- if .Values.proxy.enabled }}
+            - name: proxy
               containerPort: 9443
             {{- end }}
           readinessProbe:
@@ -73,6 +83,11 @@ spec:
               mountPath: /var/run/githubgate/webhook
               readOnly: true
             {{- end }}
+            {{- if .Values.proxy.enabled }}
+            - name: proxy-tls
+              mountPath: /var/run/githubgate/proxy
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
@@ -85,6 +100,11 @@ spec:
         - name: webhook-tls
           secret:
             secretName: {{ include "githubgate.fullname" . }}-webhook-tls
+        {{- end }}
+        {{- if .Values.proxy.enabled }}
+        - name: proxy-tls
+          secret:
+            secretName: {{ include "githubgate.fullname" . }}-proxy-tls
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

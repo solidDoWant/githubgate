@@ -49,11 +49,11 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Client
 
 20. With `githubgate-client configure` run, `git clone`, `git fetch` and `git push` of an allowed repository over HTTPS work with no other setup.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/git clone, fetch and push of an allowed repository work after configure`
 21. `git` against a repository the caller isn't allowed fails with git's normal authentication error, and the client prints githubgate's reason on stderr.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/git against a repository the policy does not allow fails and the client prints the reason`
 22. `githubgate-client gh pr create …` and `gh issue comment …` work in an allowed repository, and still work in a session that has lasted more than one hour.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/gh calls succeed with a fresh token each time after the token's lifetime has passed`
 23. `githubgate-client token --repo foo --permission contents=read` prints a token usable with `curl` against the GitHub API.
     Tests: `cmd/githubgate-client: TestTokenPrintsOnlyTheTokenAndSendsTheRequest`
 24. The client reads the ServiceAccount token file on every call, so a rotated token is picked up without restarting anything.

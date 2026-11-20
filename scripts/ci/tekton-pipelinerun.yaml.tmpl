@@ -7,10 +7,10 @@
 # Repository with a concurrency limit, so a superseded pull request run runs
 # to the end.
 #
-# Only test-guard and report reach GitHub: they run as ci-report, and the CI
-# cluster adds githubgate's interceptor to every ci-report task. githubgate
-# allows ci-report only to create check runs and list the PR's labels. No pod
-# holds a GitHub token, and the build (ci-build) has no GitHub access.
+# The CI cluster adds githubgate's interceptor to every pod, and githubgate
+# decides each GitHub request by the pod's ServiceAccount: the build (ci-build)
+# may only fetch this repository, and test-guard and report (ci-report) may
+# only create check runs and list the PR's labels. No pod holds a GitHub token.
 #
 # The pipeline is inline: Pipelines-as-Code here does not resolve references
 # to other .tekton/ files, and Tasks come only from ci-tekton through the

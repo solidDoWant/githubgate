@@ -88,8 +88,12 @@ type Snapshot struct {
 	apps            map[types.NamespacedName]*App
 	installations   map[types.NamespacedName]*Installation
 	namespaceLabels map[string]labels.Set
-	rules           map[types.NamespacedName][]*Rule
-	policies        map[types.NamespacedName][]PolicyRule
+	// policiesOf lists, for each ServiceAccount, the accepted rules of each
+	// policy that names it. Each policy's rules are stored once and shared,
+	// so the snapshot grows with ServiceAccounts plus rules, never with
+	// their product.
+	policiesOf map[types.NamespacedName][][]*Rule
+	policies   map[types.NamespacedName][]PolicyRule
 }
 
 // App returns a GitHubApp in an admin namespace.
@@ -123,7 +127,23 @@ func (s *Snapshot) NamespaceLabels(namespace string) (labels.Set, bool) {
 // Rules returns the accepted rules that name a ServiceAccount, from the
 // policies in the ServiceAccount's own namespace.
 func (s *Snapshot) Rules(namespace, serviceAccount string) []*Rule {
-	return s.rules[types.NamespacedName{Namespace: namespace, Name: serviceAccount}]
+	policies := s.policiesOf[types.NamespacedName{Namespace: namespace, Name: serviceAccount}]
+
+	count := 0
+	for _, rules := range policies {
+		count += len(rules)
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	joined := make([]*Rule, 0, count)
+	for _, rules := range policies {
+		joined = append(joined, rules...)
+	}
+
+	return joined
 }
 
 // PolicyRules returns the acceptance decision on each rule of a policy.
@@ -139,7 +159,7 @@ func Build(in Inputs) *Snapshot {
 		apps:            map[types.NamespacedName]*App{},
 		installations:   map[types.NamespacedName]*Installation{},
 		namespaceLabels: map[string]labels.Set{},
-		rules:           map[types.NamespacedName][]*Rule{},
+		policiesOf:      map[types.NamespacedName][][]*Rule{},
 		policies:        map[types.NamespacedName][]PolicyRule{},
 	}
 
@@ -335,6 +355,7 @@ func (i *Installation) notReady(reason, message string) *Installation {
 func buildPolicy(object *githubgatev1alpha1.GitHubAccessPolicy, snapshot *Snapshot) {
 	policy := types.NamespacedName{Namespace: object.Namespace, Name: object.Name}
 	decisions := make([]PolicyRule, 0, len(object.Spec.Rules))
+	accepted := []*Rule{}
 
 	for _, rule := range object.Spec.Rules {
 		acceptance := AcceptRule(object.Namespace, rule, snapshot)
@@ -346,19 +367,23 @@ func buildPolicy(object *githubgatev1alpha1.GitHubAccessPolicy, snapshot *Snapsh
 
 		installation, _ := snapshot.Installation(reference(rule.InstallationRef, object.Namespace))
 		grant := GrantOf(rule.Repositories, rule.Permissions)
-		accepted := &Rule{
+		accepted = append(accepted, &Rule{
 			Policy:       policy,
 			Name:         rule.Name,
 			Installation: installation,
 			Repositories: grant.Repositories,
 			Permissions:  grant.Permissions,
-		}
-
-		for _, serviceAccount := range slices.Compact(slices.Sorted(slices.Values(object.Spec.ServiceAccounts))) {
-			key := types.NamespacedName{Namespace: object.Namespace, Name: serviceAccount}
-			snapshot.rules[key] = append(snapshot.rules[key], accepted)
-		}
+		})
 	}
 
 	snapshot.policies[policy] = decisions
+
+	if len(accepted) == 0 {
+		return
+	}
+
+	for _, serviceAccount := range slices.Compact(slices.Sorted(slices.Values(object.Spec.ServiceAccounts))) {
+		key := types.NamespacedName{Namespace: object.Namespace, Name: serviceAccount}
+		snapshot.policiesOf[key] = append(snapshot.policiesOf[key], accepted)
+	}
 }

@@ -10,16 +10,16 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `spec.rules` | list of object |  | Rules are keyed by name. They have no order and only add access. |
+| `spec.rules` | list of object |  | Rules are keyed by name. They have no order and only add access. At most 256. |
 | `spec.rules[].installationRef` | object | yes | InstallationRef is the GitHubInstallation the rule draws on. |
 | `spec.rules[].installationRef.name` | string | yes | Name is the object's name. |
 | `spec.rules[].installationRef.namespace` | string |  | Namespace defaults to the referring object's own namespace. |
 | `spec.rules[].name` | string | yes | Name identifies the rule within the policy. |
 | `spec.rules[].permissions` | object | yes | Permissions maps GitHub App permission names to levels. |
-| `spec.rules[].repositories` | list of string | yes | Repositories are names or `*` globs under the installation's owner. |
+| `spec.rules[].repositories` | list of string | yes | Repositories are names or `*` globs under the installation's owner. At most 256. |
 | `spec.rules[].token` | object | yes | Token configures token mode. |
 | `spec.rules[].token.enabled` | boolean | yes | Enabled turns token mode on for the rule. It has no default. |
-| `spec.serviceAccounts` | list of string | yes | ServiceAccounts are names of ServiceAccounts in this namespace. |
+| `spec.serviceAccounts` | list of string | yes | ServiceAccounts are names of ServiceAccounts in this namespace. At most 256. |
 | `status.conditions` | list of object |  | Conditions include `Ready`. |
 | `status.conditions[].lastTransitionTime` | time | yes | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
 | `status.conditions[].message` | string | yes | message is a human readable message indicating details about the transition. This may be an empty string. |

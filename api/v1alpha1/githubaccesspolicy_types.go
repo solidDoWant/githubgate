@@ -24,8 +24,10 @@ type AccessRule struct {
 	InstallationRef ObjectReference `json:"installationRef"`
 
 	// Repositories are names or `*` globs under the installation's owner.
+	// At most 256.
 	//
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
 	// +listType=set
 	Repositories []Repository `json:"repositories"`
 
@@ -41,15 +43,19 @@ type AccessRule struct {
 // GitHubAccessPolicySpec is the desired state of a GitHubAccessPolicy.
 type GitHubAccessPolicySpec struct {
 	// ServiceAccounts are names of ServiceAccounts in this namespace.
+	// At most 256.
 	//
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
 	// +kubebuilder:validation:items:MaxLength=253
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	// +listType=set
 	ServiceAccounts []string `json:"serviceAccounts"`
 
 	// Rules are keyed by name. They have no order and only add access.
+	// At most 256.
 	//
+	// +kubebuilder:validation:MaxItems=256
 	// +listType=map
 	// +listMapKey=name
 	Rules []AccessRule `json:"rules,omitempty"`

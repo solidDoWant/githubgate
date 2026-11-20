@@ -48,8 +48,9 @@ spec:
             description: GitHubAccessPolicySpec is the desired state of a GitHubAccessPolicy.
             properties:
               rules:
-                description: Rules are keyed by name. They have no order and only
-                  add access.
+                description: |-
+                  Rules are keyed by name. They have no order and only add access.
+                  At most 256.
                 items:
                   description: AccessRule gives the policy's ServiceAccounts access
                     through one installation.
@@ -88,8 +89,9 @@ spec:
                       minProperties: 1
                       type: object
                     repositories:
-                      description: Repositories are names or `*` globs under the installation's
-                        owner.
+                      description: |-
+                        Repositories are names or `*` globs under the installation's owner.
+                        At most 256.
                       items:
                         description: |-
                           Repository is a repository name under an installation's owner (not
@@ -98,6 +100,7 @@ spec:
                         minLength: 1
                         pattern: ^[A-Za-z0-9._*-]+$
                         type: string
+                      maxItems: 256
                       minItems: 1
                       type: array
                       x-kubernetes-list-type: set
@@ -121,17 +124,20 @@ spec:
                   x-kubernetes-validations:
                   - message: at least one mode must be enabled
                     rule: has(self.token) && self.token.enabled
+                maxItems: 256
                 type: array
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
               serviceAccounts:
-                description: ServiceAccounts are names of ServiceAccounts in this
-                  namespace.
+                description: |-
+                  ServiceAccounts are names of ServiceAccounts in this namespace.
+                  At most 256.
                 items:
                   maxLength: 253
                   pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                   type: string
+                maxItems: 256
                 minItems: 1
                 type: array
                 x-kubernetes-list-type: set

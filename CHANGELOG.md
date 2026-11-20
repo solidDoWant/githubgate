@@ -2,6 +2,61 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.2.0
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release covers phase 2 of the project: proxy mode and signed commits. In proxy mode, the workload gets no GitHub token at all. githubgate forwards each request of the workload to GitHub itself, and it can limit which branches and tags a push changes. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.2.0 --namespace githubgate --create-namespace
+```
+
+The setup of proxy mode is in [Set up proxy mode](https://github.com/solidDoWant/githubgate/blob/master/docs/admin/proxy-mode-setup.md). Workload users read [Proxy mode](https://github.com/solidDoWant/githubgate/blob/master/docs/user/proxy-mode.md).
+
+### Upgrade notes for admins
+
+None. Policies, chart values and clients of 0.1.0 work without a change. Proxy mode is off until you turn it on with the chart value `proxy.enabled`.
+
+### Proxy mode
+
+- githubgate can serve proxy mode on a second TLS listener for `api.github.com`, `uploads.github.com` and `github.com`. The pod sends its requests there, and githubgate checks the ServiceAccount token of the caller. ([#95](https://github.com/solidDoWant/githubgate/pull/95))
+- githubgate checks each request against the proxy rules of the caller. It forwards an allowed request to GitHub with an installation token, and the token never goes to the pod. ([#99](https://github.com/solidDoWant/githubgate/pull/99), [#91](https://github.com/solidDoWant/githubgate/pull/91))
+- githubgate reads each GraphQL request before it forwards it. It refuses batches, persisted queries, subscriptions and requests that it cannot read with one meaning. It forwards a rebuilt copy of the request. ([#94](https://github.com/solidDoWant/githubgate/pull/94), [#120](https://github.com/solidDoWant/githubgate/pull/120))
+- `pushRefs` limits the branches and tags that `git push` can change. githubgate refuses a push to other refs, and git shows the reason for each ref. ([#100](https://github.com/solidDoWant/githubgate/pull/100))
+- Under `pushRefs`, githubgate also refuses other requests that can change a ref outside the list. It refuses creating a deployment, because GitHub can merge the default branch into the ref of the deployment. It refuses publishing a draft release without `tag_name`, because githubgate cannot check the tag that GitHub then creates. ([#121](https://github.com/solidDoWant/githubgate/pull/121), [#127](https://github.com/solidDoWant/githubgate/pull/127))
+
+### Access policies
+
+- A rule of a `GitHubAccessPolicy` takes a `proxy` block with `enabled`, `pushRefs`, `allowOperations`, `denyOperations`, `allowMutations` and `denyMutations`. A rule must turn on `token.enabled`, `proxy.enabled` or both. Token mode uses only the rules with `token.enabled`. ([#93](https://github.com/solidDoWant/githubgate/pull/93))
+- `pushRefs` and the operation and mutation lists need token mode off in the same rule. A caller with a token can go around them. ([#93](https://github.com/solidDoWant/githubgate/pull/93))
+
+### Client (`git`, `gh`)
+
+- `githubgate-client push` publishes your local commits through the GitHub API. GitHub signs the commits, so they show as verified. ([#92](https://github.com/solidDoWant/githubgate/pull/92))
+- The client works in proxy mode with `configure --proxy`, `git-credential --proxy`, `gh --proxy` and `push --proxy`. It sends the ServiceAccount token to the githubgate proxy and trusts only the proxy CA in `GITHUBGATE_PROXY_CA_FILE`. ([#104](https://github.com/solidDoWant/githubgate/pull/104))
+- `gh --proxy` can download release assets and archives. For this, it needs `GITHUBGATE_PROXY_ADDRESS` (the IP address of the proxy) or `GITHUBGATE_PROXY_HOST` (the name of the proxy Service) in the pod. Without one of them, it stops before it sends the token. ([#126](https://github.com/solidDoWant/githubgate/pull/126))
+
+### Deployment
+
+- The chart values `proxy.enabled`, `proxy.clusterIP` and `proxy.ca` serve proxy mode on the `githubgate-proxy` Service. cert-manager creates the proxy certificate from a CA that you limit to `github.com` and its subdomains. ([#98](https://github.com/solidDoWant/githubgate/pull/98), [#108](https://github.com/solidDoWant/githubgate/pull/108))
+- The chart values `proxy.upstreams.*` and `hostAliases`, and the server flags `--proxy-upstream-api`, `--proxy-upstream-uploads`, `--proxy-upstream-git` and `--proxy-upstream-ca-file`, send proxied requests to another GitHub. ([#99](https://github.com/solidDoWant/githubgate/pull/99))
+- The guides for proxy mode and signed commits are under `docs/user/` and `docs/admin/`. ([#106](https://github.com/solidDoWant/githubgate/pull/106))
+
+### Security
+
+- A small GraphQL request with deep nesting can no longer make the proxy use hundreds of MiB of memory before the policy check. githubgate refuses a rebuilt request over 1 MiB with `413 too_large`. ([#120](https://github.com/solidDoWant/githubgate/pull/120))
+- The proxy closes a connection when no data moves on it for 5 minutes. A pod can no longer use up the proxy with stalled requests. ([#122](https://github.com/solidDoWant/githubgate/pull/122))
+
+### Fixes
+
+- `git push` of more than 1 MiB through the proxy works. Before, the probe request of git failed. ([#117](https://github.com/solidDoWant/githubgate/pull/117))
+- `git clone` and `git fetch` through the proxy no longer fail with `415` when git compresses its request. This happened with many branches or tags, or with many local commits. ([#128](https://github.com/solidDoWant/githubgate/pull/128))
+
+Internal work: fake GitHub endpoints for proxy mode and signed commits, end-to-end and live tests, CI, agent tooling and design documents.
+
+### Known issues
+
+None.
+
 ## 0.1.0
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount, and githubgate gives it a short-lived GitHub token. That token covers only the repositories and permissions that the policy of its namespace allows. This is the first release. It covers token mode, which is phase 1 of the project. Install it with the Helm chart:

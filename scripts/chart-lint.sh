@@ -38,6 +38,15 @@ for want in 'name: githubgate-proxy' 'clusterIP: "10.96.0.50"' '- --proxy$' 'api
 done
 grep -qF 'name: githubgate-proxy' <<<"$default" && fail "proxy rendered while disabled"
 helm template githubgate "$chart" "${required[@]}" --set proxy.enabled=true >/dev/null 2>&1 && fail "proxy.enabled without proxy.ca.name rendered"
+grep -qF 'MutatingWebhookConfiguration' <<<"$default" && fail "injection rendered while disabled"
+grep -qF -- '--inject' <<<"$default" && fail "inject flags rendered while disabled"
+inject=$(helm template githubgate "$chart" --namespace githubgate "${required[@]}" --set inject.enabled=true --set inject.image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111 --set inject.proxyCAConfigMap=proxy-ca-public --set inject.extraCAConfigMap=extra-ca)
+for want in 'kind: MutatingWebhookConfiguration' 'path: /inject-pod' 'failurePolicy: Fail' 'reinvocationPolicy: IfNeeded' 'timeoutSeconds: 5' 'sideEffects: None' 'githubgate.soliddowant.dev/inject' 'kubernetes.io/metadata.name' 'NotIn' '"githubgate"' 'inject-ca-from: githubgate/githubgate-webhook' '- --inject$' '- --inject-image=ghcr.io/soliddowant/githubgate-client@sha256:1111' '- --inject-proxy-ca-file=/var/run/githubgate/inject-proxy-ca/ca.crt' '- --inject-extra-ca-file=' 'name: proxy-ca-public' 'name: githubgate-webhook$'; do
+	grep -qE -- "$want" <<<"$inject" || fail "inject render lacks: $want"
+done
+grep -qF -- '--inject-proxy-address' <<<"$inject" && fail "inject proxy address set without a value"
+helm template githubgate "$chart" "${required[@]}" --set inject.enabled=true --set inject.proxyCAConfigMap=x >/dev/null 2>&1 && fail "inject.enabled without a digest rendered"
+helm template githubgate "$chart" "${required[@]}" --set inject.enabled=true --set inject.image.digest=sha256:1 >/dev/null 2>&1 && fail "inject.enabled without proxyCAConfigMap rendered"
 # Every image is pinned by digest.
 grep -E '^ +image:' <<<"$default" | grep -qv '@sha256:' && fail "an image is not pinned by digest"
 echo "chart-lint: passed"

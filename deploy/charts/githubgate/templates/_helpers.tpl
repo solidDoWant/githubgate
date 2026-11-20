@@ -38,3 +38,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "githubgate.adminNamespaces" -}}
 {{- if .Values.adminNamespaces }}{{ join "," .Values.adminNamespaces }}{{ else }}{{ .Release.Namespace }}{{ end }}
 {{- end }}
+
+{{- /* Non-empty when the webhook server runs: the validating or the injection webhook is on. */}}
+{{- define "githubgate.webhookServer" -}}
+{{- if or .Values.webhook.enabled .Values.inject.enabled }}true{{ end }}
+{{- end }}

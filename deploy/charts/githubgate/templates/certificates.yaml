@@ -60,7 +60,7 @@ spec:
   issuerRef:
     name: {{ $fullname }}
     kind: Issuer
-{{- if .Values.webhook.enabled }}
+{{- if include "githubgate.webhookServer" . }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

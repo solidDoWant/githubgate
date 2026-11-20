@@ -5,6 +5,7 @@ package v1alpha1_test
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -89,6 +90,34 @@ func validPolicy(name string) *githubgatev1alpha1.GitHubAccessPolicy {
 			}},
 		},
 	}
+}
+
+// policyWithLists returns a valid policy with the given number of distinct
+// ServiceAccounts, rules and repositories in each rule.
+func policyWithLists(name string, serviceAccounts, rules, repositories int) *githubgatev1alpha1.GitHubAccessPolicy {
+	policy := validPolicy(name)
+
+	policy.Spec.ServiceAccounts = nil
+	for index := range serviceAccounts {
+		policy.Spec.ServiceAccounts = append(policy.Spec.ServiceAccounts, "sa-"+strconv.Itoa(index))
+	}
+
+	patterns := []githubgatev1alpha1.Repository{}
+	for index := range repositories {
+		patterns = append(patterns, githubgatev1alpha1.Repository("repo-"+strconv.Itoa(index)))
+	}
+
+	template := policy.Spec.Rules[0]
+	policy.Spec.Rules = nil
+
+	for index := range rules {
+		rule := template
+		rule.Name = "rule-" + strconv.Itoa(index)
+		rule.Repositories = patterns
+		policy.Spec.Rules = append(policy.Spec.Rules, rule)
+	}
+
+	return policy
 }
 
 func TestCRDValidation(t *testing.T) {
@@ -199,6 +228,24 @@ func TestCRDValidation(t *testing.T) {
 
 			return policy
 		}},
+		{name: "policy with 256 service accounts", object: func(n string) client.Object {
+			return policyWithLists(n, 256, 1, 1)
+		}},
+		{name: "policy with 257 service accounts", invalid: true, object: func(n string) client.Object {
+			return policyWithLists(n, 257, 1, 1)
+		}},
+		{name: "policy with 256 rules", object: func(n string) client.Object {
+			return policyWithLists(n, 1, 256, 1)
+		}},
+		{name: "policy with 257 rules", invalid: true, object: func(n string) client.Object {
+			return policyWithLists(n, 1, 257, 1)
+		}},
+		{name: "policy rule with 256 repositories", object: func(n string) client.Object {
+			return policyWithLists(n, 1, 1, 256)
+		}},
+		{name: "policy rule with 257 repositories", invalid: true, object: func(n string) client.Object {
+			return policyWithLists(n, 1, 1, 257)
+		}},
 		{name: "policy with duplicate rule names", invalid: true, object: func(n string) client.Object {
 			policy := validPolicy(n)
 			policy.Spec.Rules = append(policy.Spec.Rules, policy.Spec.Rules[0])
@@ -209,7 +256,7 @@ func TestCRDValidation(t *testing.T) {
 
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			object := test.object(strings.ReplaceAll(strings.ToLower(test.name), " ", "-") + "-" + string(rune('a'+index)))
+			object := test.object(strings.ReplaceAll(strings.ToLower(test.name), " ", "-") + "-" + strconv.Itoa(index))
 			err := k8s.Create(t.Context(), object)
 
 			if test.invalid {

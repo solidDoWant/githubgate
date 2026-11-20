@@ -36,11 +36,13 @@ docs/README.md             This page.
 
 docs/user/
   README.md                The pages for workload users.
+  getting-access.md        Get GitHub access in a Tekton task or a Coder workspace, and read a refusal.
   client.md                The githubgate-client commands and settings.
   crd-reference.md         Every resource field (generated).
 
 docs/admin/
   README.md                The pages for admins.
+  token-mode-setup.md      Install, App, installation, ceiling, policy and status.
   chart-values.md          Every Helm chart value (generated).
 
 docs/dev/

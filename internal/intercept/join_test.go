@@ -1,6 +1,7 @@
 package intercept
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -50,11 +51,21 @@ func TestJoinedFileFollowsItsSource(t *testing.T) {
 	joined := filepath.Join(trustDir, "join", "main", "SSL_CERT_FILE")
 
 	done := make(chan error, 1)
+	runCtx, cancelRun := context.WithCancel(t.Context())
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	tokenFile := writeToken(t, "sa-token")
+
+	// Registered after the temporary directories, so it runs before they are removed.
+	t.Cleanup(func() {
+		cancelRun()
+		assert.NoError(t, <-done)
+	})
 
 	go func() {
-		done <- Run(t.Context(), Options{
-			Listener: listener, ProxyAddress: stub.address(), ProxyCA: stub.caPEM, TokenFile: writeToken(t, "sa-token"),
-			TrustDir: trustDir, StateDir: filepath.Join(t.TempDir(), "state"),
+		done <- Run(runCtx, Options{
+			Listener: listener, ProxyAddress: stub.address(), ProxyCA: stub.caPEM, TokenFile: tokenFile,
+			TrustDir: trustDir, StateDir: stateDir,
 			Joins:        []Join{{Container: "main", Variable: "SSL_CERT_FILE", Source: source}},
 			JoinInterval: 10 * time.Millisecond,
 		})

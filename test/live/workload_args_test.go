@@ -80,15 +80,34 @@ func inWorkload(network string, command ...string) []string {
 		"mount --bind " + workloadHostsFile + " /etc/hosts && exec \"$@\"", "sh"}, command...)
 }
 
-// interceptExecArgs are the docker arguments that start the interceptor.
+// interceptLogFile holds the interceptor's output inside the container.
+const interceptLogFile = workloadWork + "/intercept.log"
+
+// interceptSharedArgs are the options the interceptor and its readiness probe
+// must agree on, so the probe looks where the interceptor works.
+func interceptSharedArgs() []string {
+	return []string{"--listen", interceptListen, "--trust-dir", workloadTrust}
+}
+
+// interceptExecArgs are the docker arguments that start the interceptor, with
+// its output sent to interceptLogFile.
 func interceptExecArgs(name, network, port string) []string {
-	return append([]string{"exec", "-d", name}, inWorkload(network, workloadWork+"/"+clientBinary, "intercept",
-		"--listen", interceptListen,
+	command := append([]string{workloadWork + "/" + clientBinary, "intercept"}, interceptSharedArgs()...)
+	command = append(command,
 		"--proxy-address", proxyAddress(network, port),
 		"--proxy-ca", "@"+workloadWork+"/proxy-ca.crt",
 		"--token-file", workloadWork+"/token",
-		"--trust-dir", workloadTrust,
-		"--state-dir", "/state")...)
+		"--state-dir", "/state")
+	logged := append([]string{"sh", "-c", "exec \"$@\" >" + interceptLogFile + " 2>&1", "sh"}, command...)
+
+	return append([]string{"exec", "-d", name}, inWorkload(network, logged...)...)
+}
+
+// interceptProbeArgs are the docker arguments that check the interceptor is ready.
+func interceptProbeArgs(name, network string) []string {
+	command := append([]string{workloadWork + "/" + clientBinary, "intercept", "--probe"}, interceptSharedArgs()...)
+
+	return append([]string{"exec", name}, inWorkload(network, command...)...)
 }
 
 func TestWorkloadDockerArguments(t *testing.T) {
@@ -123,6 +142,18 @@ func TestWorkloadDockerArguments(t *testing.T) {
 		assert.Equal(t, []string{"tool", "a"}, inWorkload("", "tool", "a"))
 
 		assert.Contains(t, strings.Join(interceptExecArgs("c", "container:abc", "1"), " "), "unshare -m")
+	})
+
+	t.Run("the probe checks the same listen address and trust directory as the interceptor", func(t *testing.T) {
+		for _, network := range []string{"", "container:abc"} {
+			start := strings.Join(interceptExecArgs("c", network, "1"), " ")
+			probe := strings.Join(interceptProbeArgs("c", network), " ")
+			shared := strings.Join(interceptSharedArgs(), " ")
+
+			assert.Equal(t, "--listen "+interceptListen+" --trust-dir "+workloadTrust, shared)
+			assert.Contains(t, start, shared)
+			assert.Contains(t, probe, "intercept --probe "+shared)
+		}
 	})
 
 	t.Run("hosts and listen address use the interceptor address and no bind mounts", func(t *testing.T) {

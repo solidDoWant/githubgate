@@ -130,11 +130,16 @@ func (l *liveEnv) startWorkload(t *testing.T, account string, proxyListener stri
 
 	w := &workload{name: name, live: l, network: network}
 
-	require.Eventually(t, func() bool {
-		_, err := docker(t, append([]string{"exec", name}, inWorkload(network, workloadWork+"/"+clientBinary, "intercept", "--probe")...)...)
+	ready := assert.Eventually(t, func() bool {
+		_, err := docker(t, interceptProbeArgs(name, network)...)
 
 		return err == nil
 	}, time.Minute, time.Second, "the interceptor never became ready")
+	if !ready {
+		output, _ := docker(t, "exec", name, "cat", interceptLogFile)
+		t.Logf("interceptor output:\n%s", output)
+		t.FailNow()
+	}
 
 	return w
 }

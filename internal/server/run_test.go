@@ -65,6 +65,7 @@ func writeCertificate(t *testing.T, dir string, serial int64) (certFile, keyFile
 
 type running struct {
 	api, health string
+	apiListener net.Listener
 	done        chan error
 	cancel      context.CancelFunc
 }
@@ -79,10 +80,11 @@ func startRun(t *testing.T, f *fixture, certFile, keyFile string, delay time.Dur
 
 	ctx, cancel := context.WithCancel(t.Context())
 	r := running{
-		api:    apiListener.Addr().String(),
-		health: healthListener.Addr().String(),
-		done:   make(chan error, 1),
-		cancel: cancel,
+		api:         apiListener.Addr().String(),
+		health:      healthListener.Addr().String(),
+		apiListener: apiListener,
+		done:        make(chan error, 1),
+		cancel:      cancel,
 	}
 
 	go func() {
@@ -221,8 +223,8 @@ func TestRunShutsDownGracefullyAfterTheShutdownDelay(t *testing.T) {
 		t.Fatal("Run did not return after the shutdown delay")
 	}
 
-	_, err := net.Dial("tcp", r.api)
-	require.Error(t, err)
+	// Ask the listener itself: its port number may already belong to someone else.
+	require.ErrorIs(t, r.apiListener.Close(), net.ErrClosed, "Run returned with the API listener still open")
 }
 
 func TestRunClosesIdleConnectionsAndRefusesExcessOnes(t *testing.T) {

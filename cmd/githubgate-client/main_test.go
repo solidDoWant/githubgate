@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -434,4 +435,21 @@ func TestParseGitHubRemote(t *testing.T) {
 func TestUnknownCommandFails(t *testing.T) {
 	_, _, err := runClient(t, nil, "", "nope")
 	require.Error(t, err)
+}
+
+func TestShutdownContextCancelsOnTerminationSignals(t *testing.T) {
+	for name, sig := range map[string]syscall.Signal{"SIGTERM": syscall.SIGTERM, "SIGINT": syscall.SIGINT} {
+		t.Run(name, func(t *testing.T) {
+			ctx, stop := shutdownContext(t.Context())
+			defer stop()
+
+			require.NoError(t, syscall.Kill(os.Getpid(), sig))
+
+			select {
+			case <-ctx.Done():
+			case <-time.After(10 * time.Second):
+				t.Fatal("context was not cancelled by the signal")
+			}
+		})
+	}
 }

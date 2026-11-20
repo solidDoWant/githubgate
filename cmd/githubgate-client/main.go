@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"syscall"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -29,7 +30,7 @@ commands:
 `
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := shutdownContext(context.Background())
 	defer stop()
 
 	env := &environment{
@@ -50,6 +51,12 @@ func main() {
 
 		os.Exit(1)
 	}
+}
+
+// shutdownContext is cancelled on SIGINT and on SIGTERM, which kubelet sends
+// to stop a sidecar, so long-running commands shut down gracefully.
+func shutdownContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }
 
 // exitError carries the exit code of a wrapped command.

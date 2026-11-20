@@ -27,7 +27,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 10. A GraphQL request that can't be parsed, is a batch (JSON array), has several operations without `operationName`, or hides mutation fields behind fragments is refused.
     Tests: `internal/proxy/graphql: TestClassifyRefusesRequestsItCannotClassify`, `internal/proxy/graphql: TestClassifyReturnsTheOperationKindAndMutationNames`
 11. `git clone` and `git fetch` of an allowed repository work from a proxied pod after `githubgate-client configure --proxy`.
-    Tests:
+    Tests: `test/e2e: TestTokenModeOnKind/git clone and fetch of an allowed repository work from a proxied pod after configure --proxy`, `cmd/githubgate-client: TestProxyCredentialHelperAnswersTheServiceAccountTokenOnlyForGitHub`, `cmd/githubgate-client: TestConfigureProxySetsTheProxyHelperAndOnlyTheProxyCA`
 12. With `pushRefs: [refs/heads/agent/**]`, pushing `agent/x` works, while pushing `master` or a tag is refused with git showing githubgate's message naming the ref, and nothing reaches GitHub.
     Tests: `test/e2e: TestTokenModeOnKind/with pushRefs a push to an allowed branch works and a push to master or a tag is refused naming the ref`, `internal/proxy: TestProxyForwardsAPushOfAllowedRefsUnchanged`, `internal/proxy: TestProxyRefusesAPushOutsidePushRefsInGitsProtocol`
 13. Uploading a release asset through `uploads.github.com` follows the same operation rules as the API.
@@ -50,7 +50,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 20. A range containing a merge commit, or a change GitHub's API can't express (a submodule), is refused with a message naming the commit, and nothing is published.
     Tests: `cmd/githubgate-client: TestPushRefusesWhatTheAPICannotExpress`
 21. `push` works in token mode and through the proxy, and through the proxy it obeys `pushRefs`.
-    Tests:
+    Tests: `cmd/githubgate-client: TestPushPublishesCommitsThroughTheAPI`, `cmd/githubgate-client: TestPushThroughTheProxySendsTheServiceAccountTokenToTheProxyOnly`, `test/e2e: TestTokenModeOnKind/push through the proxy publishes a branch inside pushRefs and refuses one outside it`
 
 ## Live and docs
 

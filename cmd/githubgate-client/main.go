@@ -18,10 +18,10 @@ const usage = `usage: githubgate-client <command>
 
 commands:
   token [--repo name] [--owner owner] [--permission name=level]... [--installation ns/name]
-  git-credential get|store|erase
-  gh [--repo owner/name] -- <gh args>
-  push [<remote> [<branch>]]
-  configure
+  git-credential [--proxy] get|store|erase
+  gh [--repo owner/name | --proxy] -- <gh args>
+  push [--proxy] [<remote> [<branch>]]
+  configure [--proxy]
   version
 `
 
@@ -85,7 +85,7 @@ func run(ctx context.Context, env *environment, args []string) error {
 	case "push":
 		return runPush(ctx, env, args[1:])
 	case "configure":
-		return runConfigure(ctx, env)
+		return runConfigure(ctx, env, args[1:])
 	default:
 		_, _ = fmt.Fprint(env.stderr, usage)
 

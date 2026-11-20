@@ -30,10 +30,16 @@ type changedFile struct {
 
 // runPush re-creates the local commits that the remote branch lacks through
 // the Git Database API, with no author or committer so GitHub signs them, and
-// moves the remote branch once without force.
+// moves the remote branch once without force. With --proxy the requests go
+// through the proxy with the ServiceAccount token.
 func runPush(ctx context.Context, env *environment, args []string) error {
+	proxy := len(args) > 0 && args[0] == "--proxy"
+	if proxy {
+		args = args[1:]
+	}
+
 	if len(args) > 2 {
-		return errors.New("usage: push [<remote> [<branch>]]")
+		return errors.New("usage: push [--proxy] [<remote> [<branch>]]")
 	}
 
 	remote := "origin"
@@ -97,7 +103,7 @@ func runPush(ctx context.Context, env *environment, args []string) error {
 		}
 	}
 
-	api, err := newGitHubAPI(ctx, env, owner, name)
+	api, err := newGitHubAPI(ctx, env, owner, name, proxy)
 	if err != nil {
 		return err
 	}
@@ -320,7 +326,7 @@ type githubAPI struct {
 	token  string
 }
 
-func newGitHubAPI(ctx context.Context, env *environment, owner, name string) (*githubAPI, error) {
+func newGitHubAPI(ctx context.Context, env *environment, owner, name string, proxy bool) (*githubAPI, error) {
 	root := env.getenv("GITHUBGATE_GITHUB_API_URL")
 	if root == "" {
 		root = "https://api.github.com"
@@ -329,6 +335,32 @@ func newGitHubAPI(ctx context.Context, env *environment, owner, name string) (*g
 	parsed, err := url.Parse(root)
 	if err != nil || parsed.Host == "" {
 		return nil, fmt.Errorf("GITHUBGATE_GITHUB_API_URL %q is not a valid URL", root)
+	}
+
+	api := &githubAPI{
+		root: strings.TrimSuffix(parsed.String(), "/"),
+		repo: "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name),
+	}
+
+	if proxy {
+		// The ServiceAccount token goes to this URL, so it must be the proxy:
+		// https, verified against the proxy CA alone.
+		if parsed.Scheme != "https" {
+			return nil, errors.New("GITHUBGATE_GITHUB_API_URL must use https with --proxy")
+		}
+
+		_, pool, err := proxyCA(env)
+		if err != nil {
+			return nil, err
+		}
+
+		if api.token, err = serviceAccountToken(env); err != nil {
+			return nil, err
+		}
+
+		api.client = proxyHTTPClient(pool)
+
+		return api, nil
 	}
 
 	// The installation token goes to this URL, so it must be encrypted except
@@ -346,15 +378,13 @@ func newGitHubAPI(ctx context.Context, env *environment, owner, name string) (*g
 		return nil, err
 	}
 
-	return &githubAPI{
-		client: &http.Client{
-			Timeout:       requestTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-		root:  strings.TrimSuffix(parsed.String(), "/"),
-		repo:  "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name),
-		token: response.Token,
-	}, nil
+	api.token = response.Token
+	api.client = &http.Client{
+		Timeout:       requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	return api, nil
 }
 
 func isLoopback(host string) bool {

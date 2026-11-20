@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -437,13 +438,27 @@ spec:
         enabled: true
         allowOperations: [repos/get]
         pushRefs: [refs/heads/agent/**]
+---
+apiVersion: githubgate.soliddowant.dev/v1alpha1
+kind: GitHubAccessPolicy
+metadata: {name: ci-proxied-push, namespace: %[2]s}
+spec:
+  serviceAccounts: [ci-proxied-push]
+  rules:
+    - name: proxy
+      installationRef: {namespace: %[1]s, name: acme}
+      repositories: [%[5]s]
+      permissions: {contents: write}
+      proxy:
+        enabled: true
+        pushRefs: [refs/heads/agent/**]
 `, gateNamespace, callerNamespace, appID, owner, repository))
 
 	for _, kind := range []string{"githubapp/e2e", "githubinstallation/acme"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", gateNamespace, kind, "--timeout=2m")
 	}
 
-	for _, policy := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited"} {
+	for _, policy := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited", "ci-proxied-push"} {
 		c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", callerNamespace, "githubaccesspolicy/"+policy, "--timeout=2m")
 	}
 
@@ -527,6 +542,7 @@ func TestTokenModeOnKind(t *testing.T) {
 
 	c.startCallerPod(t, "ci-proxied", true)
 	c.startCallerPod(t, "ci-proxied-limited", true)
+	c.startCallerPod(t, "ci-proxied-push", true)
 
 	// Output of every failed or refused call, for the leak search.
 	var clientOutput []string
@@ -899,6 +915,60 @@ done
 		for _, ref := range []string{"refs/heads/master", "refs/tags/push-refs-v1"} {
 			assert.Contains(t, out, fmt.Sprintf("githubgate: repository %q: ref %q is outside pushRefs", owner+"/"+repository, ref))
 		}
+	})
+
+	// proxyGitSetup is the documented setup of git in a proxied pod.
+	proxyGitSetup := fmt.Sprintf(`export PATH=%s:$PATH GIT_TERMINAL_PROMPT=0
+githubgate-client configure --proxy >/dev/null
+git config --global user.name e2e
+git config --global user.email e2e@example.com
+`, path.Dir(clientBinary))
+
+	t.Run("git clone and fetch of an allowed repository work from a proxied pod after configure --proxy", func(t *testing.T) {
+		proxied(t, "ci-proxied", proxyGitSetup+fmt.Sprintf(`rm -rf /tmp/proxy-clone
+git clone -q https://github.com/%s/%s.git /tmp/proxy-clone
+`, owner, repository))
+
+		// A commit pushed by someone else, which the fetch must bring.
+		out, err := c.exec(ctx, callerNamespace, "ci-client", gitSetup+fmt.Sprintf(`rm -rf /tmp/fetch-source
+git clone -q https://github.com/%s/%s.git /tmp/fetch-source
+cd /tmp/fetch-source
+git commit -q --allow-empty -m fetched-through-the-proxy
+git push -q origin HEAD:refs/heads/proxy-fetch
+git rev-parse HEAD
+`, owner, repository))
+		require.NoError(t, err, out)
+
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		sha := lines[len(lines)-1]
+
+		out = proxied(t, "ci-proxied", proxyGitSetup+`cd /tmp/proxy-clone
+git fetch -q origin
+git rev-parse origin/proxy-fetch
+`)
+		assert.Equal(t, sha, strings.TrimSpace(out))
+	})
+
+	t.Run("push through the proxy publishes a branch inside pushRefs and refuses one outside it", func(t *testing.T) {
+		out := proxied(t, "ci-proxied-push", proxyGitSetup+fmt.Sprintf(`rm -rf /tmp/proxy-push
+git clone -q https://github.com/%s/%s.git /tmp/proxy-push
+cd /tmp/proxy-push
+git checkout -q -b agent/signed
+echo signed >signed.txt
+git add signed.txt
+git commit -q -m "signed through the proxy"
+githubgate-client push --proxy
+test "$(git ls-remote origin refs/heads/agent/signed | cut -f1)" = "$(git rev-parse HEAD)"
+git checkout -q -b outside
+echo outside >outside.txt
+git add outside.txt
+git commit -q -m "outside pushRefs"
+if githubgate-client push --proxy 2>&1; then echo "published outside pushRefs"; exit 1; fi
+if [ -n "$(git ls-remote origin refs/heads/outside)" ]; then echo "outside reached GitHub"; exit 1; fi
+`, owner, repository))
+
+		assert.Contains(t, out, "published 1 commit(s) to agent/signed")
+		assert.Contains(t, out, `ref "refs/heads/outside" is outside pushRefs`)
 	})
 
 	t.Run("killing a replica during a stream of proxied requests fails no request beyond the one in flight", func(t *testing.T) {

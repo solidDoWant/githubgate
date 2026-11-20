@@ -16,8 +16,15 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | `spec.rules[].installationRef.namespace` | string |  | Namespace defaults to the referring object's own namespace. |
 | `spec.rules[].name` | string | yes | Name identifies the rule within the policy. |
 | `spec.rules[].permissions` | object | yes | Permissions maps GitHub App permission names to levels. |
+| `spec.rules[].proxy` | object |  | Proxy configures proxy mode. |
+| `spec.rules[].proxy.allowMutations` | list of string |  | AllowMutations, when set, are the only GraphQL mutations allowed. At most 256. |
+| `spec.rules[].proxy.allowOperations` | list of string |  | AllowOperations, when set, are the only REST operations allowed. At most 256. |
+| `spec.rules[].proxy.denyMutations` | list of string |  | DenyMutations are GraphQL mutations that are refused. Deny wins over allow. At most 256. |
+| `spec.rules[].proxy.denyOperations` | list of string |  | DenyOperations are REST operations that are refused. Deny wins over allow. At most 256. |
+| `spec.rules[].proxy.enabled` | boolean | yes | Enabled turns proxy mode on for the rule. It has no default. |
+| `spec.rules[].proxy.pushRefs` | list of string |  | PushRefs, when set, are the only refs a request may write. At most 256. |
 | `spec.rules[].repositories` | list of string | yes | Repositories are names or `*` globs under the installation's owner. At most 256. |
-| `spec.rules[].token` | object | yes | Token configures token mode. |
+| `spec.rules[].token` | object |  | Token configures token mode. |
 | `spec.rules[].token.enabled` | boolean | yes | Enabled turns token mode on for the rule. It has no default. |
 | `spec.serviceAccounts` | list of string | yes | ServiceAccounts are names of ServiceAccounts in this namespace. At most 256. |
 | `status.conditions` | list of object |  | Conditions include `Ready`. |

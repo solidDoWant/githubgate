@@ -599,3 +599,45 @@ func TestRulesThePolicyCannotUseGrantNothing(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenModeUsesOnlyRulesThatEnableIt(t *testing.T) {
+	proxyOnly := func(inputs *model.Inputs) {
+		rule := &inputs.Policies[0].Spec.Rules[0]
+		rule.Token = nil
+		rule.Proxy = &githubgatev1alpha1.ProxyMode{Enabled: true}
+	}
+
+	tests := []struct {
+		name   string
+		modify func(inputs *model.Inputs)
+		status int
+	}{
+		{name: "a rule with token mode gives a token", status: http.StatusOK},
+		{name: "a rule with only proxy mode gives no token", modify: proxyOnly, status: http.StatusForbidden},
+		{
+			name: "a rule with both modes gives a token",
+			modify: func(inputs *model.Inputs) {
+				inputs.Policies[0].Spec.Rules[0].Proxy = &githubgatev1alpha1.ProxyMode{Enabled: true}
+			},
+			status: http.StatusOK,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+
+			if test.modify != nil {
+				test.modify(&f.inputs)
+				f.rebuild()
+			}
+
+			got := f.request(t, caller, `{"repositories": ["foo"]}`)
+			assert.Equal(t, test.status, got.status, got.err.Message)
+
+			if test.status != http.StatusOK {
+				assert.Equal(t, "denied", got.err.Error)
+				assert.Empty(t, f.fake.MintLog())
+			}
+		})
+	}
+}

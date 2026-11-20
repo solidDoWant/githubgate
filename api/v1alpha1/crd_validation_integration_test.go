@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -90,6 +91,48 @@ func validPolicy(name string) *githubgatev1alpha1.GitHubAccessPolicy {
 			}},
 		},
 	}
+}
+
+// proxyPolicy returns a valid policy whose rule enables only proxy mode.
+func proxyPolicy(name string, proxy githubgatev1alpha1.ProxyMode) *githubgatev1alpha1.GitHubAccessPolicy {
+	policy := validPolicy(name)
+	proxy.Enabled = true
+	policy.Spec.Rules[0].Token = nil
+	policy.Spec.Rules[0].Proxy = &proxy
+
+	return policy
+}
+
+// tokenProxyPolicy returns a policy whose rule enables token mode and has
+// the given proxy mode.
+func tokenProxyPolicy(name string, proxy githubgatev1alpha1.ProxyMode) *githubgatev1alpha1.GitHubAccessPolicy {
+	policy := proxyPolicy(name, proxy)
+	policy.Spec.Rules[0].Token = &githubgatev1alpha1.TokenMode{Enabled: true}
+
+	return policy
+}
+
+// emptyProxyListPolicy returns a proxy-only policy whose rule sets one proxy
+// list to an empty list. It is unstructured because the typed object omits
+// empty lists.
+func emptyProxyListPolicy(name, field string) client.Object {
+	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(proxyPolicy(name, githubgatev1alpha1.ProxyMode{}))
+	if err != nil {
+		panic(err)
+	}
+
+	rules, _, _ := unstructured.NestedSlice(content, "spec", "rules")
+	rule := rules[0].(map[string]any)
+	rule["proxy"].(map[string]any)[field] = []any{}
+
+	if err := unstructured.SetNestedSlice(content, rules, "spec", "rules"); err != nil {
+		panic(err)
+	}
+
+	object := &unstructured.Unstructured{Object: content}
+	object.SetGroupVersionKind(githubgatev1alpha1.GroupVersion.WithKind("GitHubAccessPolicy"))
+
+	return object
 }
 
 // policyWithLists returns a valid policy with the given number of distinct
@@ -179,6 +222,82 @@ func TestCRDValidation(t *testing.T) {
 			policy.Spec.Rules[0].Token = nil
 
 			return policy
+		}},
+		{name: "policy rule with only proxy mode", object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{})
+		}},
+		{name: "policy rule with both modes", object: func(n string) client.Object {
+			policy := validPolicy(n)
+			policy.Spec.Rules[0].Proxy = &githubgatev1alpha1.ProxyMode{Enabled: true}
+
+			return policy
+		}},
+		{name: "policy rule with proxy disabled and no token", invalid: true, object: func(n string) client.Object {
+			policy := proxyPolicy(n, githubgatev1alpha1.ProxyMode{})
+			policy.Spec.Rules[0].Proxy.Enabled = false
+
+			return policy
+		}},
+		{name: "policy rule with token and proxy both disabled", invalid: true, object: func(n string) client.Object {
+			policy := validPolicy(n)
+			policy.Spec.Rules[0].Token.Enabled = false
+			policy.Spec.Rules[0].Proxy = &githubgatev1alpha1.ProxyMode{}
+
+			return policy
+		}},
+		{name: "proxy rule with every list", object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{
+				PushRefs:        []githubgatev1alpha1.RefPattern{"refs/heads/agent/**"},
+				AllowOperations: []githubgatev1alpha1.OperationPattern{"repos/*"},
+				DenyOperations:  []githubgatev1alpha1.OperationPattern{"repos/create-release"},
+				AllowMutations:  []githubgatev1alpha1.MutationPattern{"create*"},
+				DenyMutations:   []githubgatev1alpha1.MutationPattern{"mergePullRequest"},
+			})
+		}},
+		{name: "token rule with proxy pushRefs", invalid: true, object: func(n string) client.Object {
+			return tokenProxyPolicy(n, githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/x"}})
+		}},
+		{name: "token rule with proxy allowOperations", invalid: true, object: func(n string) client.Object {
+			return tokenProxyPolicy(n, githubgatev1alpha1.ProxyMode{AllowOperations: []githubgatev1alpha1.OperationPattern{"repos/get"}})
+		}},
+		{name: "token rule with proxy denyOperations", invalid: true, object: func(n string) client.Object {
+			return tokenProxyPolicy(n, githubgatev1alpha1.ProxyMode{DenyOperations: []githubgatev1alpha1.OperationPattern{"repos/get"}})
+		}},
+		{name: "token rule with proxy allowMutations", invalid: true, object: func(n string) client.Object {
+			return tokenProxyPolicy(n, githubgatev1alpha1.ProxyMode{AllowMutations: []githubgatev1alpha1.MutationPattern{"addStar"}})
+		}},
+		{name: "token rule with proxy denyMutations", invalid: true, object: func(n string) client.Object {
+			return tokenProxyPolicy(n, githubgatev1alpha1.ProxyMode{DenyMutations: []githubgatev1alpha1.MutationPattern{"addStar"}})
+		}},
+		{name: "token rule with disabled proxy carrying a list", invalid: true, object: func(n string) client.Object {
+			policy := tokenProxyPolicy(n, githubgatev1alpha1.ProxyMode{DenyOperations: []githubgatev1alpha1.OperationPattern{"repos/get"}})
+			policy.Spec.Rules[0].Proxy.Enabled = false
+
+			return policy
+		}},
+		{name: "proxy rule with empty pushRefs", invalid: true, object: func(n string) client.Object {
+			return emptyProxyListPolicy(n, "pushRefs")
+		}},
+		{name: "proxy rule with empty denyOperations", invalid: true, object: func(n string) client.Object {
+			return emptyProxyListPolicy(n, "denyOperations")
+		}},
+		{name: "proxy rule with empty allowMutations", invalid: true, object: func(n string) client.Object {
+			return emptyProxyListPolicy(n, "allowMutations")
+		}},
+		{name: "proxy rule with a ref outside refs", invalid: true, object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"heads/main"}})
+		}},
+		{name: "proxy rule with a ref containing a backslash", invalid: true, object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/a\\b"}})
+		}},
+		{name: "proxy rule with a ref containing a control character", invalid: true, object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/a\x01"}})
+		}},
+		{name: "proxy rule with an upper-case operation", invalid: true, object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{DenyOperations: []githubgatev1alpha1.OperationPattern{"Repos/get"}})
+		}},
+		{name: "proxy rule with a mutation containing a slash", invalid: true, object: func(n string) client.Object {
+			return proxyPolicy(n, githubgatev1alpha1.ProxyMode{DenyMutations: []githubgatev1alpha1.MutationPattern{"merge/x"}})
 		}},
 		{name: "policy repository with slash", invalid: true, object: func(n string) client.Object {
 			policy := validPolicy(n)

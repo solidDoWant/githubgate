@@ -112,7 +112,8 @@ func Resolve(caller Identity, request Request, view View) Decision {
 	byInstallation := map[types.NamespacedName][]*model.Rule{}
 
 	for _, rule := range view.Rules(caller.Namespace, caller.ServiceAccount) {
-		if rule.Installation == nil {
+		// Token mode uses only the rules that enable it.
+		if rule.Installation == nil || !rule.Token {
 			continue
 		}
 

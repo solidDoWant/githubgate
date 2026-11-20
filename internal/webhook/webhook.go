@@ -136,6 +136,10 @@ func (h *Handler) validateRules(ctx context.Context, namespace string, rules []g
 			return message
 		}
 
+		if field, message := model.InvalidProxyMode(rule.Proxy); field != "" {
+			return path + "." + field + ": " + message
+		}
+
 		ref := types.NamespacedName{Namespace: rule.InstallationRef.Namespace, Name: rule.InstallationRef.Name}
 		if ref.Namespace == "" {
 			ref.Namespace = namespace

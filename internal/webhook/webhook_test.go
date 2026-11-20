@@ -176,3 +176,86 @@ func TestMalformedReviewIsRejected(t *testing.T) {
 		httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/validate", bytes.NewReader([]byte("{"))))
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
+
+func proxyPolicy(proxy githubgatev1alpha1.ProxyMode) *githubgatev1alpha1.GitHubAccessPolicy {
+	accessRule := rule("org", "app-1", map[string]githubgatev1alpha1.Level{"contents": "write"})
+	accessRule.Token = nil
+	proxy.Enabled = true
+	accessRule.Proxy = &proxy
+
+	return policy(accessRule)
+}
+
+func TestProxyListEntriesMustMatchTheCatalogue(t *testing.T) {
+	tests := []struct {
+		name    string
+		proxy   githubgatev1alpha1.ProxyMode
+		allowed bool
+		message string
+	}{
+		{name: "proxy rule without lists", allowed: true},
+		{
+			name: "entries that match the catalogues",
+			proxy: githubgatev1alpha1.ProxyMode{
+				PushRefs:        []githubgatev1alpha1.RefPattern{"refs/heads/agent/**"},
+				AllowOperations: []githubgatev1alpha1.OperationPattern{"repos/*", "issues/create-comment"},
+				DenyOperations:  []githubgatev1alpha1.OperationPattern{"repos/create-release"},
+				AllowMutations:  []githubgatev1alpha1.MutationPattern{"create*"},
+				DenyMutations:   []githubgatev1alpha1.MutationPattern{"mergePullRequest"},
+			},
+			allowed: true,
+		},
+		{
+			name:    "an allowed operation that matches nothing",
+			proxy:   githubgatev1alpha1.ProxyMode{AllowOperations: []githubgatev1alpha1.OperationPattern{"repos/get", "repos/no-such-thing"}},
+			message: `spec.rules[0].proxy.allowOperations[1]: "repos/no-such-thing"`,
+		},
+		{
+			name:    "a denied operation that matches nothing",
+			proxy:   githubgatev1alpha1.ProxyMode{DenyOperations: []githubgatev1alpha1.OperationPattern{"repos/create-releases"}},
+			message: `spec.rules[0].proxy.denyOperations[0]: "repos/create-releases"`,
+		},
+		{
+			name:    "an operation pattern whose star would need an empty match",
+			proxy:   githubgatev1alpha1.ProxyMode{DenyOperations: []githubgatev1alpha1.OperationPattern{"repos/create-release*"}},
+			message: `spec.rules[0].proxy.denyOperations[0]: "repos/create-release*"`,
+		},
+		{
+			name:    "an allowed mutation that matches nothing",
+			proxy:   githubgatev1alpha1.ProxyMode{AllowMutations: []githubgatev1alpha1.MutationPattern{"createPullRequests"}},
+			message: `spec.rules[0].proxy.allowMutations[0]: "createPullRequests"`,
+		},
+		{
+			name:    "a denied mutation that matches nothing",
+			proxy:   githubgatev1alpha1.ProxyMode{DenyMutations: []githubgatev1alpha1.MutationPattern{"MergePullRequest"}},
+			message: `spec.rules[0].proxy.denyMutations[0]: "MergePullRequest"`,
+		},
+		{
+			name:    "a ref pattern with two dots",
+			proxy:   githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/main", "refs/heads/a..b"}},
+			message: `spec.rules[0].proxy.pushRefs[1]: "refs/heads/a..b"`,
+		},
+		{
+			name:    "a ref pattern with a reflog selector",
+			proxy:   githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/a@{1}"}},
+			message: `spec.rules[0].proxy.pushRefs[0]: "refs/heads/a@{1}"`,
+		},
+		{
+			name:    "a malformed ref pattern",
+			proxy:   githubgatev1alpha1.ProxyMode{PushRefs: []githubgatev1alpha1.RefPattern{"refs/heads/***"}},
+			message: `spec.rules[0].proxy.pushRefs[0]: "refs/heads/***"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := review(t, "GitHubAccessPolicy", "tenant", proxyPolicy(test.proxy))
+			assert.Equal(t, test.allowed, response.Allowed)
+
+			if !test.allowed {
+				require.NotNil(t, response.Result)
+				assert.Contains(t, response.Result.Message, test.message)
+			}
+		})
+	}
+}

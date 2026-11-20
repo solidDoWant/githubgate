@@ -10,9 +10,88 @@ type TokenMode struct {
 	Enabled bool `json:"enabled"`
 }
 
+// RefPattern is a git ref, or a pattern of refs, starting with `refs/`. A `*`
+// matches one or more characters within one segment; a `**` segment matches
+// one or more whole segments. The webhook also rejects what
+// `git check-ref-format` refuses, such as `..` and `@{`.
+//
+// +kubebuilder:validation:MinLength=6
+// +kubebuilder:validation:MaxLength=255
+// +kubebuilder:validation:Pattern=`^refs/[^\x00-\x20\x7f~^:?\[\\]+$`
+type RefPattern string
+
+// OperationPattern is a GitHub REST operation id, such as
+// `repos/create-release`, or a pattern of them. A `*` matches one or more
+// characters within one segment.
+//
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=255
+// +kubebuilder:validation:Pattern=`^[a-z0-9*/-]+$`
+type OperationPattern string
+
+// MutationPattern is a GitHub GraphQL mutation name, such as
+// `mergePullRequest`, or a pattern of them. A `*` matches one or more
+// characters.
+//
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=255
+// +kubebuilder:validation:Pattern=`^[A-Za-z0-9*]+$`
+type MutationPattern string
+
+// ProxyMode configures proxy mode for a rule.
+type ProxyMode struct {
+	// Enabled turns proxy mode on for the rule. It has no default.
+	Enabled bool `json:"enabled"`
+
+	// PushRefs, when set, are the only refs a request may write. At most 256.
+	//
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=set
+	PushRefs []RefPattern `json:"pushRefs,omitempty"`
+
+	// AllowOperations, when set, are the only REST operations allowed.
+	// At most 256.
+	//
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=set
+	AllowOperations []OperationPattern `json:"allowOperations,omitempty"`
+
+	// DenyOperations are REST operations that are refused. Deny wins over
+	// allow. At most 256.
+	//
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=set
+	DenyOperations []OperationPattern `json:"denyOperations,omitempty"`
+
+	// AllowMutations, when set, are the only GraphQL mutations allowed.
+	// At most 256.
+	//
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=set
+	AllowMutations []MutationPattern `json:"allowMutations,omitempty"`
+
+	// DenyMutations are GraphQL mutations that are refused. Deny wins over
+	// allow. At most 256.
+	//
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=set
+	DenyMutations []MutationPattern `json:"denyMutations,omitempty"`
+}
+
 // AccessRule gives the policy's ServiceAccounts access through one installation.
 //
-// +kubebuilder:validation:XValidation:rule="has(self.token) && self.token.enabled",message="at least one mode must be enabled"
+// +kubebuilder:validation:XValidation:rule="(has(self.token) && self.token.enabled) || (has(self.proxy) && self.proxy.enabled)",message="at least one mode must be enabled"
+// +kubebuilder:validation:XValidation:rule="!(has(self.token) && self.token.enabled) || !has(self.proxy) || !(has(self.proxy.pushRefs) || has(self.proxy.allowOperations) || has(self.proxy.denyOperations) || has(self.proxy.allowMutations) || has(self.proxy.denyMutations))",message="proxy.pushRefs and the proxy operation and mutation lists need token mode off: a token in the caller's hands can't enforce them"
 type AccessRule struct {
 	// Name identifies the rule within the policy.
 	//
@@ -37,7 +116,14 @@ type AccessRule struct {
 	Permissions map[string]Level `json:"permissions"`
 
 	// Token configures token mode.
-	Token *TokenMode `json:"token"`
+	//
+	// +optional
+	Token *TokenMode `json:"token,omitempty"`
+
+	// Proxy configures proxy mode.
+	//
+	// +optional
+	Proxy *ProxyMode `json:"proxy,omitempty"`
 }
 
 // GitHubAccessPolicySpec is the desired state of a GitHubAccessPolicy.

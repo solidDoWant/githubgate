@@ -2,6 +2,31 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.5.0
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release lets the proxy send two more kinds of requests, if a policy turns them on: reads of public repositories of other owners, and downloads from `github.com` web pages such as release assets. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.5.0 --namespace githubgate --create-namespace
+```
+
+### Upgrade notes for admins
+
+None. Policies, chart values and clients of 0.4.0 work without a change. The new settings are off until a policy turns them on. `helm upgrade` adds the new fields to the `GitHubAccessPolicy` CRD.
+
+### Access policies
+
+- A rule can set `publicRead: true` in its `proxy` block. Then read-only requests for repositories of other owners go through the proxy, for example `git clone`, `git fetch`, `gh api repos/OWNER/REPO` and nix flake inputs. Read-only API requests that name no repository also go through, for example users, search and the rate limit. githubgate sends these requests with an installation token that has only `metadata: read`. This token reads public data and no private contents. A private repository of another owner gets `404` from GitHub. A write to a repository outside your installation gets `403`, and the error names the repository. A rule with `publicRead` must name at least one repository without a `*`. GraphQL requests do not use `publicRead`. The details are in [Public repositories and web pages](https://github.com/solidDoWant/githubgate/blob/master/docs/user/interception.md#public-repositories-and-web-pages). ([#215](https://github.com/solidDoWant/githubgate/pull/215))
+- A rule can set `webPaths: true` in its `proxy` block. Then `GET` and `HEAD` requests on `github.com` that are not git go through the proxy, for example `curl -L https://github.com/OWNER/REPO/releases/latest/download/ASSET`. githubgate sends them with no credential and returns redirects to you unchanged. Without this setting, these requests still get `404`. ([#215](https://github.com/solidDoWant/githubgate/pull/215))
+
+### Audit log
+
+- The proxy audit line has a new field, `access`. It tells how githubgate sent an allowed request: `rules` (a token of the rules), `public_read` (the token for public data, and `repositories` names the repository that the caller read) or `web` (no credential). The field is empty when githubgate refused the request. ([#215](https://github.com/solidDoWant/githubgate/pull/215))
+
+### Known issues
+
+None.
+
 ## 0.4.0
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release adds a new mode to the client: a pod that uses interception can now publish commits that GitHub signs. Install or upgrade with the Helm chart:

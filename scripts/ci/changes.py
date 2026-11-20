@@ -28,7 +28,11 @@ E2E_HARNESS = ("test/e2e/**",)
 ACCEPTANCE = ("docs/acceptance/**",)
 DOCS = ("**/*.md", "scripts/docs/**")
 
-STAGES = ("lint", "unit", "generate", "integration", "e2e", "docs", "scoreboard")
+# What the fuzz targets build from: Go sources and tests, the module files,
+# the seed corpora and the Makefile that lists the targets.
+FUZZ_INPUTS = ("**/*.go", "go.mod", "go.sum", "**/testdata/**", "Makefile")
+
+STAGES = ("lint", "unit", "fuzz", "generate", "integration", "e2e", "docs", "scoreboard")
 
 
 def matches(path, patterns):
@@ -41,18 +45,20 @@ def matches(path, patterns):
 def select(event, files):
     """Returns the stages to run, in STAGES order."""
     if event == "push":
-        code = e2e = docs = True
+        code = e2e = docs = fuzz = True
         acceptance = False
     else:
         code = any(not matches(f, NOT_CODE) for f in files)
         e2e = any(not matches(f, NOT_E2E_CODE) or matches(f, E2E_HARNESS) for f in files)
         docs = any(matches(f, DOCS) for f in files)
+        fuzz = any(matches(f, FUZZ_INPUTS) for f in files)
         # The scoreboard's tests read the real checklist. When code changed,
         # the unit stage runs them already.
         acceptance = not code and any(matches(f, ACCEPTANCE) for f in files)
     selected = {
         "lint": code,
         "unit": code,
+        "fuzz": fuzz,
         "generate": code,
         "integration": code,
         "e2e": e2e,

@@ -103,7 +103,8 @@ generate_src="$WS/generate-src"
 command_of() {
 	case "$1" in
 	lint) echo 'make lint' ;;
-	unit) echo 'make test && make test-fuzz && make build' ;;
+	unit) echo 'make test && make build' ;;
+	fuzz) echo 'make test-fuzz' ;;
 	generate) echo 'make check-generate' ;;
 	integration) echo 'make test-integration' ;;
 	e2e) echo 'make test-e2e' ;;

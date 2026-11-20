@@ -75,13 +75,11 @@ FUZZ_TARGETS = \
 	./internal/proxy:FuzzReceivePackCommands
 
 FUZZTIME ?= 30s
+FUZZ_PARALLEL ?= 4
 
 .PHONY: test-fuzz
-test-fuzz: ## Run every fuzz target in FUZZ_TARGETS for FUZZTIME each (default 30s).
-	@for target in $(FUZZ_TARGETS); do \
-		echo "fuzzing $$target for $(FUZZTIME)"; \
-		go test -run '^$$' -fuzz "^$${target#*:}$$" -fuzztime $(FUZZTIME) "$${target%%:*}" || exit 1; \
-	done
+test-fuzz: ## Run every fuzz target in FUZZ_TARGETS at the same time, for FUZZTIME each (default 30s) with FUZZ_PARALLEL workers each (default 4).
+	FUZZTIME=$(FUZZTIME) FUZZ_PARALLEL=$(FUZZ_PARALLEL) ./scripts/test-fuzz.sh $(FUZZ_TARGETS)
 
 .PHONY: test-guard
 test-guard: ## Fail if HEAD deletes, unlists or skips a test named on a `Tests:` line of a checklist since its merge base with BASE (default origin/master; CI passes the PR labels).

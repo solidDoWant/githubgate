@@ -11,9 +11,9 @@
 # There is no cancel-in-progress annotation: a release always runs to the end.
 #
 # publish runs code from the repository but holds no GitHub token and never
-# sees a registry credential: the CI cluster's registrygate keeps it. github-release holds the
-# Pipelines-as-Code token and runs only its inline script, never code from the
-# repository.
+# sees a registry credential: the CI cluster's registrygate keeps it. The run
+# only publishes: it gets no GitHub credentials. The release-manager creates
+# the GitHub release after this run succeeds.
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -102,102 +102,3 @@ spec:
         workspaces:
           - name: source
             workspace: source
-      # After publish, so a GitHub release exists only when the images and the
-      # chart do.
-      - name: github-release
-        runAfter:
-          - publish
-        params:
-          - name: ref
-            value: $(params.ref)
-        taskSpec:
-          params:
-            - name: ref
-              type: string
-          steps:
-            - name: release
-              image: mirror.gcr.io/library/python:3.14.9@sha256:30a34d141e34b8fbedabecb8f86b3d49a62e348d8112ad3c1289f0b2b216ad3e
-              computeResources:
-                requests:
-                  cpu: 100m
-                  memory: 256Mi
-                limits:
-                  memory: 256Mi
-              env:
-                - name: GITHUB_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: "{{ git_auth_secret }}"
-                      key: git-provider-token
-                # Through the environment, not the script text, so the ref is
-                # never parsed as code.
-                - name: REF
-                  value: $(params.ref)
-              # Prints only the release's URL or GitHub's status and message,
-              # never the token or a request header.
-              script: |
-                #!/usr/bin/env python3
-                import json, os, re, sys, urllib.error, urllib.parse, urllib.request
-                API = "https://api.github.com/repos/{{ repo_owner }}/{{ repo_name }}"
-                tag = os.environ["REF"].rsplit("/", 1)[-1]
-                if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?", tag):
-                    sys.exit(f"{tag!r} is not a release tag")
-                version = tag[1:]
-                prerelease = "-" in version
-
-                def call(method, path, accept="application/vnd.github+json", body=None):
-                    request = urllib.request.Request(
-                        API + path,
-                        data=None if body is None else json.dumps(body).encode(),
-                        method=method,
-                        headers={"Authorization": "Bearer " + os.environ["GITHUB_TOKEN"], "Accept": accept},
-                    )
-                    try:
-                        with urllib.request.urlopen(request, timeout=30) as response:
-                            return response.status, response.read()
-                    except urllib.error.HTTPError as error:
-                        return error.code, error.read()
-
-                def message(content):
-                    try:
-                        return json.loads(content).get("message", "")
-                    except ValueError:
-                        return ""
-
-                # The notes: the "## <version>" section of CHANGELOG.md at the
-                # tagged commit, the same rule as scripts/changelog-section.sh.
-                status, content = call("GET", "/contents/CHANGELOG.md?ref={{ revision }}", accept="application/vnd.github.raw+json")
-                if status != 200:
-                    sys.exit(f"reading CHANGELOG.md: GitHub answered {status} {message(content)}")
-                heading = "## " + version
-                notes, found = [], False
-                for line in content.decode().splitlines():
-                    if line == heading or line.startswith(heading + " "):
-                        found = True
-                        continue
-                    if found and line.startswith("## "):
-                        break
-                    if found:
-                        notes.append(line)
-                body = "\n".join(notes).strip("\n") + "\n"
-                if not body.strip():
-                    sys.exit(f"CHANGELOG.md has no '{heading}' section, or it is empty")
-
-                # A release that exists already is a re-run: leave it.
-                status, content = call("GET", "/releases/tags/" + urllib.parse.quote(tag))
-                if status == 200:
-                    print("release exists:", json.loads(content).get("html_url", tag))
-                    sys.exit(0)
-                if status != 404:
-                    sys.exit(f"looking up the release: GitHub answered {status} {message(content)}")
-
-                status, content = call("POST", "/releases", body={
-                    "tag_name": tag,
-                    "name": tag,
-                    "body": body,
-                    "prerelease": prerelease,
-                    "make_latest": "false" if prerelease else "true",
-                })
-                if status != 201:
-                    sys.exit(f"creating the release: GitHub answered {status} {message(content)}")
-                print("release created:", json.loads(content).get("html_url", tag))

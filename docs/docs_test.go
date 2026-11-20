@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,5 +92,37 @@ func TestAdminPageCoversProxyCAAndProxyRules(t *testing.T) {
 		assert.True(t, anyPage(pages, func(page string) bool {
 			return hasKindBlock(page, "GitHubAccessPolicy") && regexp.MustCompile(field).MatchString(page)
 		}), "proxy field %s missing on an admin page", field)
+	}
+}
+
+func TestUserPageCoversInterceptionOptInAndPodChanges(t *testing.T) {
+	pages := markdownFiles(t, "user")
+	for _, term := range []string{
+		"githubgate.soliddowant.dev/inject",
+		"extra-ca-configmap",
+		"GITHUBGATE_INTERCEPT_PROXY_ADDRESS",
+		"GITHUBGATE_PROXY_CA_FILE",
+		"GH_TOKEN",
+		"NO_PROXY",
+		"hostNetwork",
+		"does not cover",
+	} {
+		assert.True(t, anyPage(pages, func(page string) bool { return strings.Contains(page, term) }), "%q missing on a user page", term)
+	}
+}
+
+func TestAdminPageCoversInjectionWebhookAndNixModule(t *testing.T) {
+	pages := markdownFiles(t, "admin")
+	for _, term := range []string{
+		"inject.enabled",
+		"inject.image.digest",
+		"inject.proxyAddress",
+		"inject.proxyCAConfigMap",
+		"inject.extraCAConfigMap",
+		"nixosModules.githubgate-client",
+		"extraCA",
+		"failurePolicy: Fail",
+	} {
+		assert.True(t, anyPage(pages, func(page string) bool { return strings.Contains(page, term) }), "%q missing on an admin page", term)
 	}
 }

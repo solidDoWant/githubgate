@@ -36,7 +36,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 14. A policy referencing an installation whose `allowedNamespaces` doesn't admit its namespace shows `NotAllowed` and grants nothing.
     Tests:
 15. A `GitHubApp` or `GitHubInstallation` created outside the admin namespaces is rejected by the webhook and, with the webhook off, ignored and never used.
-    Tests:
+    Tests: `internal/webhook: TestValidate/app outside admin namespaces`, `internal/webhook: TestValidate/installation outside admin namespaces`, `internal/model: TestAppsAndInstallationsOutsideAdminNamespacesAreIgnored`, `internal/app: TestServerServesTheListenersAndTheWebhookAndShutsDown`
 16. A `GitHubApp` whose App ID can come inline or from a Secret works either way; one whose key Secret is missing or not a valid RSA key is `Ready=False` with `SecretUnavailable` or `SecretInvalid`; requests through it fail closed with `503`, and fixing the Secret makes it work without a restart.
     Tests:
 17. A `GitHubInstallation` for an owner the App isn't installed on is `Ready=False, reason=InstallationNotFound`.
@@ -44,7 +44,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 18. Changing a policy (removing a repository) refuses new tokens for that repository within seconds, without a restart.
     Tests:
 19. The webhook rejects unknown permission names or levels, and a rule outside its installation's ceiling, with a message naming the field; the CRD rejects a rule with no mode enabled.
-    Tests:
+    Tests: `internal/webhook: TestValidate/installation with unknown permission`, `internal/webhook: TestValidate/policy rule with unknown level`, `api/v1alpha1: TestCRDValidation/policy rule with no mode`, `internal/app: TestServerServesTheListenersAndTheWebhookAndShutsDown`
 
 ## Client
 

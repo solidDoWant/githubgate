@@ -31,6 +31,18 @@ githubgate serves Prometheus metrics at `/metrics` on its health port (8080):
 
 `/readyz` fails until githubgate has read its configuration, and at once when the pod gets `SIGTERM`.
 
+## Server flags
+
+The chart sets these. You need them only to run githubgate yourself.
+
+- `--admin-namespaces`: the namespaces where githubgate reads `GitHubApp`, `GitHubInstallation` and Secrets. Default: the namespace in `POD_NAMESPACE`.
+- `--audience`: the audience of the ServiceAccount tokens that callers send. Default: `githubgate`.
+- `--tls-cert-file`, `--tls-key-file`: the certificate of the token API. Required. githubgate exits with an error that names the file when it cannot read it.
+- `--shutdown-delay`: how long githubgate keeps serving after `SIGTERM` while `/readyz` fails. Default: `5s`. After that it shuts down, within 20 seconds.
+- `--leader-elect`: only the elected replica writes status. Needs `POD_NAMESPACE`.
+- `--webhook`, `--webhook-cert-dir`, `--webhook-port`: serve the admission webhook at `/validate` (default port 9443).
+- `--api-address` (`:8443`), `--health-address` (`:8080`), `--github-base-url` (default: api.github.com).
+
 More pages:
 
 - [Chart values](chart-values.md): every Helm value (generated).

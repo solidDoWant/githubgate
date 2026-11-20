@@ -181,7 +181,7 @@ GitHub marks a commit "Verified" when it creates the commit itself through its A
 
 ### Transparent interception (phase 3)
 
-A native sidecar (`githubgate-client intercept`) listens on the pod's loopback for the GitHub hosts (via `hostAliases` to `127.0.0.1`), terminates TLS with a certificate from a per-pod CA that it generates itself, name-constrained to the GitHub hosts and trusted only inside that pod (no shared CA or proxy key ever enters a pod), replaces whatever credential the client sent (or none) with the pod's current ServiceAccount token, and forwards to githubgate's proxy. Tools then need no wrapper or helper. An admission webhook served by githubgate (opt-in per namespace label) adds the sidecar, `hostAliases`, the projected token and the CA bundle. For Coder VM workspaces the same client runs as a guest service.
+A native sidecar (`githubgate-client intercept`) listens on the pod's loopback for the GitHub hosts (via `hostAliases` to `127.0.0.1`), terminates TLS with a certificate from a per-pod CA that it generates itself, name-constrained to the GitHub hosts and trusted only inside that pod (no shared CA or proxy key ever enters a pod), replaces whatever credential the client sent (or none) with the pod's current ServiceAccount token, and forwards to githubgate's proxy. Tools then need no wrapper or helper. An admission webhook served by githubgate (opt-in per namespace label) adds the sidecar, `hostAliases`, the projected token and the CA bundle. For Coder VM workspaces the sidecar runs in the VM's virt-launcher pod and listens on the guest's gateway address, so nothing runs in the guest and the ServiceAccount token never enters it.
 
 ### Audit, metrics, admission
 
@@ -214,7 +214,7 @@ Each phase ends with a release the owner can deploy, and is done when its checkl
 
 1. **Token mode** (`docs/acceptance/phase-1.md`): the three kinds with status and webhook, ServiceAccount auth, token API, multiple Apps and installations, HA, the client (`token`, `git-credential`, `gh`, `configure`), Helm chart, audit and metrics, a fake GitHub for tests, and a live test against a real test App. Usable result: CI release pipelines get `contents: write` tokens and PR pipelines read-only ones; workspaces use `git`/`gh` through the client.
 2. **Proxy mode and signed commits**: host impersonation for the three GitHub hosts, REST/GraphQL/git-push limits, `push` with Verified commits. Usable result: workspaces push and open PRs without ever seeing a GitHub token, and can't push to protected refs or create releases.
-3. **Transparent interception**: the sidecar, the injection webhook, and the VM guest service. Usable result: no wrappers or helpers needed in pods or VMs.
+3. **Transparent interception**: the sidecar, the injection webhook, and the same sidecar for KubeVirt VM workspaces. Usable result: no wrappers or helpers needed in pods or VMs.
 
 ## 8. Testing
 

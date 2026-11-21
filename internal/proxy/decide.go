@@ -133,9 +133,10 @@ func decideWeb(candidates []*model.Rule) Decision {
 }
 
 // publicReadApplies reports whether request is a read-only request outside
-// every installation of the caller's proxy rules: the installations' own
-// owners always keep the rules' decision, so public read never widens what
-// a rule allows there. GraphQL and the uploads host are never public reads.
+// every installation of the caller's proxy rules: a request whose {owner},
+// {org} or {username} names an installation's own owner, in any case,
+// always keeps the rules' decision, so public read never widens what a rule
+// allows there. GraphQL and the uploads host are never public reads.
 func publicReadApplies(candidates []*model.Rule, request Decided) bool {
 	switch {
 	case request.Host != HostAPI && request.Host != HostGit:
@@ -152,11 +153,13 @@ func publicReadApplies(candidates []*model.Rule, request Decided) bool {
 		return false
 	}
 
-	owner := unescaped(request.Owner)
+	for _, named := range append([]string{request.Owner}, request.Accounts...) {
+		account := unescaped(named)
 
-	for _, rule := range candidates {
-		if owner != "" && strings.EqualFold(rule.Installation.Owner, owner) {
-			return false
+		for _, rule := range candidates {
+			if account != "" && strings.EqualFold(rule.Installation.Owner, account) {
+				return false
+			}
 		}
 	}
 

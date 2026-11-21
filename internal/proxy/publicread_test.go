@@ -45,6 +45,8 @@ func TestProxyForwardsPublicReadsWithAMetadataOnlyToken(t *testing.T) {
 		{name: "a commit of another owner's repository", request: authenticated(http.MethodGet, proxy.HostAPI, "/repos/other/public/commits/main")},
 		{name: "a tarball of another owner's repository", request: authenticated(http.MethodHead, proxy.HostAPI, "/repos/other/public/tarball/main")},
 		{name: "a user", request: authenticated(http.MethodGet, proxy.HostAPI, "/users/octocat")},
+		{name: "another organization's repositories", request: authenticated(http.MethodGet, proxy.HostAPI, "/orgs/other/repos")},
+		{name: "another user's repositories", request: authenticated(http.MethodGet, proxy.HostAPI, "/users/other/repos")},
 		{name: "the rate limit", request: authenticated(http.MethodGet, proxy.HostAPI, "/rate_limit")},
 		{name: "a repository search", request: authenticated(http.MethodGet, proxy.HostAPI, "/search/repositories?q=nix")},
 	}
@@ -128,6 +130,32 @@ func TestProxyKeepsTheRulesForTheInstallationsOwnRepositoriesWithPublicRead(t *t
 
 			require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 			assert.Contains(t, response.Body.String(), "/bar")
+			assert.Empty(t, forwarding.upstream.requests())
+		})
+	}
+}
+
+func TestProxyKeepsTheRulesForTheInstallationOwnersAccountPathsWithPublicRead(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+	}{
+		{name: "the organization's repositories", target: "/orgs/acme/repos"},
+		{name: "the user's repositories", target: "/users/acme/repos"},
+		{name: "the organization's repositories in another case", target: "/orgs/ACME/repos"},
+		{name: "the user's repositories in another case", target: "/users/Acme/repos"},
+		{name: "the organization's custom property values", target: "/orgs/acme/properties/values"},
+		{name: "the owner as a member of another organization", target: "/orgs/other/members/acme"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			forwarding := newForwardingProxy(t, proxyRule("own", app1Installation, []string{"foo"}, read("contents"), publicRead()))
+
+			response := serve(forwarding.handler, authenticated(http.MethodGet, proxy.HostAPI, test.target))
+
+			require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+			assert.Empty(t, forwarding.tokens.decisions)
 			assert.Empty(t, forwarding.upstream.requests())
 		})
 	}

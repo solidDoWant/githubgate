@@ -24,3 +24,10 @@ func TestCommandLabelDropsFlagsAndValues(t *testing.T) {
 func TestHelmLabelNamesTheRelease(t *testing.T) {
 	assert.Equal(t, "helm upgrade cert-manager", helmLabel([]string{"upgrade", "--install", "cert-manager", "oci://x", "--set", "k=v"}))
 }
+
+func TestRedactKeyMaterialRemovesPrivateKeyBlocks(t *testing.T) {
+	text := "before\n-----BEGIN RSA PRIVATE KEY-----\nabc\ndef\n-----END RSA PRIVATE KEY-----\nafter"
+	got := redactKeyMaterial(text)
+	assert.Equal(t, "before\n[redacted private key]\nafter", got)
+	assert.Equal(t, "no key here", redactKeyMaterial("no key here"))
+}

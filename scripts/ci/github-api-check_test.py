@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Tests of github-api-check.py against a local HTTPS fake of the GitHub API.
 
+Each run mimics a stage container of the CI image: /etc/devshell.sh has set
+NIX_SSL_CERT_FILE to Nix's public bundle (here a bundle without the fake's CA),
+and the stage environment (stage-env.sh, or the old one that set only
+SSL_CERT_FILE) then names the stage CA bundle, CI_CA.
+
 The fake's certificate is a throwaway one made at run time with Go's
 crypto/tls/generate_cert.go, since the dev shell has no openssl.
 """
@@ -15,7 +20,12 @@ import tempfile
 import threading
 import unittest
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "github-api-check.py")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(HERE, "github-api-check.py")
+STAGE_ENV = 'source "$STAGE_ENV_FILE"'
+# What the stage containers ran before stage-env.sh: only Python's own variable.
+OLD_STAGE_ENV = 'export SSL_CERT_FILE="$CI_CA"'
+CA_VARIABLES = ("SSL_CERT_FILE", "NIX_SSL_CERT_FILE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "REQUESTS_CA_BUNDLE")
 
 
 def generate_cert(directory):
@@ -71,13 +81,19 @@ class GitHubAPICheckTest(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
-    def run_script(self, cafile=None):
-        env = dict(
-            os.environ,
+    def run_script(self, cafile=None, stage_env=STAGE_ENV):
+        env = {name: value for name, value in os.environ.items() if name not in CA_VARIABLES}
+        env.update(
             GITHUBGATE_API_URL=f"https://127.0.0.1:{self.server.server_port}",
-            SSL_CERT_FILE=cafile or self.cert,
+            CI_CA=cafile or self.cert,
+            NIX_SSL_CERT_FILE=self.other_cert,
+            OTHER_CA=self.other_cert,
+            STAGE_ENV_FILE=os.path.join(HERE, "stage-env.sh"),
+            PYTHON=sys.executable,
+            SCRIPT=SCRIPT,
         )
-        return subprocess.run([sys.executable, "-I", SCRIPT, "o/r"], env=env, capture_output=True, text=True, timeout=60)
+        command = stage_env + ' && exec "$PYTHON" -I "$SCRIPT" o/r'
+        return subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=120)
 
     def test_passes_for_the_repository(self):
         result = self.run_script()
@@ -92,6 +108,26 @@ class GitHubAPICheckTest(unittest.TestCase):
                 result = self.run_script()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f"HTTP {status}", result.stdout)
+
+    def test_checks_with_python_and_curl(self):
+        FakeGitHub.status = 403
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("from Python in a stage container: GET /repos/o/r: HTTP 403", result.stdout)
+        self.assertIn("from curl in a stage container: GET /repos/o/r: HTTP 403", result.stdout)
+
+    def test_fails_when_the_stage_environment_leaves_nix_ssl_cert_file_on_another_bundle(self):
+        for status in (200, 403):
+            with self.subTest(status=status):
+                FakeGitHub.status = status
+                result = self.run_script(stage_env=OLD_STAGE_ENV)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("from Python failed, the stage CA bundle or the interception is broken", result.stderr)
+
+    def test_fails_when_curl_does_not_trust_the_server(self):
+        result = self.run_script(stage_env=STAGE_ENV + ' && export CURL_CA_BUNDLE="$OTHER_CA"')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("from curl failed, the stage CA bundle or the interception is broken", result.stderr)
 
     def test_fails_on_a_success_for_another_repository(self):
         FakeGitHub.body = {"full_name": "o/other"}

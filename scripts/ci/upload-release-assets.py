@@ -7,8 +7,9 @@ A missing release is created first, with the `## <version>` section of
 CHANGELOG.md at the tag as its notes; an existing release is left as it is. A
 file whose name is already an asset of the release is left alone, so a
 repeated run neither duplicates nor replaces assets.
-Every request trusts only the stage CA bundle in SSL_CERT_FILE (required),
-through github_https.py, the request code of the stage TLS check.
+Every request uses the default TLS settings, through github_https.py, the
+request code of the stage TLS check; in a stage container they trust the
+stage CA bundle (scripts/ci/stage-env.sh).
 GITHUBGATE_API_URL and GITHUBGATE_UPLOAD_URL (tests) replace the GitHub
 endpoints; GITHUBGATE_REPO is owner/name.
 """

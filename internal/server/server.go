@@ -12,9 +12,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -59,6 +61,17 @@ type Server struct {
 	options  Options
 	tokens   *tokenCache
 	draining atomic.Bool
+
+	// publicReadNames remembers, per caller and installation, the one
+	// repository a public-read token was last minted for after the mint for
+	// all of them was refused.
+	publicReadNamesMu sync.Mutex
+	publicReadNames   map[publicReadKey]string
+}
+
+type publicReadKey struct {
+	namespace, serviceAccount string
+	installation              string
 }
 
 // New returns a Server.
@@ -71,7 +84,7 @@ func New(options Options) *Server {
 		options.Audit = slog.New(slog.DiscardHandler)
 	}
 
-	return &Server{options: options, tokens: newTokenCache(options.Now)}
+	return &Server{options: options, tokens: newTokenCache(options.Now), publicReadNames: map[publicReadKey]string{}}
 }
 
 // TokenRequest is the body of POST /v1/token. Every field is optional.
@@ -272,7 +285,12 @@ func (s *Server) ProxyToken(ctx context.Context, caller auth.Identity, decision 
 		}
 	}
 
-	token, githubStatus, err := s.installationToken(ctx, caller, decision.Installation, decision.Repositories, decision.Permissions)
+	mint := s.installationToken
+	if decision.Access == proxy.AccessPublicRead {
+		mint = s.publicReadToken
+	}
+
+	token, githubStatus, err := mint(ctx, caller, decision.Installation, decision.Repositories, decision.Permissions)
 	if err != nil {
 		failed := s.githubFailure(answer{}, err)
 
@@ -282,6 +300,85 @@ func (s *Server) ProxyToken(ctx context.Context, caller auth.Identity, decision 
 	}
 
 	return token.Token, githubStatus, nil
+}
+
+// publicReadToken mints the public-read token. GitHub refuses a token for
+// several repositories with 422 when any one of them does not exist or is not
+// selected for the installation, and doesn't say which. Then each repository
+// is tried alone, in the given (sorted) order, and the first that mints is
+// remembered for the caller, so later mints go straight to it until it fails.
+// The token never names a repository outside the given ones.
+func (s *Server) publicReadToken(
+	ctx context.Context,
+	caller auth.Identity,
+	installation *model.Installation,
+	repositories []string,
+	permissionSet map[string]permissions.Level,
+) (*github.Token, string, error) {
+	key := publicReadKey{namespace: caller.Namespace, serviceAccount: caller.ServiceAccount, installation: installation.String()}
+
+	if name, ok := s.rememberedPublicReadName(key); ok && slices.Contains(repositories, name) {
+		token, githubStatus, err := s.installationToken(ctx, caller, installation, []string{name}, permissionSet)
+		if err == nil || !inaccessible(err) {
+			return token, githubStatus, err
+		}
+
+		s.forgetPublicReadName(key, name)
+	}
+
+	token, githubStatus, err := s.installationToken(ctx, caller, installation, repositories, permissionSet)
+	if err == nil || !inaccessible(err) || len(repositories) == 1 {
+		return token, githubStatus, err
+	}
+
+	for _, name := range repositories {
+		single, singleStatus, singleErr := s.installationToken(ctx, caller, installation, []string{name}, permissionSet)
+		if singleErr == nil {
+			s.rememberPublicReadName(key, name)
+
+			return single, singleStatus, nil
+		}
+
+		if !inaccessible(singleErr) {
+			return nil, singleStatus, singleErr
+		}
+	}
+
+	return nil, githubStatus, err
+}
+
+// inaccessible reports whether GitHub refused a mint with 422, which it
+// answers when a requested repository does not exist or is not selected for
+// the installation.
+func inaccessible(err error) bool {
+	var failure *github.Error
+
+	return errors.As(err, &failure) && failure.Status == http.StatusUnprocessableEntity
+}
+
+func (s *Server) rememberedPublicReadName(key publicReadKey) (string, bool) {
+	s.publicReadNamesMu.Lock()
+	defer s.publicReadNamesMu.Unlock()
+
+	name, ok := s.publicReadNames[key]
+
+	return name, ok
+}
+
+func (s *Server) rememberPublicReadName(key publicReadKey, name string) {
+	s.publicReadNamesMu.Lock()
+	defer s.publicReadNamesMu.Unlock()
+
+	s.publicReadNames[key] = name
+}
+
+func (s *Server) forgetPublicReadName(key publicReadKey, name string) {
+	s.publicReadNamesMu.Lock()
+	defer s.publicReadNamesMu.Unlock()
+
+	if s.publicReadNames[key] == name {
+		delete(s.publicReadNames, key)
+	}
 }
 
 // CountProxy records a proxied request in the request metrics.

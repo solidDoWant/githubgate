@@ -42,6 +42,9 @@ type Error struct {
 	Condition string
 	// RetryAfter is how long GitHub asked the caller to wait, if it did.
 	RetryAfter time.Duration
+	// Status is the HTTP status GitHub answered with, or 0 when GitHub gave
+	// no answer.
+	Status int
 }
 
 func (e *Error) Error() string { return string(e.Reason) + ": " + e.Message }
@@ -102,8 +105,14 @@ func classify(err error, now time.Time) *Error {
 		return unavailable("GitHub could not be reached")
 	}
 
-	message := response.Message
+	failure := classifyResponse(response, response.Message)
+	failure.Status = response.Response.StatusCode
 
+	return failure
+}
+
+// classifyResponse maps an error answer from GitHub to an Error.
+func classifyResponse(response *gogithub.ErrorResponse, message string) *Error {
 	switch status := response.Response.StatusCode; {
 	case status == http.StatusUnprocessableEntity:
 		return &Error{Reason: ReasonRefused, Message: "GitHub refused the token: " + message}

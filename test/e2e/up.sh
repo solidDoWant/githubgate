@@ -49,7 +49,7 @@ diagnose_node() {
 	docker system df 2>&1 || true
 	echo "---- host load and memory"
 	cat /proc/loadavg 2>&1 || true
-	free -m 2>&1 || true
+	grep -E "MemTotal|MemAvailable" /proc/meminfo 2>&1 || true
 	nproc 2>&1 || true
 	echo "---- containers running in the daemon (other stages share it)"
 	docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>&1 || true
@@ -75,15 +75,45 @@ diagnose_node() {
 }
 cluster_pid=""
 cluster_log="$work/cluster.log"
-if ! kind get clusters 2>/dev/null | grep -qx "$cluster"; then
-	log "creating kind cluster $cluster (in the background)"
+# One attempt at creating the cluster.
+create_cluster_once() {
 	if [[ -x "$ci_kind_config" ]]; then
 		# ci-kind-config keeps each node's image store between builds, keyed by
 		# the cluster name, so it takes the name and image instead of kind.
-		{ "$ci_kind_config" --name "$cluster" --image "$node_image" test/e2e/kind-config.yaml | timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --config=- --wait 120s; } 2>&1 | timestamp_lines >"$cluster_log" &
+		"$ci_kind_config" --name "$cluster" --image "$node_image" test/e2e/kind-config.yaml | timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --config=- --wait 120s
 	else
-		timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --name "$cluster" --image "$node_image" --config test/e2e/kind-config.yaml --wait 120s 2>&1 | timestamp_lines >"$cluster_log" &
+		timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --name "$cluster" --image "$node_image" --config test/e2e/kind-config.yaml --wait 120s
 	fi
+}
+# kind gives the node only 30 seconds to reach the multi-user target. On a busy
+# machine containerd alone can take longer than that to start, although the node
+# does boot a little later. Starting over finds the node image and its cache
+# warm, so retry a create that failed only for that reason. Any other failure,
+# and a second failure, is final.
+create_cluster() {
+	local attempt out
+	for attempt in 1 2; do
+		out="$work/create-$attempt.log"
+		if create_cluster_once >"$out" 2>&1; then
+			cat "$out"
+			return 0
+		fi
+		cat "$out"
+		if [[ "$attempt" == 2 ]] || ! grep -q 'Multi-User System' "$out"; then
+			return 1
+		fi
+		echo "kind node did not reach the multi-user target in time; trying again"
+		# Keep the first node's boot output, which is what explains the delay.
+		for node in $(docker ps -a --filter "label=io.x-k8s.kind.cluster=$cluster" --format '{{.Names}}'); do
+			echo "---- first attempt: docker logs $node (last 80 lines, timestamped)"
+			docker logs --timestamps --tail 80 "$node" 2>&1 | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' || true
+		done
+		kind delete cluster --name "$cluster" || true
+	done
+}
+if ! kind get clusters 2>/dev/null | grep -qx "$cluster"; then
+	log "creating kind cluster $cluster (in the background)"
+	create_cluster 2>&1 | timestamp_lines >"$cluster_log" &
 	cluster_pid=$!
 fi
 # A failed build must not leave the cluster creation running.

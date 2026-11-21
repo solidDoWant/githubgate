@@ -2,6 +2,43 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.6.2
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release publishes the changes of 0.6.0 and 0.6.1 with a complete GitHub release. We tagged 0.6.0, but its release run stopped before it published anything. 0.6.1 published the images and the Helm chart, but its release run could not create the GitHub release or upload its files. Use 0.6.2 instead. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes two problems with `publicRead`. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.6.2 --namespace githubgate --create-namespace
+```
+
+### Upgrade notes for admins
+
+- Do not install 0.6.0. The version 0.6.0 has a tag in git, but nothing of it was published. ([#226](https://github.com/solidDoWant/githubgate/pull/226))
+- Upgrade from 0.5.0 or 0.6.1 to 0.6.2. The images and the chart of 0.6.1 work, but 0.6.1 has no GitHub release, no `crds.yaml` and no client binaries. 0.6.2 has the same code with all release files. ([#231](https://github.com/solidDoWant/githubgate/pull/231))
+
+Policies, chart values and clients of 0.5.0 work without a change.
+
+### Deployment
+
+- Each GitHub release now has the file `crds.yaml`. It contains all the CRDs of githubgate. You can install them with `kubectl apply -f https://github.com/solidDoWant/githubgate/releases/download/v0.6.2/crds.yaml`. ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231))
+
+### Client (`git`, `gh`)
+
+- Each GitHub release now has the `githubgate-client` binaries for Linux and macOS, on amd64 and arm64, and the file `checksums.txt` with their SHA-256 sums. You can download the client from the release page instead of copying it from the image. The steps are in [the client](https://github.com/solidDoWant/githubgate/blob/master/docs/user/client.md). ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231))
+
+### Security
+
+- With `publicRead`, read-only requests for the paths `/orgs/OWNER/...` and `/users/OWNER/...` of the installation's own owner now follow the policy rules. Before, they went out as public reads, also when no rule allowed them. For example, `gh api orgs/OWNER/repos` now gets `403` unless a rule allows it. Requests for other owners do not change. ([#223](https://github.com/solidDoWant/githubgate/pull/223))
+
+### Fixes
+
+- A `publicRead` rule that names a repository that does not exist, or that the installation cannot reach, no longer breaks every public read of that caller. Before, each public read of that caller failed. ([#227](https://github.com/solidDoWant/githubgate/pull/227))
+
+Internal work: the release pipeline builds the release files and attaches them to the GitHub release. It runs as one task, which creates the GitHub release and uploads its files after it pushes the images and the chart. The release task now trusts the CA of githubgate's own proxy in CI, so the upload works ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231)).
+
+### Known issues
+
+None.
+
 ## 0.6.1
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release publishes the changes of 0.6.0. We tagged 0.6.0, but its release run stopped before it published anything. No images, no chart and no GitHub release of 0.6.0 exist. Use 0.6.1 instead. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes two problems with `publicRead`. Install or upgrade with the Helm chart:

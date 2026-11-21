@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -292,7 +293,8 @@ func Run(ctx context.Context, config Config) error {
 
 	githubMetrics := github.NewMetrics()
 	serverMetrics := server.NewMetrics()
-	gatherer.MustRegister(append(githubMetrics.Collectors(), serverMetrics.Collectors()...)...)
+	userMetrics := controller.NewMetrics()
+	gatherer.MustRegister(slices.Concat(githubMetrics.Collectors(), serverMetrics.Collectors(), userMetrics.Collectors())...)
 
 	githubRegistry := github.NewRegistry(github.Options{BaseURL: config.GitHubBaseURL, Metrics: githubMetrics})
 
@@ -313,7 +315,7 @@ func Run(ctx context.Context, config Config) error {
 		manager.Add(watcher),
 		controller.Setup(manager, controller.Options{
 			AdminNamespaces: config.AdminNamespaces, GitHub: githubRegistry,
-			OAuthURL: config.GitHubOAuthURL, APIURL: config.GitHubBaseURL,
+			OAuthURL: config.GitHubOAuthURL, APIURL: config.GitHubBaseURL, Metrics: userMetrics,
 		}),
 	); err != nil {
 		return err

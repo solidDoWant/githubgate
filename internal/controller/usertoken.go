@@ -143,27 +143,40 @@ const (
 	tokenValid
 )
 
-// readUserTokens reads object's token Secret from the cache and says whether
-// its token may be used for authorization.
+// readUserTokens reads object's token Secret through reader and says
+// whether its token may be used for authorization.
 func readUserTokens(
 	ctx context.Context,
 	reader client.Reader,
 	object *githubgatev1alpha1.GitHubUserAuthorization,
 	authorization *model.UserAuthorization,
 ) (tokenState, userTokens, error) {
+	_, state, tokens, err := getUserTokens(ctx, reader, object, authorization)
+
+	return state, tokens, err
+}
+
+// getUserTokens is readUserTokens that also returns the Secret read, for a
+// write conditional on its resourceVersion.
+func getUserTokens(
+	ctx context.Context,
+	reader client.Reader,
+	object *githubgatev1alpha1.GitHubUserAuthorization,
+	authorization *model.UserAuthorization,
+) (*corev1.Secret, tokenState, userTokens, error) {
 	var secret corev1.Secret
 
 	err := reader.Get(ctx, types.NamespacedName{Namespace: object.Namespace, Name: UserTokenSecretName(object.Name)}, &secret)
 	if apierrors.IsNotFound(err) {
-		return tokenMissing, userTokens{}, nil
+		return nil, tokenMissing, userTokens{}, nil
 	}
 
 	if err != nil {
-		return tokenMissing, userTokens{}, err
+		return nil, tokenMissing, userTokens{}, err
 	}
 
 	if !ownsUserToken(&secret, object) {
-		return tokenForeign, userTokens{}, nil
+		return &secret, tokenForeign, userTokens{}, nil
 	}
 
 	tokens := userTokens{
@@ -177,13 +190,13 @@ func readUserTokens(
 	tokens.refreshTokenExpiresAt, _ = time.Parse(time.RFC3339, string(secret.Data[KeyRefreshTokenExpires]))
 
 	if tokens.accessToken == "" && tokens.refreshToken == "" {
-		return tokenMissing, userTokens{}, nil
+		return &secret, tokenMissing, userTokens{}, nil
 	}
 
 	if !strings.EqualFold(tokens.login, authorization.Login) || tokens.app != authorization.App.String() ||
 		tokens.clientID != authorization.ClientID {
-		return tokenSpecChanged, tokens, nil
+		return &secret, tokenSpecChanged, tokens, nil
 	}
 
-	return tokenValid, tokens, nil
+	return &secret, tokenValid, tokens, nil
 }

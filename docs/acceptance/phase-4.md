@@ -33,11 +33,11 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Keeping it working
 
 11. The leader refreshes the tokens before the access token reaches half its lifetime, and the new access token is used by every replica. With two replicas, no refresh token is ever used twice.
-    Tests:
+    Tests: `internal/controller: TestUserTokenRefresh/the leader refreshes a token with less than four hours left, every replica serves the new token, and no refresh token is used twice`, `internal/controller: TestUserAccessToken`
 12. A replica that lost leadership can't overwrite a newer token pair (the Secret update is conditional).
-    Tests:
+    Tests: `internal/controller: TestUserTokenRefresh/a refresh whose pair was replaced while GitHub answered keeps the newer pair`
 13. If GitHub refuses the refresh token, the authorization reports `RefreshTokenRevoked`, the stored tokens are cleared, and requests get `503` until it is authorized again. A transient GitHub outage during a refresh keeps the authorization Ready while the access token is valid.
-    Tests:
+    Tests: `internal/controller: TestUserTokenRefresh/a refused refresh token clears the stored tokens and reports RefreshTokenRevoked`, `internal/controller: TestUserTokenRefresh/a GitHub outage during a refresh keeps the authorization Ready while the access token is valid, and the refresh is retried`
 
 ## Safety, live and docs
 

@@ -60,6 +60,7 @@ var flowOutcomes = map[string]bool{
 	ReasonTokenExpiryDisabled:  true,
 	ReasonWrongUser:            true,
 	ReasonFlowLost:             true,
+	ReasonRefreshTokenRevoked:  true,
 }
 
 // flow is a device flow in progress on this leader. The device code lives
@@ -434,6 +435,9 @@ func foreignSecretMessage(name string) string {
 // store writes the token pair as soon as GitHub returned it, retrying with
 // backoff, because a lost pair can't be refreshed.
 func (r *userAuthorizationReconciler) store(ctx context.Context, name types.NamespacedName, tokens userTokens) error {
+	unlock := r.workers.lock(name)
+	defer unlock()
+
 	ctx, cancel := context.WithTimeout(ctx, storeTimeout)
 	defer cancel()
 

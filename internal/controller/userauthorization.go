@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,13 +39,18 @@ func setupUserAuthorizations(manager ctrl.Manager, b base) error {
 		return err
 	}
 
+	metrics := b.options.Metrics
+	if metrics == nil {
+		metrics = NewMetrics()
+	}
+
 	return ctrl.NewControllerManagedBy(manager).Named("githubuserauthorization-status").
 		For(&githubgatev1alpha1.GitHubUserAuthorization{}).
 		Watches(&githubgatev1alpha1.GitHubApp{}, handler.EnqueueRequestsFromMapFunc(b.allUserAuthorizations)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(b.allUserAuthorizations)).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(b.allUserAuthorizations)).
 		Complete(&userAuthorizationReconciler{
-			base: b, flows: flows, apiReader: manager.GetAPIReader(),
+			base: b, flows: flows, workers: newWorkers(), metrics: metrics, apiReader: manager.GetAPIReader(),
 			log: manager.GetLogger().WithName("githubuserauthorization"),
 		})
 }
@@ -66,6 +72,8 @@ func (b base) allUserAuthorizations(ctx context.Context, _ client.Object) []reco
 type userAuthorizationReconciler struct {
 	base
 	flows     *flows
+	workers   *workers
+	metrics   *Metrics
 	apiReader client.Reader
 	log       logr.Logger
 }
@@ -75,6 +83,7 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 	if err := r.client.Get(ctx, req.NamespacedName, &object); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.flows.stop(req.NamespacedName)
+			r.metrics.forget(req.NamespacedName)
 		}
 
 		return reconcile.Result{}, client.IgnoreNotFound(err)
@@ -90,6 +99,8 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 
 	authorization, found := snapshot.UserAuthorization(req.NamespacedName)
 
+	var requeue time.Duration
+
 	switch {
 	case !found:
 		r.flows.stop(req.NamespacedName)
@@ -97,7 +108,7 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 	case !authorization.Resolved:
 		setReady(&status.Conditions, object.Generation, false, authorization.Reason, authorization.Message)
 	default:
-		state, tokens, err := readUserTokens(ctx, r.client, &object, authorization)
+		state, _, err := readUserTokens(ctx, r.client, &object, authorization)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -119,7 +130,9 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 			setOutcome(&status.Conditions, object.Generation, ReasonFlowLost,
 				"the device flow was lost when githubgate restarted or its leader changed; set the annotation again")
 		case state == tokenValid:
-			setAuthorized(status, object.Generation, tokens)
+			// Only the leader runs this reconciler, so only the leader
+			// refreshes.
+			requeue = r.refreshStatus(req.NamespacedName, status, object.Generation, r.refreshIfDue(ctx, &object, authorization))
 		case state == tokenSpecChanged:
 			setOutcome(&status.Conditions, object.Generation, ReasonSpecChanged,
 				"the stored token was authorized for another login, App or client ID; it is not used; set the annotation again")
@@ -138,7 +151,9 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 		setAuthorizationRequired(&status.Conditions, object.Generation)
 	}
 
-	return reconcile.Result{}, update(ctx, r.client, &object, &object.Status, status)
+	r.metrics.observe(req.NamespacedName, status)
+
+	return reconcile.Result{RequeueAfter: requeue}, update(ctx, r.client, &object, &object.Status, status)
 }
 
 func readyReason(conditions []metav1.Condition) string {

@@ -38,7 +38,7 @@ metadata:
 - `hostAliases` that point the three GitHub names to the address of the helper, `127.43.0.1` by default. The pod annotation `githubgate.soliddowant.dev/listen` sets another address.
 - The sysctl `net.ipv4.ip_unprivileged_port_start=443`, so the helper can listen on port 443. It is not added if the value is already 443 or lower.
 - A read-only mount of the trust files at `/var/run/githubgate/trust`, in every container.
-- The trust variables in every container (see the table below).
+- The trust variables in every container, including `NIX_SSL_CERT_FILE` for Nix-built tools (see the table below).
 - `GH_TOKEN=githubgate`, only in a container that sets neither `GH_TOKEN` nor `GITHUB_TOKEN`. `gh` refuses to run without a token. The interceptor replaces this one.
 - A change to `NO_PROXY` and `no_proxy`. If a container sets an `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` variable (upper or lower case), githubgate adds the three GitHub names to both variables, so that GitHub requests skip your egress proxy. githubgate creates the variables if they are missing.
 
@@ -52,13 +52,13 @@ The trust files hold the default CA roots, the pod's own CA and any extra CAs th
 kubectl annotate namespace team-a githubgate.soliddowant.dev/extra-ca-configmap=my-ca
 ```
 
-If a container already sets `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` or `NODE_EXTRA_CA_CERTS` to a file in one of its own volume mounts, githubgate joins that file with the pod CA. The container's variable then points at the joined file. The helper reads the source again every 30 seconds. A process that already loaded the file keeps the old one. Until the source file exists, the joined file holds only the pod CA, so GitHub works and other hosts fail.
+If a container already sets `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `NIX_SSL_CERT_FILE` or `NODE_EXTRA_CA_CERTS` to a file in one of its own volume mounts, githubgate joins that file with the pod CA. The container's variable then points at the joined file. The helper reads the source again every 30 seconds. A process that already loaded the file keeps the old one. Until the source file exists, the joined file holds only the pod CA, so GitHub works and other hosts fail.
 
 ## The variables
 
 | Variable | Set by | Meaning |
 |---|---|---|
-| `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` | the webhook, in your containers | `/var/run/githubgate/trust/bundle.crt`, the default roots plus the pod CA |
+| `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `NIX_SSL_CERT_FILE` | the webhook, in your containers | `/var/run/githubgate/trust/bundle.crt`, the default roots plus the pod CA |
 | `NODE_EXTRA_CA_CERTS` | the webhook, in your containers | `/var/run/githubgate/trust/ca.crt`, the pod CA only |
 | `GH_TOKEN` | the webhook, only if you set neither `GH_TOKEN` nor `GITHUB_TOKEN` | the text `githubgate`, a placeholder |
 | `GITHUBGATE_INTERCEPT_PROXY_ADDRESS` | the webhook, in the helper | `host:port` of the proxy |
@@ -101,6 +101,7 @@ These settings do not change the repositories of your own installation. If your 
 - A tool that resolves names without `/etc/hosts` does not reach the helper.
 - Proxy variables that a process sets at run time, and a `NO_PROXY` or `no_proxy` set through `valueFrom`, are not changed. Such a tool may send GitHub requests to your egress proxy.
 - In these cases, only a credential that the pod has by itself can reach the real GitHub. The ServiceAccount token cannot, because only the helper reads it and it sends the token only to a server that the proxy CA verifies.
+- A process that sets `NIX_SSL_CERT_FILE` at run time, for example a script that sources a Nix devshell, overrides the pod CA for Nix tools. Such a script must export `NIX_SSL_CERT_FILE=/var/run/githubgate/trust/bundle.crt` again.
 - A process that loaded a CA file keeps it. It does not see a later change until it restarts.
 - When your admin rotates the proxy CA, running pods fail with `503` until you restart them.
 - A KubeVirt VM gets a new CA when it moves to another node (live migration). A program that loaded the old CA, for example a Node process that read `NODE_EXTRA_CA_CERTS` once, fails on GitHub until you restart it.

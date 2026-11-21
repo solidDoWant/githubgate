@@ -76,6 +76,7 @@ var (
 		{"CURL_CA_BUNDLE", "bundle.crt"},
 		{"GIT_SSL_CAINFO", "bundle.crt"},
 		{"REQUESTS_CA_BUNDLE", "bundle.crt"},
+		{"NIX_SSL_CERT_FILE", "bundle.crt"},
 		{"NODE_EXTRA_CA_CERTS", "ca.crt"},
 	}
 )

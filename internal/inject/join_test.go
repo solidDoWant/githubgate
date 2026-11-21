@@ -67,6 +67,11 @@ func TestJoinsContainerCAVariable(t *testing.T) {
 			[]string{"intercept", "--join", "main/NODE_EXTRA_CA_CERTS=/var/run/githubgate/join/main/0"},
 			corev1.VolumeMount{Name: "ca", MountPath: "/var/run/githubgate/join/main/0", SubPath: "own.pem", ReadOnly: true},
 		},
+		"nix variable": {
+			configMap, corev1.VolumeMount{Name: "ca", MountPath: "/etc/ca"}, "NIX_SSL_CERT_FILE", "/etc/ca/ca.pem",
+			[]string{"intercept", "--join", "main/NIX_SSL_CERT_FILE=/var/run/githubgate/join/main/0/ca.pem"},
+			corev1.VolumeMount{Name: "ca", MountPath: "/var/run/githubgate/join/main/0", ReadOnly: true},
+		},
 		"projected": {
 			corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{}}, corev1.VolumeMount{Name: "ca", MountPath: "/ca"}, "CURL_CA_BUNDLE", "/ca/sub/../b.pem",
 			[]string{"intercept", "--join", "main/CURL_CA_BUNDLE=/var/run/githubgate/join/main/0/b.pem"},

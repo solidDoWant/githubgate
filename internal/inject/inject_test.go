@@ -121,6 +121,7 @@ func TestSkipAndReject(t *testing.T) {
 		"CURL_CA_BUNDLE init": {func(p *corev1.Pod) { p.Spec.InitContainers[1].Env = []corev1.EnvVar{{Name: "CURL_CA_BUNDLE"}} }, "unreadable:init-b:CURL_CA_BUNDLE"},
 		"GIT_SSL_CAINFO":      {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "GIT_SSL_CAINFO"}} }, "unreadable:main:GIT_SSL_CAINFO"},
 		"REQUESTS_CA_BUNDLE":  {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "REQUESTS_CA_BUNDLE"}} }, "unreadable:main:REQUESTS_CA_BUNDLE"},
+		"NIX_SSL_CERT_FILE":   {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "NIX_SSL_CERT_FILE"}} }, "unreadable:main:NIX_SSL_CERT_FILE"},
 		"NODE_EXTRA_CA_CERTS": {func(p *corev1.Pod) { p.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "NODE_EXTRA_CA_CERTS"}} }, "unreadable:main:NODE_EXTRA_CA_CERTS"},
 		"port 443":            {func(p *corev1.Pod) { p.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: 443}} }, "container main uses port 443"},
 		"sysctl above 443": {func(p *corev1.Pod) {
@@ -234,6 +235,8 @@ func assertMutated(t *testing.T, pod *corev1.Pod) {
 		require.Positive(t, index)
 
 		value, _ := env(container, "SSL_CERT_FILE")
+		assert.Equal(t, trust+"/bundle.crt", value, container.Name)
+		value, _ = env(container, "NIX_SSL_CERT_FILE")
 		assert.Equal(t, trust+"/bundle.crt", value, container.Name)
 		value, _ = env(container, "NODE_EXTRA_CA_CERTS")
 		assert.Equal(t, trust+"/ca.crt", value, container.Name)

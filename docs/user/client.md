@@ -43,7 +43,7 @@ At start, the interceptor does these steps:
 
 ### Containers that set their own CA variable
 
-Some containers already set `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE` or `NODE_EXTRA_CA_CERTS`. In an opted-in namespace, githubgate keeps the CA file of such a container and adds the pod CA to it.
+Some containers already set `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `NIX_SSL_CERT_FILE` or `NODE_EXTRA_CA_CERTS`. In an opted-in namespace, githubgate keeps the CA file of such a container and adds the pod CA to it.
 
 This works when the variable has a literal value and the file is in a ConfigMap, Secret, projected or `emptyDir` volume that the container mounts. githubgate mounts the same volume read-only in the interceptor. It points the variable at the joined file. Other hosts keep the CAs of your file.
 

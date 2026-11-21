@@ -2,6 +2,52 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.7.0-rc.1
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release is a candidate (a test version before the final release) for 0.7.0. It adds user access tokens. A user access token is a token of a GitHub App that acts as one GitHub user. With it, a workload in proxy mode can use resources that belong to a user account, for example SSH signing keys. The workload never sees the token. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.7.0-rc.1 --namespace githubgate --create-namespace
+```
+
+### Upgrade notes for admins
+
+- If you install the CRDs without the chart, apply the new `crds.yaml` of this release. It now has four CRDs. The new CRD is `GitHubUserAuthorization`. The chart installs it for you. ([#264](https://github.com/solidDoWant/githubgate/pull/264))
+- If you manage the RBAC of githubgate yourself, let githubgate create, update and patch Secrets in the admin namespaces. Also let it read and watch `githubuserauthorizations` and write their status. githubgate keeps the tokens of a user authorization in a Secret that it creates. The chart sets these permissions for you. Secrets in other namespaces stay closed to githubgate. ([#264](https://github.com/solidDoWant/githubgate/pull/264), [#285](https://github.com/solidDoWant/githubgate/pull/285))
+- If you want to use user access tokens, change the settings of your GitHub App first. Add the account permission that you need, for example `SSH signing keys: Read and write`. Turn on `Enable Device Flow`. Keep `Expire user authorization tokens` on. Then give githubgate the client ID of the App in `clientID` or `clientIDSecretRef` of the `GitHubApp`. The steps are in [Set up user access tokens](https://github.com/solidDoWant/githubgate/blob/master/docs/admin/user-access-setup.md). ([#264](https://github.com/solidDoWant/githubgate/pull/264), [#266](https://github.com/solidDoWant/githubgate/pull/266), [#286](https://github.com/solidDoWant/githubgate/pull/286))
+
+Apps, installations, policies, chart values and clients of 0.6.4 work without a change. You do not need user access tokens to upgrade.
+
+### User access tokens
+
+- The new kind `GitHubUserAuthorization` lives in an admin namespace. It names an App, the GitHub user (`login`) who must authorize the App, a ceiling of REST operations, and the namespaces that can use it. The ceiling is the most that any policy can call as this user. It accepts only operations on `/user` paths. ([#264](https://github.com/solidDoWant/githubgate/pull/264), [#295](https://github.com/solidDoWant/githubgate/pull/295))
+- A `GitHubApp` has two new fields, `clientID` and `clientIDSecretRef`, for the client ID of the App. Set at most one. ([#264](https://github.com/solidDoWant/githubgate/pull/264))
+- You authorize the App as the user with GitHub's device flow. You start the flow when you set the annotation `githubgate.soliddowant.dev/authorize` to a new value. The status shows the code and the address where the user enters it. githubgate stores the tokens in the Secret `NAME-user-token`, where `NAME` is the name of the authorization. If a different user authorizes the App, githubgate discards the token and reports `WrongUser`. ([#266](https://github.com/solidDoWant/githubgate/pull/266))
+- The leader replica refreshes the user access token before it expires. A refresh token works only once, so githubgate writes each new pair to the Secret at once. If GitHub refuses the refresh token, the authorization reports `RefreshTokenRevoked` and you authorize again. If GitHub refuses a user access token with `401`, the leader refreshes it at once. ([#271](https://github.com/solidDoWant/githubgate/pull/271), [#283](https://github.com/solidDoWant/githubgate/pull/283), [#298](https://github.com/solidDoWant/githubgate/pull/298))
+- The conditions of a `GitHubUserAuthorization` tell you what to do, for example `AuthorizationRequired`, `AuthorizationExpired`, `DeviceFlowDisabled` or `SpecChanged`. If you change the App, the client ID or the login after you authorized, githubgate clears the stored tokens and you authorize again. If a new authorization fails while a token is stored, the conditions show the failure. ([#266](https://github.com/solidDoWant/githubgate/pull/266), [#293](https://github.com/solidDoWant/githubgate/pull/293), [#297](https://github.com/solidDoWant/githubgate/pull/297))
+- New metrics: `githubgate_user_authorization_ready`, `githubgate_user_token_refreshes_total` and `githubgate_user_refresh_token_expiry_seconds`. Only the leader replica reports them. ([#271](https://github.com/solidDoWant/githubgate/pull/271))
+
+### Access policies
+
+- A policy rule can now have `userAuthorizationRef` in place of `installationRef`. This is a user rule. It works in proxy mode only, and it lists exact operations in `proxy.allowOperations`. The authorization must list each operation in its ceiling and must admit the namespace of the policy. Otherwise the rule is not accepted, and the status of the policy says why. ([#264](https://github.com/solidDoWant/githubgate/pull/264))
+- In proxy mode, githubgate sends a REST request that a user rule allows with the user access token. A request that no user rule lists never gets a user token. If the token is missing, expired or revoked, the caller gets `503`, and githubgate never sends the request with an installation token. The audit line records `access: "user"`, the authorization and the login, but never the token. The steps for workload users are in [Use a user rule](https://github.com/solidDoWant/githubgate/blob/master/docs/user/user-rules.md). ([#281](https://github.com/solidDoWant/githubgate/pull/281), [#286](https://github.com/solidDoWant/githubgate/pull/286))
+
+### Deployment
+
+- New chart value `githubOAuthURL` and server flag `--github-oauth-url`. They set the host of the device flow. The default is `https://github.com`. Set them only for GitHub Enterprise Server or a test double. ([#266](https://github.com/solidDoWant/githubgate/pull/266), [#285](https://github.com/solidDoWant/githubgate/pull/285))
+
+### Security
+
+- githubgate never follows a redirect on a call to the OAuth endpoints of GitHub. A redirect cannot send a refresh token or a device code to a different host. ([#292](https://github.com/solidDoWant/githubgate/pull/292))
+- An authorization ceiling and a user rule accept only operations on `/user` paths. Before, an operation on a repository, organization, team or App path with an unusual parameter name could pass as a user operation. ([#295](https://github.com/solidDoWant/githubgate/pull/295))
+
+Internal work: the design of user access tokens, the fake GitHub for the device flow, single-use refresh tokens and SSH signing keys, e2e and live tests for user authorizations, an update of `golang.org/x/oauth2`, and CI changes for CPU and memory limits, timeouts, the Go build cache and kind diagnostics ([#250](https://github.com/solidDoWant/githubgate/pull/250), [#262](https://github.com/solidDoWant/githubgate/pull/262), [#263](https://github.com/solidDoWant/githubgate/pull/263), [#265](https://github.com/solidDoWant/githubgate/pull/265), [#268](https://github.com/solidDoWant/githubgate/pull/268), [#270](https://github.com/solidDoWant/githubgate/pull/270), [#274](https://github.com/solidDoWant/githubgate/pull/274), [#276](https://github.com/solidDoWant/githubgate/pull/276), [#278](https://github.com/solidDoWant/githubgate/pull/278), [#279](https://github.com/solidDoWant/githubgate/pull/279), [#284](https://github.com/solidDoWant/githubgate/pull/284), [#285](https://github.com/solidDoWant/githubgate/pull/285), [#296](https://github.com/solidDoWant/githubgate/pull/296)).
+
+### Known issues
+
+- A refresh token works only once. If githubgate stops after GitHub returns a new token pair and before githubgate writes it to the Secret, the new pair is lost. The next refresh then ends in `RefreshTokenRevoked`, and you must authorize again. This is rare. ([#271](https://github.com/solidDoWant/githubgate/pull/271))
+- If the leader replica changes during a device flow, the flow is lost and the authorization reports `FlowLost`. Set the annotation again. ([#266](https://github.com/solidDoWant/githubgate/pull/266))
+
 ## 0.6.4
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release is the first complete release since 0.5.0. It has the same code as the candidate 0.6.4-rc.1 (a test version before the final release). It publishes the changes of 0.6.0 to 0.6.3 with a complete GitHub release. The versions 0.6.0, 0.6.1, 0.6.2 and 0.6.3 have tags in git, but none of them was fully published. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes two problems with `publicRead`. Install or upgrade with the Helm chart:

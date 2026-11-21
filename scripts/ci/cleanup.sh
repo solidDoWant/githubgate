@@ -15,6 +15,11 @@ keep="${2:?usage: cleanup.sh <current CI image tag> <keep file>}"
 # The build cache budget: the CI image's layers (~3.5 GB) and the e2e image
 # builds, with room for one flake change.
 build_cache_budget="${CI_BUILD_CACHE_BUDGET:-8GB}"
+# The Go caches: the build cache, the fuzz cache and the lint cache live in the
+# gobuild volume and are trimmed to this many KiB (about 12 GB), least recently
+# used first. Entries used in the last hour (this run) are kept.
+go_cache_budget_kib="${CI_GO_CACHE_BUDGET_KIB:-11718750}"
+go_cache_protect_seconds=3600
 max_percent=80
 
 docker image prune -f >/dev/null
@@ -29,6 +34,23 @@ for stale in $(docker image ls --format '{{.Repository}}:{{.Tag}}' | /bin/sh "$(
 	docker image rm "$stale" >/dev/null
 done
 docker builder prune -f --keep-storage "$build_cache_budget" >/dev/null
+
+# The Go cache volumes are mounted only in containers of the dind sidecar too.
+# The script goes in on stdin, because this container can't mount the repo.
+go_volumes() {
+	docker run --rm -i -v gomod:/cache/gomod:ro -v gobuild:/cache/gobuild --entrypoint /bin/sh "$current" "$@"
+}
+go_sizes() {
+	# shellcheck disable=SC2016 # the container's shell expands these
+	go_volumes -c 'for d in /cache/gomod /cache/gobuild/go /cache/gobuild/go/fuzz /cache/gobuild/golangci-lint; do
+	printf "%s: %s\n" "$d" "$(du -sh "$d" 2>/dev/null | cut -f1)"
+done'
+}
+echo "Go cache sizes before the trim (fuzz is part of go):"
+go_sizes
+go_volumes -s -- "$go_cache_budget_kib" "$go_cache_protect_seconds" /cache/gobuild <"$(dirname "$0")/trim-cache.sh"
+echo "Go cache sizes after the trim:"
+go_sizes
 
 # dockerd's storage is its own filesystem, mounted only in the dind sidecar.
 used=$(docker run --rm -v /var/lib/docker:/storage:ro --entrypoint /bin/sh "$current" \

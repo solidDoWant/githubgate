@@ -85,14 +85,15 @@ if [ -f "${HOME:-/nonexistent}/.docker/config.json" ]; then
 	cp "$HOME/.docker/config.json" "$ci/docker/config.json"
 fi
 
-# Every run checks, from a stage container with the stage CA bundle, the way the
-# release stage reaches GitHub, that one read-only GitHub API request gets an
-# HTTP response over verified TLS, so a broken bundle or interception fails a
+# Every run checks, from a stage container in the stage environment
+# (stage-env.sh), the way the release stage reaches GitHub, that one read-only
+# GitHub API request from Python and one from curl get an HTTP response over
+# verified TLS, so a broken bundle or interception fails a
 # pull request, not a release. Any status passes: a policy may deny the request
 # (the release ServiceAccount's does), and that still proves the TLS chain.
 repo="${GITHUBGATE_REPO:?GITHUBGATE_REPO must name the repository (owner/name)}"
 if ! docker run --rm --network host -v "$WS:$WS" -w "$src" -e CI_CA="$ci/ca-bundle.crt" "$image" \
-	bash -c 'source /etc/devshell.sh && export SSL_CERT_FILE="$CI_CA" && exec ./scripts/ci/github-api-check.py "$1"' bash "$repo"; then
+	bash -c 'source /etc/devshell.sh && source ./scripts/ci/stage-env.sh && exec ./scripts/ci/github-api-check.py "$1"' bash "$repo"; then
 	echo "a stage container cannot reach the GitHub API over verified TLS; see above" >&2
 	exit 1
 fi
@@ -176,7 +177,8 @@ start_stage() {
 			-e STAGE_COMMAND="$(command_of "$stage")" \
 			"$image" bash -c '
 				source /etc/devshell.sh
-				export PATH="$CI_BIN:$PATH" SSL_CERT_FILE="$CI_CA"
+				source ./scripts/ci/stage-env.sh
+				export PATH="$CI_BIN:$PATH"
 				git config --global --add safe.directory "*"
 				status=0
 				bash -c "set -e; $STAGE_COMMAND" || status=$?

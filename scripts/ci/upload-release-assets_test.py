@@ -135,7 +135,9 @@ class UploadReleaseAssetsTest(unittest.TestCase):
             GITHUBGATE_API_URL=self.url,
             GITHUBGATE_UPLOAD_URL=self.url,
             GITHUBGATE_REPO="o/r",
+            # As scripts/ci/stage-env.sh sets both in a stage container.
             SSL_CERT_FILE=cafile or self.cert,
+            NIX_SSL_CERT_FILE=cafile or self.cert,
         )
         return subprocess.run(
             [sys.executable, "-I", SCRIPT, tag, self.dir.name], env=env, capture_output=True, text=True, timeout=60
@@ -145,8 +147,8 @@ class UploadReleaseAssetsTest(unittest.TestCase):
         """Makes one request, in a fresh process so that no SSL context is
         cached, with SSL_CERT_FILE set to cafile and the default certificate
         paths trusting only default_cafile (or nothing), as when the image's
-        OpenSSL does not read SSL_CERT_FILE."""
-        env = dict(os.environ, SSL_CERT_FILE=cafile)
+        OpenSSL takes NIX_SSL_CERT_FILE before SSL_CERT_FILE."""
+        env = dict(os.environ, SSL_CERT_FILE=cafile, NIX_SSL_CERT_FILE=cafile)
         url = f"{self.url}/repos/o/r/releases/tags/v1.2.3"
         return subprocess.run(
             [sys.executable, "-I", "-c", DEFAULT_PATHS_REQUEST, SCRIPT, default_cafile or "", url],
@@ -156,13 +158,13 @@ class UploadReleaseAssetsTest(unittest.TestCase):
             timeout=60,
         )
 
-    def test_trusts_the_bundle_in_ssl_cert_file_not_the_default_paths(self):
-        result = self.request_with_default_paths(self.cert, None)
+    def test_trusts_the_default_certificate_paths_as_other_tools_do(self):
+        result = self.request_with_default_paths(self.other_cert, self.cert)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"id": 7})
 
-    def test_fails_when_only_the_default_paths_trust_the_server(self):
-        result = self.request_with_default_paths(self.other_cert, self.cert)
+    def test_fails_when_the_default_paths_do_not_trust_the_server(self):
+        result = self.request_with_default_paths(self.cert, None)
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("CERTIFICATE_VERIFY_FAILED", result.stderr)
 

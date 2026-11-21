@@ -16,6 +16,7 @@ For: admins who install githubgate with its Helm chart.
 | `fullnameOverride` | `""` | Override the full resource name. |
 | `adminNamespaces` | `[]` | Namespaces that may hold GitHubApp and GitHubInstallation objects, and whose Secrets githubgate may read. Defaults to the release namespace. |
 | `githubBaseURL` | `""` | GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double. |
+| `githubOAuthURL` | `""` | Where GitHub serves the device flow of user authorizations. Empty means https://github.com. Set it for GitHub Enterprise Server or a test double. |
 | `certManager.enabled` | `true` | Make the certificates with cert-manager: a self-signed Issuer, a name-constrained CA `Certificate` (Secret `<fullname>-ca`), and the serving certificates. Set to false to give every certificate as an existing Secret instead. |
 | `tls.existingSecret` | `""` | Name of an existing Secret (`tls.crt`, `tls.key`) with the token API's serving certificate. Required when `certManager.enabled` is false. |
 | `webhook.enabled` | `false` | Serve the validating admission webhook. |

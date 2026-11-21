@@ -19,6 +19,8 @@ fullnameOverride: ""
 adminNamespaces: []
 # -- GitHub REST API root. Empty means api.github.com. Set it for GitHub Enterprise Server or a test double.
 githubBaseURL: ""
+# -- Where GitHub serves the device flow of user authorizations. Empty means https://github.com. Set it for GitHub Enterprise Server or a test double.
+githubOAuthURL: ""
 certManager:
   # -- Make the certificates with cert-manager: a self-signed Issuer, a name-constrained CA `Certificate` (Secret `<fullname>-ca`), and the serving certificates. Set to false to give every certificate as an existing Secret instead.
   enabled: true

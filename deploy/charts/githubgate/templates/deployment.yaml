@@ -38,6 +38,9 @@ spec:
             {{- if .Values.githubBaseURL }}
             - --github-base-url={{ .Values.githubBaseURL }}
             {{- end }}
+            {{- if .Values.githubOAuthURL }}
+            - --github-oauth-url={{ .Values.githubOAuthURL }}
+            {{- end }}
             {{- if .Values.webhook.enabled }}
             - --webhook
             {{- end }}

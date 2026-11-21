@@ -317,7 +317,7 @@ func (c cluster) installGitHubgate(t *testing.T) {
 
 	c.helm(t, "upgrade", "--install", "githubgate", "../../deploy/charts/githubgate",
 		"--namespace", gateNamespace, "--set", "image.repository="+repo, "--set", "image.tag="+tag,
-		"--set", "githubBaseURL="+fakeAPI,
+		"--set", "githubBaseURL="+fakeAPI, "--set", "githubOAuthURL="+fakeAPI,
 		"--set", "proxy.enabled=true", "--set", "proxy.ca.name=proxy-ca", "--set", "proxy.clusterIP="+proxyIP,
 		"--set", "proxy.upstreams.caConfigMap=fake-github-ca",
 		"--set", "hostAliases[0].ip="+fakeTLSIP,
@@ -1062,6 +1062,8 @@ curl -sSfL --cacert /tmp/ca-bundle.crt -H "Authorization: token $SA_TOKEN" -o /t
 
 		assert.True(t, found, "the refused release has an audit line")
 	})
+
+	c.runUserAuthorizationScenarios(ctx, t, recordOutput)
 
 	t.Run("no key or token appears in logs, events, status, metrics or errors", func(t *testing.T) {
 		var tokens []struct {

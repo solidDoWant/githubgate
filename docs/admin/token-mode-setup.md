@@ -12,7 +12,7 @@ Install the chart in the namespace that holds your admin objects.
 helm install githubgate deploy/charts/githubgate --namespace githubgate --create-namespace
 ```
 
-Set `adminNamespaces` to the namespaces where you will create `GitHubApp` and `GitHubInstallation` objects. The default is the release namespace. githubgate reads Secrets only there. It ignores these two kinds anywhere else. Set `webhook.enabled` to reject them at creation instead. See [chart values](chart-values.md).
+Set `adminNamespaces` to the namespaces where you will create `GitHubApp` and `GitHubInstallation` objects. The default is the release namespace. githubgate reads Secrets only there. It ignores these two kinds anywhere else. Set `webhook.enabled` to reject them at creation instead. githubgate also creates and updates Secrets there, for the tokens of a `GitHubUserAuthorization`. It has no Secret access in other namespaces. See [chart values](chart-values.md).
 
 ### Certificates
 

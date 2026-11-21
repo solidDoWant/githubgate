@@ -1,15 +1,48 @@
 #!/usr/bin/env python3
-"""Tests of upload-release-assets.py against a local fake of the GitHub release API."""
+"""Tests of upload-release-assets.py against a local HTTPS fake of the GitHub release API.
+
+The fake's certificate is a throwaway one made at run time, as in
+github-api-check_test.py.
+"""
 import http.server
+import importlib.util
 import json
 import os
+import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "upload-release-assets.py")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(HERE, "upload-release-assets.py")
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Replaces the default certificate paths with argv[2] (or nothing), then
+# prints the body of a GET of argv[3] made by upload-release-assets.py's
+# request function.
+DEFAULT_PATHS_REQUEST = """
+import importlib.util, ssl, sys
+def load_default_certs(context, purpose=ssl.Purpose.SERVER_AUTH):
+    if sys.argv[2]:
+        context.load_verify_locations(cafile=sys.argv[2])
+ssl.SSLContext.load_default_certs = load_default_certs
+spec = importlib.util.spec_from_file_location("upload_release_assets", sys.argv[1])
+script = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(script)
+sys.stdout.write(script.request("GET", sys.argv[3]).decode())
+"""
+
+generate_cert = load("github_api_check_test", os.path.join(HERE, "github-api-check_test.py")).generate_cert
 
 
 class FakeGitHub(http.server.BaseHTTPRequestHandler):
@@ -63,25 +96,81 @@ class FakeGitHub(http.server.BaseHTTPRequestHandler):
         self.reply(201, {"name": name})
 
 
+@unittest.skipUnless(shutil.which("go"), "go is needed to make the fake's certificate")
 class UploadReleaseAssetsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.certs = tempfile.TemporaryDirectory()
+        cls.cert, cls.key = generate_cert(cls.certs.name)
+        other = os.path.join(cls.certs.name, "other")
+        os.mkdir(other)
+        cls.other_cert, _ = generate_cert(other)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.certs.cleanup()
+
     def setUp(self):
         FakeGitHub.assets = {}
         FakeGitHub.uploads = 0
         FakeGitHub.exists = True
         FakeGitHub.created = []
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeGitHub)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.cert, self.key)
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
+        self.url = f"https://127.0.0.1:{self.server.server_port}"
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         for name, content in (("crds.yaml", "crds"), ("checksums.txt", "sums")):
             with open(os.path.join(self.dir.name, name), "w") as handle:
                 handle.write(content)
 
-    def run_script(self, tag="v1.2.3"):
-        url = f"http://127.0.0.1:{self.server.server_port}"
-        env = dict(os.environ, GITHUBGATE_API_URL=url, GITHUBGATE_UPLOAD_URL=url, GITHUBGATE_REPO="o/r")
-        return subprocess.run([sys.executable, "-I", SCRIPT, tag, self.dir.name], env=env, capture_output=True, text=True)
+    def run_script(self, tag="v1.2.3", cafile=None):
+        env = dict(
+            os.environ,
+            GITHUBGATE_API_URL=self.url,
+            GITHUBGATE_UPLOAD_URL=self.url,
+            GITHUBGATE_REPO="o/r",
+            SSL_CERT_FILE=cafile or self.cert,
+        )
+        return subprocess.run(
+            [sys.executable, "-I", SCRIPT, tag, self.dir.name], env=env, capture_output=True, text=True, timeout=60
+        )
+
+    def request_with_default_paths(self, cafile, default_cafile):
+        """Makes one request, in a fresh process so that no SSL context is
+        cached, with SSL_CERT_FILE set to cafile and the default certificate
+        paths trusting only default_cafile (or nothing), as when the image's
+        OpenSSL does not read SSL_CERT_FILE."""
+        env = dict(os.environ, SSL_CERT_FILE=cafile)
+        url = f"{self.url}/repos/o/r/releases/tags/v1.2.3"
+        return subprocess.run(
+            [sys.executable, "-I", "-c", DEFAULT_PATHS_REQUEST, SCRIPT, default_cafile or "", url],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_trusts_the_bundle_in_ssl_cert_file_not_the_default_paths(self):
+        result = self.request_with_default_paths(self.cert, None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"id": 7})
+
+    def test_fails_when_only_the_default_paths_trust_the_server(self):
+        result = self.request_with_default_paths(self.other_cert, self.cert)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", result.stderr)
+
+    def test_fails_without_uploading_when_the_bundle_does_not_trust_the_server(self):
+        result = self.run_script(cafile=self.other_cert)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", result.stderr)
+        self.assertEqual(FakeGitHub.uploads, 0)
 
     def test_uploads_every_file(self):
         result = self.run_script()

@@ -7,6 +7,8 @@ A missing release is created first, with the `## <version>` section of
 CHANGELOG.md at the tag as its notes; an existing release is left as it is. A
 file whose name is already an asset of the release is left alone, so a
 repeated run neither duplicates nor replaces assets.
+Every request trusts only the stage CA bundle in SSL_CERT_FILE (required),
+through github_https.py, the request code of the stage TLS check.
 GITHUBGATE_API_URL and GITHUBGATE_UPLOAD_URL (tests) replace the GitHub
 endpoints; GITHUBGATE_REPO is owner/name.
 """
@@ -18,6 +20,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# -I leaves the script's directory off sys.path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import github_https  # noqa: E402
+
 API = os.environ.get("GITHUBGATE_API_URL", "https://api.github.com")
 UPLOADS = os.environ.get("GITHUBGATE_UPLOAD_URL", "https://uploads.github.com")
 
@@ -27,7 +33,7 @@ def request(method, url, data=None, content_type=None, accept="application/vnd.g
     if content_type:
         headers["Content-Type"] = content_type
     req = urllib.request.Request(url, method=method, data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as response:
+    with github_https.urlopen(req, timeout=120) as response:
         return response.read()
 
 

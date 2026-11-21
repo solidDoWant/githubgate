@@ -46,4 +46,4 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 15. **Live:** on github.com with the test App, the operator authorizes as the owner through the device flow, adds a signing key through the proxy, sees it on the account, deletes it, and sees one refresh succeed.
     Tests:
 16. **Docs:** an admin page shows how to set up the App (account permission, device flow, client ID), how to create and authorize a `GitHubUserAuthorization`, what each condition means, and how to re-authorize. The user page shows a user rule. The reference lists the new kind, the new `GitHubApp` fields and the rule field.
-    Tests:
+    Tests: `docs: TestAdminPageCoversUserAuthorizationSetupAndConditions`, `docs: TestUserPageShowsUserRule`, `docs: TestReferenceListsUserAuthorizationKindAndFields`

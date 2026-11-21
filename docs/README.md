@@ -39,6 +39,7 @@ docs/user/
   getting-access.md        Get GitHub access in a Tekton task or a Coder workspace, and read a refusal.
   client.md                The githubgate-client commands and settings.
   proxy-mode.md            Set up a pod for proxy mode, push signed commits, and read a refusal.
+  user-rules.md            Write a user rule for user-account operations, and how requests are decided.
   interception.md          Opt a namespace in, and what a pod then gets, with no setup.
   crd-reference.md         Every resource field (generated).
 
@@ -46,6 +47,7 @@ docs/admin/
   README.md                The pages for admins.
   token-mode-setup.md      Install, App, installation, ceiling, policy and status.
   proxy-mode-setup.md      The proxy CA, the chart values and the proxy rules.
+  user-access-setup.md     App account permission, device flow, user authorizations, conditions and re-authorizing.
   interception-setup.md    The injection webhook, pod opt-in and KubeVirt VMs.
   chart-values.md          Every Helm chart value (generated).
 

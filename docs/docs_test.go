@@ -129,3 +129,36 @@ func TestAdminPageCoversInjectionWebhookAndVMSetup(t *testing.T) {
 		assert.True(t, anyPage(pages, func(page string) bool { return strings.Contains(page, term) }), "%q missing on an admin page", term)
 	}
 }
+
+func TestAdminPageCoversUserAuthorizationSetupAndConditions(t *testing.T) {
+	pages := markdownFiles(t, "admin")
+	assert.True(t, anyPage(pages, func(page string) bool { return hasKindBlock(page, "GitHubUserAuthorization") }), "no GitHubUserAuthorization manifest on an admin page")
+
+	for _, term := range []string{
+		"SSH signing keys", "Enable Device Flow", "clientID", "clientIDSecretRef",
+		"githubgate.soliddowant.dev/authorize", "userCode", "verificationURI", "re-authorize", "single",
+		"AuthorizationRequired", "AuthorizationPending", "AuthorizationExpired", "AuthorizationDenied",
+		"DeviceFlowDisabled", "TokenExpiryDisabled", "WrongUser", "FlowLost", "RefreshTokenRevoked", "SpecChanged",
+	} {
+		assert.True(t, anyPage(pages, func(page string) bool { return strings.Contains(page, term) }), "%q missing on an admin page", term)
+	}
+}
+
+func TestUserPageShowsUserRule(t *testing.T) {
+	pages := markdownFiles(t, "user")
+	assert.True(t, anyPage(pages, func(page string) bool {
+		return hasKindBlock(page, "GitHubAccessPolicy") &&
+			strings.Contains(page, "userAuthorizationRef") &&
+			strings.Contains(page, "users/create-ssh-signing-key-for-authenticated-user") &&
+			hasHeading(page, "how a request is decided")
+	}), "no user rule example with its decision order on a user page")
+}
+
+func TestReferenceListsUserAuthorizationKindAndFields(t *testing.T) {
+	reference, err := os.ReadFile("user/crd-reference.md")
+	require.NoError(t, err)
+
+	for _, term := range []string{"## GitHubUserAuthorization", "`spec.clientID`", "`spec.clientIDSecretRef`", "`spec.rules[].userAuthorizationRef`"} {
+		assert.Contains(t, string(reference), term)
+	}
+}

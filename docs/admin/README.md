@@ -41,6 +41,11 @@ githubgate serves Prometheus metrics at `/metrics` on its health port (8080):
 - `githubgate_token_cache_total{result}`: the token cache lookups, with `result` `hit` or `miss`.
 - `githubgate_tokenreview_total{result}`: the caller authentications, by result.
 - `githubgate_github_rate_limit_remaining{installation}`: the requests that are left in the GitHub rate limit of an installation.
+- `githubgate_user_authorization_ready{namespace,name}`: 1 when a `GitHubUserAuthorization` is Ready, and 0 when it is not.
+- `githubgate_user_token_refreshes_total{namespace,name,result}`: the refreshes of the user tokens. `result` is `ok`, `failed` (GitHub did not answer, so githubgate tries again later), `revoked` (GitHub refused the refresh token) or `conflict` (a newer token pair was already stored, so githubgate did not store this one).
+- `githubgate_user_refresh_token_expiry_seconds{namespace,name}`: the time when the stored refresh token expires, in seconds since the Unix epoch.
+
+Only the leader replica reports the three user authorization metrics. The leader is the one replica that writes status.
 
 `/readyz` fails until githubgate has read its configuration, and at once when the pod gets `SIGTERM`.
 

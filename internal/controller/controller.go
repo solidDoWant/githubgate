@@ -63,6 +63,8 @@ type Options struct {
 	// Transport carries the device flow and GET /user requests;
 	// http.DefaultTransport when nil.
 	Transport http.RoundTripper
+	// Metrics are the user authorization metrics; unregistered ones when nil.
+	Metrics *Metrics
 }
 
 // Setup registers the four status reconcilers with the manager. They run

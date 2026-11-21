@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -58,6 +59,13 @@ type env struct {
 	fake     *fakegithub.Server
 	key      *rsa.PrivateKey
 	replicas []*countingTransport
+	// readers are the replicas' cached clients, as serving reads them.
+	readers []client.Reader
+	// gatherers hold each replica's user authorization metrics.
+	gatherers []*prometheus.Registry
+	// intercept, when set, answers a request to the fake GitHub instead of
+	// the fake, or returns false to pass it on.
+	intercept atomic.Pointer[func(http.ResponseWriter, *http.Request) bool]
 }
 
 func keyPEM(key *rsa.PrivateKey) []byte {
@@ -101,10 +109,17 @@ func startEnv(t *testing.T) *env {
 		ID: 70, AppID: githubAppID, Owner: owner, Permissions: map[string]string{"contents": "write"},
 	}))
 
-	api := httptest.NewServer(fake.Handler())
-	t.Cleanup(api.Close)
-
 	result := &env{client: c, fake: fake, key: key}
+
+	handler := fake.Handler()
+	api := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if intercept := result.intercept.Load(); intercept != nil && (*intercept)(writer, request) {
+			return
+		}
+
+		handler.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(api.Close)
 
 	for range 3 {
 		transport := &countingTransport{}
@@ -125,10 +140,16 @@ func startEnv(t *testing.T) *env {
 		})
 		require.NoError(t, err)
 
+		metrics := controller.NewMetrics()
+		gatherer := prometheus.NewRegistry()
+		gatherer.MustRegister(metrics.Collectors()...)
+		result.gatherers = append(result.gatherers, gatherer)
+		result.readers = append(result.readers, manager.GetClient())
+
 		registry := github.NewRegistry(github.Options{BaseURL: api.URL, Transport: transport})
 		require.NoError(t, controller.Setup(manager, controller.Options{
 			AdminNamespaces: []string{adminNamespace}, GitHub: registry,
-			OAuthURL: api.URL, APIURL: api.URL, Transport: transport,
+			OAuthURL: api.URL, APIURL: api.URL, Transport: transport, Metrics: metrics,
 		}))
 
 		done := make(chan error, 1)

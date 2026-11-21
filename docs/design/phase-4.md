@@ -1,6 +1,6 @@
 # Phase 4 design: user access tokens
 
-Implements SPEC.md §4 "User access tokens (phase 4)" for `docs/acceptance/phase-4.md`. Builds on the phase 1–3 designs; everything there still holds unless this file says otherwise. Where this file and SPEC.md disagree, SPEC.md wins and this file is fixed.
+Implements SPEC.md §4 "User access tokens (phase 4)" for `docs/acceptance/phase-4.md`. Builds on the phase 1–3 designs; everything there still holds unless this file says otherwise. Where this file and SPEC.md disagree, SPEC.md wins and this file is fixed. Revised after the design review on #261: the section "Decisions from the design review" at the end overrides anything above it.
 
 ## Overview
 
@@ -175,3 +175,68 @@ The Coder VM template's provisioner (a separate intercepted provisioner Deployme
 3. proxy decision and forwarding with user tokens; audit and metrics (needs 2)
 4. chart RBAC and values; e2e (needs 3)
 5. docs; live (needs 4)
+
+## Decisions from the design review (#261)
+
+The operator accepted every finding. Where this section and the text above differ, this section decides.
+
+### Refresh and storage (H1, H3, M5, M6, L2, L3)
+
+- **One worker per authorization.** The device-flow store, the refresh and the revocation clear for one authorization run in one serialized worker on the leader, never at the same time.
+- **Refresh from an uncached read.** Before spending a refresh token, the worker reads the Secret with the manager's API reader (uncached GET), and refreshes only from that copy. It writes the new pair with that copy's `resourceVersion`.
+- **On `Conflict`:** re-read. If the stored refresh token is no longer the one that was sent, someone newer wrote: drop the result, and don't record a revocation. Otherwise retry, for up to 2 minutes.
+- **The clear is conditional.** On `bad_refresh_token`, clear the token keys only with a conditional update on the `resourceVersion` that held the refused refresh token. If that update conflicts, re-read and decide again.
+- **The token is bound to the spec.** The Secret also stores `app` (`namespace/name`) and `client-id`. Serving and refresh use the token only when the stored `login` equals `spec.login` (case-insensitive) and the stored App and client ID equal the current ones, and the Secret has the label and the authorization's owner UID. Otherwise the authorization is `Ready=False, reason SpecChanged`, the token is never used, and the worker clears the token keys (conditionally, as above).
+- **Library:** `golang.org/x/oauth2`: `Config.DeviceAuth`, `Config.DeviceAccessToken` (it handles `authorization_pending` and `slow_down`), and a refresh grant through `Config.TokenSource(...).Token()` called once by the worker. Serving **never** uses an auto-refreshing `TokenSource` (`ReuseTokenSource`, `Config.Client`): those would spend the single-use refresh token on any replica. `refresh_token_expires_in` comes from `Token.Extra`.
+- **OAuth host flag:** `--github-oauth-url`, default `https://github.com`, for `/login/device/code` and `/login/oauth/access_token`. e2e points it at the fake.
+- **Fake quirks to copy:** OAuth errors come with HTTP **200** and an `error` field. Answers are form-encoded unless `Accept: application/json` is sent.
+- **Non-expiring tokens are refused.** A token without `expires_in` and `refresh_token` (the App opted out of expiring user tokens) is discarded, with `Ready=False, reason TokenExpiryDisabled`. The admin page says to keep expiry on.
+- **A `401` on a user token** is answered `503 unavailable`, with the message naming the authorization. It wakes the worker for an immediate refresh attempt. A successful refresh means the old access token was revoked early; a refused one leads to `RefreshTokenRevoked`.
+- **OAuth errors** are reduced to the HTTP status and the OAuth `error` code before they're logged or written to status. `RetrieveError.Error()` can carry the response body, so it's never logged.
+- **Names:** CEL caps a `GitHubUserAuthorization` name at 242 characters, so the Secret name fits. `spec.login` must match GitHub's login pattern: alphanumerics and single hyphens, 1–39 characters, not starting or ending with a hyphen.
+
+### Starting a flow (H2)
+
+`status.lastAuthorizeRequest` keeps the last annotation value that was handled, and it stays after the flow ends. The leader writes it **before** requesting a device code. A flow starts only when the annotation is set and differs from that field. A crash after the write loses the flow (fail closed: `AuthorizationRequired`, reason `FlowLost`), and the admin sets the annotation again.
+
+### What a user rule may list (H4, M3)
+
+- The ceiling and a user rule's `allowOperations` accept only REST operations whose path template has **no** `{owner}`, `{repo}`, `{org}` or `{enterprise}` parameter: in practice the `/user…` endpoints. The webhook enforces it, and so does the model's acceptance, so an operations catalogue update makes such a rule `InvalidSpec`.
+- An operation listed by **any** of the caller's user rules, accepted or not, is never decided by the installation rules. While the listing rule isn't accepted, its requests get `403 denied` naming the rule and its reason. A user rule stays accepted while its authorization is not Ready (as `RefNotReady` is handled for installations), so scenario 9's `503` is reachable.
+
+### Admission and ownership (M2, M4)
+
+- `GitHubApp.allowedNamespaces` must admit the authorization's namespace (`NotAllowed` otherwise), as for installations.
+- The token Secret's owner reference sets `blockOwnerDeletion: false`, so no `finalizers` RBAC is needed. Garbage collection still deletes the Secret with its authorization.
+
+### Conditions (M1)
+
+| State | `Ready` | `AuthorizationRequired` |
+|---|---|---|
+| never authorized | False, `AuthorizationRequired` | True, `NotAuthorized` |
+| flow pending | False, `AuthorizationPending` | True, `AuthorizationPending` |
+| code expired | False, `AuthorizationExpired` | True, `AuthorizationExpired` |
+| code denied | False, `AuthorizationDenied` | True, `AuthorizationDenied` |
+| device flow disabled | False, `DeviceFlowDisabled` | True, `DeviceFlowDisabled` |
+| non-expiring token | False, `TokenExpiryDisabled` | True, `TokenExpiryDisabled` |
+| wrong user | False, `WrongUser` | True, `WrongUser` |
+| flow lost (leader change or crash) | False, `FlowLost` | True, `FlowLost` |
+| authorized | True, `Ready` | False, `Authorized` |
+| refresh failing, access token still valid | True, `Ready` (message says the refresh is failing) | False, `Authorized` |
+| refresh token refused | False, `RefreshTokenRevoked` | True, `RefreshTokenRevoked` |
+| spec changed after authorizing | False, `SpecChanged` | True, `SpecChanged` |
+| client ID missing / Secret missing / Secret invalid | False, `InvalidSpec` / `SecretUnavailable` / `SecretInvalid` | unchanged |
+| App not found / not Ready / not admitted | False, `RefNotFound` / `RefNotReady` / `NotAllowed` | unchanged |
+
+`RefreshFailed` is message text only, not a reason. The refresh metric's `result` label takes the values `ok`, `failed` (transient), `revoked` and `conflict` (dropped because a newer pair was written).
+
+### Error bodies (L1)
+
+These use phase 2's error-body format:
+- several authorizations: `403`, `error: denied`, message `githubgate: operation "<id>": covered by more than one user authorization`;
+- rule not accepted: `403`, `error: denied`, message `githubgate: operation "<id>": user rule "<rule>" is not accepted: <reason>`;
+- not Ready or `401`: `503`, `error: unavailable`, message `githubgate: user authorization <namespace>/<name> is not ready: <reason>`.
+
+### Docs (L4)
+
+The admin page says that an operation grant covers every object of that kind on the user's account. For example, the delete operation can delete any of the user's signing keys, not only the ones the caller added.

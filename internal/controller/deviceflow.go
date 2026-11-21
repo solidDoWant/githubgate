@@ -226,8 +226,15 @@ func (r *userAuthorizationReconciler) oauthConfig(clientID string) *oauth2.Confi
 	}
 }
 
+// oauthContext carries the client for the OAuth calls. It never follows a
+// redirect: Go would send the form body, with its refresh token or device
+// code, again to the redirect's host, and a token goes only to GitHub. The
+// redirect is then a failed call like any other non-2xx answer.
 func (r *userAuthorizationReconciler) oauthContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: oauthErrorTransport{next: r.transport()}})
+	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{
+		Transport:     oauthErrorTransport{next: r.transport()},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	})
 }
 
 func (r *userAuthorizationReconciler) transport() http.RoundTripper {

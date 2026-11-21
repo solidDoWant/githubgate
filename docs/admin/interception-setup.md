@@ -90,7 +90,7 @@ Make these changes in the VM image:
 
 A VM workspace also reads public repositories of other owners and downloads releases from `github.com`. Interception sends these requests to githubgate too. To let them through, set `publicRead: true` and `webPaths: true` in the `proxy` block of a rule of the workspace's policy. Both settings are off by default:
 
-- `publicRead` sends read-only requests outside the installation with an installation token that has only `metadata: read`. This token reads public data and no private repository contents. It keeps the rate limit of the installation. The rule must name at least one repository without a `*`, because githubgate limits this token to those repositories.
+- `publicRead` sends read-only requests outside the installation with an installation token that has only `metadata: read`. This token reads public data and no private repository contents. It keeps the rate limit of the installation. The rule must name at least one repository without a `*`, because githubgate limits this token to those repositories. If one of those repositories does not exist or is not selected for the installation, githubgate limits the token to the first repository that GitHub accepts.
 - `webPaths` sends `GET` and `HEAD` requests on `github.com` that are not git with no credential.
 
 Writes outside the installation are still refused. The repositories of the installation still follow the rules. See [Public repositories and web pages](../user/interception.md#public-repositories-and-web-pages).

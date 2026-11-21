@@ -1,7 +1,10 @@
 version: "2"
 
 run:
-  timeout: 5m
+  # Generous on purpose: CI runs every stage at once, and package loading
+  # alone has taken longer than 5 minutes on a loaded node. A hung run still
+  # fails at the pipeline timeout.
+  timeout: 15m
   build-tags:
     - integration
     - e2e

@@ -78,8 +78,10 @@ echo "stages: $stages"
 # (the owner's registry proxy, not part of this project): the system CAs plus
 # registrygate's CA (dockerd's certs.d, the same CA for every intercepted
 # host), its Docker credential helper, its token and the Docker configuration
-# that names it.
-cp /etc/ssl/certs/ca-certificates.crt "$ci/ca-bundle.crt"
+# that names it. An intercepted task pod also adds githubgate's interceptor CAs
+# (scripts/ci/ca-bundle.sh): the stages share the pod's network, so their GitHub
+# traffic goes through the interceptor.
+./scripts/ci/ca-bundle.sh "$ci/ca-bundle.crt"
 docker run --rm -v /etc/docker/certs.d:/certsd:ro --entrypoint /bin/sh "$image" \
 	-c 'f=$(ls /certsd/*/ca.crt 2>/dev/null | head -n1); if [ -n "$f" ]; then cat "$f"; fi' >>"$ci/ca-bundle.crt"
 if [ -x /opt/registrygate/docker-credential-registrygate ]; then

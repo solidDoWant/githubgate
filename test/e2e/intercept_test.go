@@ -175,7 +175,7 @@ func (c cluster) startInterceptPod(t *testing.T, pod interceptPod) {
 	t.Helper()
 
 	c.apply(t, c.interceptManifest(pod))
-	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", pod.namespace, "pod/"+pod.name, "--timeout=3m")
+	c.waitPodReady(t, pod.namespace, pod.name)
 }
 
 func (c cluster) podJSON(t *testing.T, namespace, name string) map[string]any {

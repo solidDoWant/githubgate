@@ -522,7 +522,7 @@ spec:
     - name: client
       image: {reference: %[4]s, pullPolicy: IfNotPresent}
 %[7]s`, name, callerNamespace, c.fakeImage, c.clientImage, extraSpec, extraMount, extraVolume))
-	c.kubectl(t, "", "wait", "--for=condition=Ready", "-n", callerNamespace, "pod/"+name, "--timeout=3m")
+	c.waitPodReady(t, callerNamespace, name)
 }
 
 func TestTokenModeOnKind(t *testing.T) {

@@ -120,7 +120,9 @@ command_of() {
 	case "$1" in
 	lint) echo 'make lint' ;;
 	unit) echo 'make test && make build' ;;
-	fuzz) echo 'make test-fuzz' ;;
+	# Two workers per target: all stages share the node's cores, and four
+	# workers per target starved the lint and e2e stages.
+	fuzz) echo 'make test-fuzz FUZZ_PARALLEL=2' ;;
 	generate) echo 'make check-generate' ;;
 	integration) echo 'make test-integration' ;;
 	e2e) echo 'make test-e2e' ;;

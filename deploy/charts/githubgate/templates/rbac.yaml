@@ -47,7 +47,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ $sa }}
     namespace: {{ .Release.Namespace }}
-{{- /* Secrets are readable in the admin namespaces only, never cluster-wide. */}}
+{{- /* Secrets are readable and writable (the user-token Secrets githubgate owns) in the admin namespaces only, never cluster-wide. */}}
 {{- $admins := .Values.adminNamespaces | default (list .Release.Namespace) }}
 {{- range $admins }}
 ---
@@ -61,7 +61,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

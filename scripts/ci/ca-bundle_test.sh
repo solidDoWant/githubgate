@@ -14,12 +14,12 @@ mkcert() { printf -- '-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----
 for name in system proxy extra inline joined; do mkcert "$name"; done
 
 # Not intercepted: the bundle is the system bundle, whatever the trust variables say.
-SYSTEM_CA="$dir/system.pem" SSL_CERT_FILE="$dir/proxy.pem" ./scripts/ci/ca-bundle.sh "$dir/plain.crt"
+SYSTEM_CA="$dir/system.pem" TRUST_DIR="$dir/no-trust" SSL_CERT_FILE="$dir/proxy.pem" ./scripts/ci/ca-bundle.sh "$dir/plain.crt"
 cmp -s "$dir/system.pem" "$dir/plain.crt" || fail "a pod that is not intercepted got more than the system CAs"
 
 # Intercepted: the joined trust file, the proxy CA and the extra CA are in.
 cat "$dir/system.pem" "$dir/joined.pem" >"$dir/joined.crt"
-SYSTEM_CA="$dir/system.pem" GITHUBGATE_INTERCEPT_PROXY_ADDRESS=proxy:443 SSL_CERT_FILE="$dir/joined.crt" \
+SYSTEM_CA="$dir/system.pem" TRUST_DIR="$dir/no-trust" GITHUBGATE_INTERCEPT_PROXY_ADDRESS=proxy:443 SSL_CERT_FILE="$dir/joined.crt" \
 	GITHUBGATE_INTERCEPT_PROXY_CA="@$dir/proxy.pem" GITHUBGATE_INTERCEPT_EXTRA_CA="$(cat "$dir/inline.pem")" \
 	./scripts/ci/ca-bundle.sh "$dir/intercepted.crt"
 for name in system proxy inline joined; do
@@ -27,7 +27,18 @@ for name in system proxy inline joined; do
 done
 
 # Only the proxy CA variable, no trust file: still in.
-SYSTEM_CA="$dir/system.pem" GITHUBGATE_INTERCEPT_PROXY_ADDRESS=proxy:443 GITHUBGATE_INTERCEPT_PROXY_CA="@$dir/extra.pem" \
+SYSTEM_CA="$dir/system.pem" TRUST_DIR="$dir/no-trust" GITHUBGATE_INTERCEPT_PROXY_ADDRESS=proxy:443 GITHUBGATE_INTERCEPT_PROXY_CA="@$dir/extra.pem" \
 	./scripts/ci/ca-bundle.sh "$dir/varonly.crt"
 grep -qF "$(sed -n 2p "$dir/extra.pem")" "$dir/varonly.crt" || fail "the CA named by the variable is missing"
+
+# A real intercepted Tekton step: the trust mount holds the pod CA, the trust
+# variables point at it, and none of the helper's GITHUBGATE_INTERCEPT_*
+# variables are set (the webhook sets those only in its own container).
+mkdir -p "$dir/trust"
+cp "$dir/proxy.pem" "$dir/trust/ca.crt"
+cat "$dir/system.pem" "$dir/proxy.pem" >"$dir/trust/bundle.crt"
+env -u GITHUBGATE_INTERCEPT_PROXY_ADDRESS -u GITHUBGATE_INTERCEPT_PROXY_CA -u GITHUBGATE_INTERCEPT_EXTRA_CA \
+	SYSTEM_CA="$dir/system.pem" TRUST_DIR="$dir/trust" SSL_CERT_FILE="$dir/trust/bundle.crt" \
+	NODE_EXTRA_CA_CERTS="$dir/trust/ca.crt" ./scripts/ci/ca-bundle.sh "$dir/step.crt"
+grep -qF "$(sed -n 2p "$dir/proxy.pem")" "$dir/step.crt" || fail "the pod CA from the trust mount is missing from the bundle"
 echo "ca-bundle_test: passed"

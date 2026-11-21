@@ -31,6 +31,10 @@ const (
 	// ReasonNotAuthorized is the AuthorizationRequired reason of a user
 	// authorization that was never authorized.
 	ReasonNotAuthorized = "NotAuthorized"
+
+	// clearRetry is how soon a failed clear of a changed spec's tokens is
+	// tried again.
+	clearRetry = 10 * time.Second
 )
 
 func setupUserAuthorizations(manager ctrl.Manager, b base) error {
@@ -139,8 +143,16 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 				requeue = wait
 			}
 		case state == tokenSpecChanged:
+			// The status is written either way; a failed clear is tried
+			// again soon.
+			if err := r.clearSpecChanged(ctx, &object, authorization); err != nil {
+				r.log.Info("the stored tokens of a changed spec could not be cleared", "authorization", req.String())
+
+				requeue = clearRetry
+			}
+
 			setOutcome(&status.Conditions, object.Generation, ReasonSpecChanged,
-				"the stored token was authorized for another login, App or client ID; it is not used; set the annotation again")
+				"the stored token was authorized for another login, App or client ID; it was cleared; set the annotation again")
 		case flowOutcomes[readyReason(status.Conditions)]:
 			// Keep how the last flow ended until something new happens.
 		default:

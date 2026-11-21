@@ -4,6 +4,7 @@ For: people who install githubgate and decide who gets GitHub access. You know K
 
 - [Set up token mode](token-mode-setup.md): install, create an App, an installation with a ceiling and a policy, and read the status.
 - [Set up proxy mode](proxy-mode-setup.md): the name-constrained CA, the chart values and the proxy rules.
+- [Set up user access tokens](user-access-setup.md): the App account permission, device flow, the authorization, the conditions and re-authorizing.
 - [Set up interception](interception-setup.md): the injection webhook, opt-in for single pods, and KubeVirt VMs.
 
 This page also describes the audit log and the metrics.

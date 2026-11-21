@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	githubgatev1alpha1 "github.com/solidDoWant/githubgate/api/v1alpha1"
@@ -98,6 +99,22 @@ func (e *env) requireNoNewFlow(t *testing.T, object *githubgatev1alpha1.GitHubUs
 
 		return current.Status.Authorization != nil
 	}, 3*time.Second, 100*time.Millisecond, "a device flow started")
+}
+
+// setAuthorizeAnnotation sets the authorize annotation on a fresh copy, since
+// the controller may write the object in between.
+func (e *env) setAuthorizeAnnotation(t *testing.T, object *githubgatev1alpha1.GitHubUserAuthorization, value string) {
+	t.Helper()
+
+	require.NoError(t, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		if err := e.client.Get(t.Context(), client.ObjectKeyFromObject(object), object); err != nil {
+			return err
+		}
+
+		object.Annotations = map[string]string{controller.AnnotationAuthorize: value}
+
+		return e.client.Update(t.Context(), object)
+	}))
 }
 
 func TestDeviceFlowAuthorization(t *testing.T) {
@@ -204,8 +221,7 @@ func TestDeviceFlowAuthorization(t *testing.T) {
 		require.NoError(t, e.fake.SetDeviceFlow(deviceClientID, true))
 		e.requireNoNewFlow(t, object)
 
-		object.Annotations[controller.AnnotationAuthorize] = "2"
-		require.NoError(t, e.client.Update(t.Context(), object))
+		e.setAuthorizeAnnotation(t, object, "2")
 		assert.Equal(t, "2", e.requirePending(t, object).Request)
 	})
 
@@ -222,16 +238,24 @@ func TestDeviceFlowAuthorization(t *testing.T) {
 		e.create(t, object)
 		e.requireReady(t, object, func() []metav1.Condition { return object.Status.Conditions }, metav1.ConditionFalse, controller.ReasonAuthorizationRequired)
 
-		// What a leader that stopped during a flow leaves behind.
-		object.Status.LastAuthorizeRequest = "7"
-		object.Status.Authorization = &githubgatev1alpha1.DeviceAuthorizationStatus{
-			UserCode: "BCDF-GHJK", VerificationURI: "https://github.com/login/device",
-			ExpiresAt: metav1.NewTime(time.Now().Add(10 * time.Minute)), Request: "7",
-		}
-		require.NoError(t, e.client.Status().Update(t.Context(), object))
+		// What a leader that stopped during a flow leaves behind. The
+		// controller may write the status in between, so each write is
+		// retried on a fresh copy.
+		require.NoError(t, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			if err := e.client.Get(t.Context(), client.ObjectKeyFromObject(object), object); err != nil {
+				return err
+			}
 
-		object.Annotations = map[string]string{controller.AnnotationAuthorize: "7"}
-		require.NoError(t, e.client.Update(t.Context(), object))
+			object.Status.LastAuthorizeRequest = "7"
+			object.Status.Authorization = &githubgatev1alpha1.DeviceAuthorizationStatus{
+				UserCode: "BCDF-GHJK", VerificationURI: "https://github.com/login/device",
+				ExpiresAt: metav1.NewTime(time.Now().Add(10 * time.Minute)), Request: "7",
+			}
+
+			return e.client.Status().Update(t.Context(), object)
+		}))
+
+		e.setAuthorizeAnnotation(t, object, "7")
 
 		e.requireReady(t, object, func() []metav1.Condition { return object.Status.Conditions }, metav1.ConditionFalse, controller.ReasonFlowLost)
 		requireAuthorizationRequired(t, object, metav1.ConditionTrue, controller.ReasonFlowLost)

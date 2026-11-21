@@ -56,6 +56,7 @@ The chart sets these. You need them only to run githubgate yourself.
 - `--leader-elect`: only the elected replica writes status. Needs `POD_NAMESPACE`.
 - `--webhook`, `--webhook-cert-dir`, `--webhook-port`: serve the admission webhook at `/validate` (default port 9443).
 - `--api-address` (`:8443`), `--health-address` (`:8080`), `--github-base-url` (default: api.github.com).
+- `--github-oauth-url`: where githubgate runs the device flow for a `GitHubUserAuthorization` (`/login/device/code` and `/login/oauth/access_token`). Default: `https://github.com`.
 - `--proxy`: serve proxy mode on `--proxy-address` (default `:9443`). githubgate decides each request against the proxy rules of the caller. It sends an allowed request to GitHub with an installation token in place of the ServiceAccount token.
 - `--proxy-upstream-api`, `--proxy-upstream-uploads`, `--proxy-upstream-git`: where the proxy sends requests for `api.github.com`, `uploads.github.com` and `github.com`. Each must be an `https` URL. Defaults: the GitHub hosts. The chart values are `proxy.upstreams.api`, `proxy.upstreams.uploads` and `proxy.upstreams.git`.
 - `--proxy-upstream-ca-file`: extra CA certificates that the upstreams can use, added to the system CAs. The chart value `proxy.upstreams.caConfigMap` names a ConfigMap with the certificates in `ca.crt`.

@@ -51,6 +51,29 @@ trap 'kill "$sampler" 2>/dev/null || true' EXIT
 image=$(./scripts/ci/ci-image.sh)
 echo "ci image $image ready after $(elapsed)s"
 
+# The run's CPU budget: the dind sidecar's CPU request. The pod has no CPU
+# limit (cluster policy), so without a cap the stages, which all start at once
+# and each size themselves to every CPU they see, take the whole node and
+# starve the other runs on it. Every stage container is pinned to the same
+# CI_CPUS CPUs: the stages share them, a stage that ends leaves its share to
+# the others, and the run never uses more. GOMAXPROCS is set to the budget too;
+# go test -p, go build -p, golangci-lint's concurrency and the fuzz workers
+# default to it or to the CPU affinity. The kind node of e2e is not pinned, so
+# it boots on the VM's other CPUs.
+cpus="${CI_CPUS:-8}"
+case "$cpus" in
+'' | *[!0-9]* | 0*)
+	echo "CI_CPUS must be a positive whole number of CPUs, not '$cpus'" >&2
+	exit 1
+	;;
+esac
+available=$(docker run --rm --entrypoint /bin/sh "$image" -c 'cat /sys/fs/cgroup/cpuset.cpus.effective 2>/dev/null || cat /sys/devices/system/cpu/online')
+# A VM with fewer CPUs than the budget gives the stages all it has.
+pinned=$(./scripts/ci/cpuset-first.sh "$available" "$cpus")
+cpuset=${pinned% *}
+cpus=${pinned#* }
+echo "CPU budget: $cpus CPUs (CI_CPUS=${CI_CPUS:-unset}, default 8); stages pinned to CPUs $cpuset of $available"
+
 # Runs a command in the CI image's dev shell, from the checkout.
 in_image() {
 	docker run --rm -i -v "$WS:$WS" -w "$src" "$image" bash -c \
@@ -120,7 +143,7 @@ command_of() {
 	case "$1" in
 	lint) echo 'make lint' ;;
 	unit) echo 'make test && make build' ;;
-	# Two workers per target: all stages share the node's cores, and four
+	# Two workers per target: all stages share the run's CPU budget, and four
 	# workers per target starved the lint and e2e stages.
 	fuzz) echo 'make test-fuzz FUZZ_PARALLEL=2' ;;
 	generate) echo 'make check-generate' ;;
@@ -166,6 +189,7 @@ start_stage() {
 		status=0
 		# shellcheck disable=SC2086 # $mount is a list of options
 		docker run --rm --name "stage-$stage" --network host $mount -w "$src" \
+			--cpuset-cpus "$cpuset" -e GOMAXPROCS="$cpus" \
 			-v gomod:/cache/gomod -v gobuild:/cache/gobuild \
 			-e GOMODCACHE=/cache/gomod -e GOCACHE=/cache/gobuild/go \
 			-e GOLANGCI_LINT_CACHE=/cache/gobuild/golangci-lint \

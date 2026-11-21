@@ -582,6 +582,17 @@ curl -sS -o /dev/null -w 'own status=%%{http_code}' --cacert "$SSL_CERT_FILE" --
 		assert.Contains(t, out, "own status=")
 	})
 
+	t.Run("a Nix-style container that reads only NIX_SSL_CERT_FILE verifies the interceptor", func(t *testing.T) {
+		c.startInterceptPod(t, interceptPod{name: "nix-style", namespace: interceptNamespace})
+
+		// Nix's OpenSSL prefers NIX_SSL_CERT_FILE over the other variables, so the
+		// request names that file alone and ignores every other trust variable.
+		out, err := c.exec(ctx, interceptNamespace, "nix-style", fmt.Sprintf(
+			`test "$NIX_SSL_CERT_FILE" = /var/run/githubgate/trust/bundle.crt && env -u SSL_CERT_FILE -u CURL_CA_BUNDLE -u GIT_SSL_CAINFO curl -sS --cacert "$NIX_SSL_CERT_FILE" -w '\nstatus=%%{http_code}' https://api.github.com/repos/%s/%s`, owner, repository))
+		require.NoError(t, err, out)
+		assert.Contains(t, out, "status=200")
+	})
+
 	t.Run("pods are not created while the injection webhook is unavailable", func(t *testing.T) {
 		// A second webhook with the same shape, pointing at a Service with no
 		// endpoints, for a label of its own. githubgate's webhook keeps running.

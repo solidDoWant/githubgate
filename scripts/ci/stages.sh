@@ -55,7 +55,7 @@ echo "ci image $image ready after $(elapsed)s"
 # limit (cluster policy), so without a cap the stages, which all start at once
 # and each size themselves to every CPU they see, take the whole node and
 # starve the other runs on it. Every stage container is pinned to the same
-# CI_CPUS CPUs: the stages share them, a stage that ends leaves its share to
+# CI_CPUS CPUs, the least busy run of them: the stages share them, a stage that ends leaves its share to
 # the others, and the run never uses more. GOMAXPROCS is set to the budget too;
 # go test -p, go build -p, golangci-lint's concurrency and the fuzz workers
 # default to it or to the CPU affinity. The kind node of e2e is not pinned, so
@@ -69,10 +69,19 @@ case "$cpus" in
 esac
 available=$(docker run --rm --entrypoint /bin/sh "$image" -c 'cat /sys/fs/cgroup/cpuset.cpus.effective 2>/dev/null || cat /sys/devices/system/cpu/online')
 # A VM with fewer CPUs than the budget gives the stages all it has.
-pinned=$(./scripts/ci/cpuset-first.sh "$available" "$cpus")
-cpuset=${pinned% *}
-cpus=${pinned#* }
-echo "CPU budget: $cpus CPUs (CI_CPUS=${CI_CPUS:-unset}, default 8); stages pinned to CPUs $cpuset of $available"
+# Other runs on the node pin their stages too, so the stages take the CPUs the
+# node used least in the last second, not always the first ones.
+stat_dir=$(mktemp -d)
+cp /proc/stat "$stat_dir/before"
+sleep 1
+cp /proc/stat "$stat_dir/after"
+pinned=$(./scripts/ci/cpuset-first.sh "$available" "$cpus" "$stat_dir/before" "$stat_dir/after")
+rm -rf "$stat_dir"
+cpuset=$(echo "$pinned" | head -n 1)
+busy=$(echo "$pinned" | sed -n 2p)
+cpus=${cpuset#* }
+cpuset=${cpuset% *}
+echo "CPU budget: $cpus CPUs (CI_CPUS=${CI_CPUS:-unset}, default 8); stages pinned to CPUs $cpuset of $available; busy ticks per CPU in the last second: ${busy:-unknown}"
 
 # Runs a command in the CI image's dev shell, from the checkout.
 in_image() {

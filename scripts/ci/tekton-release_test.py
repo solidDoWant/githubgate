@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Checks the release PipelineRun's workspace: tasks pass files through it, so
-it must not be an emptyDir, which Tekton gives each task's pod separately."""
+"""Checks the release PipelineRun's workspaces: none may be backed by a claim,
+which makes Tekton start an affinity-assistant pod that the cluster refuses
+to run as the release ServiceAccount."""
 
 import pathlib
 import re
@@ -32,16 +33,21 @@ def tasks_using(text, workspace):
 
 
 class ReleaseWorkspaceTest(unittest.TestCase):
-    def test_shared_workspace_is_not_an_empty_dir(self):
+    def test_no_workspace_is_a_claim(self):
         for path in FILES:
             text = path.read_text()
             for name, kind in run_workspaces(text).items():
-                if tasks_using(text, name) > 1:
-                    self.assertNotEqual(kind, "emptyDir", "%s: workspace %s is shared by tasks" % (path.name, name))
+                self.assertNotIn(kind, ("volumeClaimTemplate", "persistentVolumeClaim"), "%s: workspace %s" % (path.name, name))
 
-    def test_detects_a_shared_empty_dir(self):
-        text = "spec:\n  workspaces:\n    - name: source\n      emptyDir: {}\n"
-        self.assertEqual(run_workspaces(text), {"source": "emptyDir"})
+    def test_no_workspace_is_shared_by_tasks(self):
+        for path in FILES:
+            text = path.read_text()
+            for name in run_workspaces(text):
+                self.assertLessEqual(tasks_using(text, name), 1, "%s: workspace %s" % (path.name, name))
+
+    def test_detects_a_claim(self):
+        text = "spec:\n  workspaces:\n    - name: source\n      volumeClaimTemplate:\n        spec: {}\n"
+        self.assertEqual(run_workspaces(text), {"source": "volumeClaimTemplate"})
 
 
 if __name__ == "__main__":

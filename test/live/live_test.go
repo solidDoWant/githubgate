@@ -37,6 +37,7 @@ import (
 	"github.com/solidDoWant/githubgate/internal/auth"
 	"github.com/solidDoWant/githubgate/internal/github"
 	"github.com/solidDoWant/githubgate/internal/model"
+	"github.com/solidDoWant/githubgate/internal/proxy"
 	"github.com/solidDoWant/githubgate/internal/server"
 )
 
@@ -114,6 +115,11 @@ type liveEnv struct {
 	// proxyAudit holds only the in-process proxy's audit lines, apart from
 	// the transcript, so a failure can print exactly what the proxy logged.
 	proxyAudit *transcript
+	// userRules are extra accepted rules the proxy applies to the caller
+	// "tenantNamespace/account" keyed by account, and userTokens gives them
+	// their access token. Both are set only by the user-token test.
+	userRules  map[string][]*model.Rule
+	userTokens proxy.UserTokens
 }
 
 // recordingAuthenticator takes the caller from the credential "ns/sa", so the

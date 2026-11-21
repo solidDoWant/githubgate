@@ -82,11 +82,17 @@ func (l *liveEnv) serveProxy(t *testing.T, address string, observe func(*http.Re
 
 	forwarder, err := proxy.NewForwarder(proxy.ForwarderOptions{
 		Rules: func(namespace, serviceAccount string) []*model.Rule {
-			return l.store.Load().Rules(namespace, serviceAccount)
+			rules := l.store.Load().Rules(namespace, serviceAccount)
+			if namespace == tenantNamespace {
+				rules = append(rules[:len(rules):len(rules)], l.userRules[serviceAccount]...)
+			}
+
+			return rules
 		},
-		Tokens:    l.api,
-		Upstreams: proxy.DefaultUpstreams(),
-		Audit:     slog.New(slog.NewJSONHandler(io.MultiWriter(l.log, l.proxyAudit), nil)),
+		Tokens:     l.api,
+		UserTokens: l.userTokens,
+		Upstreams:  proxy.DefaultUpstreams(),
+		Audit:      slog.New(slog.NewJSONHandler(io.MultiWriter(l.log, l.proxyAudit), nil)),
 	})
 	require.NoError(t, err)
 

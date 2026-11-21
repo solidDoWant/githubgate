@@ -94,6 +94,7 @@ type Server struct {
 	releases      map[string]*Release
 	pulls         map[string][]PullRequest
 	nextID        int64
+	users         *userState
 }
 
 // New returns a Server that keeps bare repositories under gitRoot (a new
@@ -118,6 +119,7 @@ func New(gitRoot string) (*Server, error) {
 		releases:      map[string]*Release{},
 		pulls:         map[string][]PullRequest{},
 		nextID:        100,
+		users:         newUserState(),
 	}, nil
 }
 
@@ -306,6 +308,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/{ref...}", s.withToken(contentsRead, s.handleGetRef))
 	mux.HandleFunc("POST /graphql", s.withToken(nil, s.handleGraphQL))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", s.withToken(&need{perm: "issues", level: "write"}, s.handleIssueComment))
+	mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
+	mux.HandleFunc("POST /login/oauth/access_token", s.handleOAuthAccessToken)
+	mux.HandleFunc("GET /user", s.userHandler(s.handleUser))
+	mux.HandleFunc("GET /user/ssh_signing_keys", s.userHandler(s.handleListSSHSigningKeys))
+	mux.HandleFunc("POST /user/ssh_signing_keys", s.userHandler(s.handleCreateSSHSigningKey))
+	mux.HandleFunc("GET /user/ssh_signing_keys/{id}", s.userHandler(s.handleGetSSHSigningKey))
+	mux.HandleFunc("DELETE /user/ssh_signing_keys/{id}", s.userHandler(s.handleDeleteSSHSigningKey))
 	mux.HandleFunc("/{owner}/{repo}/", s.handleGit)
 
 	return mux

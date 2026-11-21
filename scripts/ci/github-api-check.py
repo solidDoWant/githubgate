@@ -6,9 +6,14 @@
 It runs in a stage container and trusts only the CAs of the stage CA bundle
 (SSL_CERT_FILE, required), the bundle the release stage reaches GitHub with
 (scripts/ci/upload-release-assets.py), so a CI run fails here, on every pull
-request and push, when the TLS chain the stages see is broken: a CA missing
-from the bundle, or interception that does not work. GITHUBGATE_API_URL
-(tests) replaces the GitHub endpoint.
+request, push and release, when the TLS chain the stages see is broken: a CA
+missing from the bundle, or interception that does not work.
+
+Any HTTP response proves verified TLS, so an error status (403 or 404 from a
+githubgate policy that does not allow this request, as for the release
+ServiceAccount) passes and is printed. A 2xx response must name the
+repository. Failing to connect, a TLS error or another OSError fails.
+GITHUBGATE_API_URL (tests) replaces the GitHub endpoint.
 """
 import json
 import os
@@ -32,7 +37,10 @@ def main(repo):
         with urllib.request.urlopen(request, timeout=60, context=context) as response:
             body = json.loads(response.read())
     except urllib.error.HTTPError as error:
-        sys.exit(f"GET /repos/{repo}: HTTP {error.code}")
+        # The response came over verified TLS, which is all this checks; the
+        # status only tells whether the caller's policy allows the request.
+        print(f"GitHub API reachable over verified TLS from a stage container: GET /repos/{repo}: HTTP {error.code}")
+        return
     except (urllib.error.URLError, OSError) as error:
         sys.exit(f"GET /repos/{repo} failed, the stage CA bundle or the interception is broken: {error}")
     if body.get("full_name", "").lower() != repo.lower():

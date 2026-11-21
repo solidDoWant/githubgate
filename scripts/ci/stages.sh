@@ -86,8 +86,10 @@ if [ -f "${HOME:-/nonexistent}/.docker/config.json" ]; then
 fi
 
 # Every run checks, from a stage container with the stage CA bundle, the way the
-# release stage reaches GitHub, that one read-only GitHub API request verifies,
-# so a broken bundle or interception fails a pull request, not a release.
+# release stage reaches GitHub, that one read-only GitHub API request gets an
+# HTTP response over verified TLS, so a broken bundle or interception fails a
+# pull request, not a release. Any status passes: a policy may deny the request
+# (the release ServiceAccount's does), and that still proves the TLS chain.
 repo="${GITHUBGATE_REPO:?GITHUBGATE_REPO must name the repository (owner/name)}"
 if ! docker run --rm --network host -v "$WS:$WS" -w "$src" -e CI_CA="$ci/ca-bundle.crt" "$image" \
 	bash -c 'source /etc/devshell.sh && export SSL_CERT_FILE="$CI_CA" && exec ./scripts/ci/github-api-check.py "$1"' bash "$repo"; then

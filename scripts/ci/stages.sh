@@ -157,7 +157,7 @@ start_stage() {
 			-e E2E_CLUSTER="githubgate-ci" \
 			-e E2E_IMAGES_EXIT_FILE="${E2E_IMAGES_EXIT_FILE:-}" -e E2E_IMAGES_LOG="${E2E_IMAGES_LOG:-}" \
 			-e E2E_DISCARD_CLUSTER=1 \
-			-e RELEASE_VERSION="${RELEASE_VERSION:-}" \
+			-e RELEASE_VERSION="${RELEASE_VERSION:-}" -e GITHUBGATE_REPO="${GITHUBGATE_REPO:-}" \
 			-e STAGE_COMMAND="$(command_of "$stage")" \
 			"$image" bash -c '
 				source /etc/devshell.sh

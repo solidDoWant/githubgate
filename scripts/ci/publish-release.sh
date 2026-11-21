@@ -3,9 +3,9 @@
 # Tekton release run (scripts/ci/stages.sh release). Runs in the CI image,
 # where docker, crane and helm reach ghcr.io through the CI cluster's
 # registrygate (the owner's registry proxy), which pushes only for the release
-# ServiceAccount. The GitHub release is a separate
-# task, so this script never holds a GitHub token. It also builds the files
-# for the GitHub release (build/release-assets); that task uploads them.
+# ServiceAccount. It holds no GitHub token: the GitHub release is created and
+# its files uploaded through githubgate's interceptor, which the CI cluster
+# adds to the pod. GITHUBGATE_REPO (owner/name) names the repository.
 #
 #   scripts/ci/publish-release.sh <version>|v<version>
 #
@@ -15,7 +15,9 @@
 #   3. the chart, pushed to oci://ghcr.io/soliddowant/charts;
 #   4. build/release-assets: crds.yaml, the client binaries and checksums.txt
 #      (scripts/ci/build-release-assets.sh), built first so that a build
-#      failure stops the release before anything is pushed.
+#      failure stops the release before anything is pushed;
+#   5. the GitHub release, if it is missing, and the assets it lacks
+#      (scripts/ci/upload-release-assets.py).
 # PUBLISH_DRY_RUN=true prints the commands instead of running them (tests).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -46,4 +48,5 @@ if [[ "$version" != *-* ]]; then
 fi
 run helm package deploy/charts/githubgate --version "$version" --app-version "$version" --destination build/chart
 run helm push "build/chart/githubgate-$version.tgz" oci://ghcr.io/soliddowant/charts
+run ./scripts/ci/upload-release-assets.py "v$version" build/release-assets
 echo "publish-release: published $version"

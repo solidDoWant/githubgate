@@ -22,17 +22,11 @@ spec:
     serviceAccountName: ci-release
   workspaces:
     # Shared by the step and dockerd at the same path, so the stage container
-    # can mount the checkout. It is a claim, not an emptyDir: github-release
-    # reads the assets publish built, and every task's pod gets its own
-    # emptyDir.
+    # can mount the checkout. Only one task uses it, and it must stay an
+    # emptyDir: a claim makes Tekton start an affinity-assistant pod, which the
+    # cluster refuses to run as ci-release.
     - name: source
-      volumeClaimTemplate:
-        spec:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 5Gi
+      emptyDir: {}
   taskRunSpecs:
     # The stage runs inside the dind sidecar's cgroup: it cross-compiles four
     # binaries, scans them and assembles two images for two platforms. No CPU
@@ -91,83 +85,8 @@ spec:
               git checkout -q --detach "$(params.revision)"
               RELEASE_VERSION="${version#v}"
               export RELEASE_VERSION
+              export GITHUBGATE_REPO="{{ repo_owner }}/{{ repo_name }}"
               exec ./scripts/ci/stages.sh release
         workspaces:
           - name: source
             workspace: source
-      # The GitHub release, once the images and chart are published. Notes are
-      # exactly the `## <version>` section of CHANGELOG.md at the tag. Safe to
-      # repeat: an existing release is left as it is.
-      - name: github-release
-        runAfter:
-          - publish
-        params:
-          - name: ref
-            value: $(params.ref)
-        workspaces:
-          - name: source
-            workspace: source
-        taskSpec:
-          params:
-            - name: ref
-              type: string
-          workspaces:
-            - name: source
-          steps:
-            - name: release
-              image: mirror.gcr.io/library/python:3.14.9@sha256:30a34d141e34b8fbedabecb8f86b3d49a62e348d8112ad3c1289f0b2b216ad3e
-              computeResources:
-                requests:
-                  cpu: 100m
-                  memory: 256Mi
-                limits:
-                  memory: 256Mi
-              env:
-                # Through the environment, not the script text.
-                - name: REF
-                  value: $(params.ref)
-              script: |
-                #!/usr/bin/env python3
-                import json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
-                tag = os.environ["REF"].rsplit("/", 1)[-1]
-                if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?", tag):
-                    sys.exit(f"not a version tag: {tag}")
-                version = tag[1:]
-                api = "https://api.github.com/repos/{{ repo_owner }}/{{ repo_name }}"
-                def call(method, path, body=None, accept="application/vnd.github+json"):
-                    request = urllib.request.Request(
-                        api + path, method=method,
-                        data=None if body is None else json.dumps(body).encode(),
-                        headers={"Accept": accept},
-                    )
-                    with urllib.request.urlopen(request, timeout=30) as response:
-                        return response.read()
-                def create_release():
-                    changelog = call("GET", "/contents/CHANGELOG.md?ref=" + urllib.parse.quote(tag), accept="application/vnd.github.raw+json").decode()
-                    section = re.search(r"^## " + re.escape(version) + r"\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.M | re.S)
-                    if not section or not section.group(1).strip():
-                        sys.exit(f"CHANGELOG.md at {tag} has no ## {version} section")
-                    prerelease = "-rc." in version
-                    call("POST", "/releases", {
-                        "tag_name": tag, "name": tag, "body": section.group(1).strip() + "\n",
-                        "prerelease": prerelease, "make_latest": "false" if prerelease else "true",
-                    })
-                    print(f"created release {tag}")
-                try:
-                    call("GET", "/releases/tags/" + urllib.parse.quote(tag))
-                    print(f"release {tag} exists already; leaving it")
-                    exists = True
-                except urllib.error.HTTPError as error:
-                    if error.code != 404:
-                        raise
-                    exists = False
-                if not exists:
-                    create_release()
-                # The files publish built; assets that are already there stay as they are.
-                workspace = "$(workspaces.source.path)"
-                subprocess.run(
-                    [sys.executable, "-I", workspace + "/src/scripts/ci/upload-release-assets.py",
-                     tag, workspace + "/src/build/release-assets"],
-                    check=True,
-                    env=dict(os.environ, GITHUBGATE_REPO="{{ repo_owner }}/{{ repo_name }}"),
-                )

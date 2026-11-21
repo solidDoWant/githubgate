@@ -93,6 +93,8 @@ func isDevicePoll(request *http.Request) bool {
 }
 
 func TestOAuthCallsDoNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+
 	e := startDeviceFlowEnv(t)
 
 	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {

@@ -120,6 +120,8 @@ func (e *env) setAuthorizeAnnotation(t *testing.T, object *githubgatev1alpha1.Gi
 }
 
 func TestDeviceFlowAuthorization(t *testing.T) {
+	t.Parallel()
+
 	e := startDeviceFlowEnv(t)
 
 	t.Run("the user code is shown, and once the named user approves it the token is stored and the authorization is Ready", func(t *testing.T) {
@@ -356,6 +358,8 @@ func TestDeviceFlowAuthorization(t *testing.T) {
 }
 
 func TestDeviceFlowExpiredCode(t *testing.T) {
+	t.Parallel()
+
 	e := startDeviceFlowEnv(t)
 
 	object := deviceAuthorization("expired")

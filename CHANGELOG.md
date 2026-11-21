@@ -4,7 +4,7 @@ The release notes of githubgate. Each release has a `## <version>` section, writ
 
 ## 0.6.1
 
-githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release publishes the changes of 0.6.0. We tagged 0.6.0, but its release run stopped before it published anything. No images, no chart and no GitHub release of 0.6.0 exist. Use 0.6.1 instead. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes one case where `publicRead` sent a request that the policy rules did not allow. Install or upgrade with the Helm chart:
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release publishes the changes of 0.6.0. We tagged 0.6.0, but its release run stopped before it published anything. No images, no chart and no GitHub release of 0.6.0 exist. Use 0.6.1 instead. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes two problems with `publicRead`. Install or upgrade with the Helm chart:
 
 ```
 helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.6.1 --namespace githubgate --create-namespace
@@ -28,11 +28,15 @@ Policies, chart values and clients of 0.5.0 work without a change.
 
 - With `publicRead`, read-only requests for the paths `/orgs/OWNER/...` and `/users/OWNER/...` of the installation's own owner now follow the policy rules. Before, they went out as public reads, also when no rule allowed them. For example, `gh api orgs/OWNER/repos` now gets `403` unless a rule allows it. Requests for other owners do not change. ([#223](https://github.com/solidDoWant/githubgate/pull/223))
 
+### Fixes
+
+- A `publicRead` rule that names a repository that does not exist, or that the installation cannot reach, no longer breaks every public read of that caller. Before, each public read of that caller failed. ([#227](https://github.com/solidDoWant/githubgate/pull/227))
+
 Internal work: the release pipeline builds the release files and attaches them to the GitHub release. It now runs as one task, which creates the GitHub release and uploads its files after it pushes the images and the chart ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226)).
 
 ### Known issues
 
-- If a `publicRead` rule names a repository that does not exist or that the installation cannot reach, every public read of that caller fails. Remove or correct that repository name in the rule. A fix is in progress. ([#221](https://github.com/solidDoWant/githubgate/issues/221))
+None.
 
 ## 0.6.0
 

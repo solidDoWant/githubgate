@@ -4,6 +4,10 @@ For: people who use `git`, `gh` or a token from a pipeline or a workspace. You k
 
 `githubgate-client` is a small program. It gets a GitHub token from githubgate for the repository you work in. It proves who you are with the ServiceAccount token of your pod. githubgate gives a token only if your namespace has a policy that allows it.
 
+## Install
+
+Each [GitHub release](https://github.com/solidDoWant/githubgate/releases) has the client for linux and darwin on amd64 and arm64. The files are named `githubgate-client-<os>-<arch>`, for example `githubgate-client-linux-amd64`. They are static, so they need no libraries. The release also has `checksums.txt` with the SHA-256 sum of each file. Check your download against it with `sha256sum --check --ignore-missing checksums.txt`. The image `ghcr.io/soliddowant/githubgate-client` has the same client.
+
 ## Settings
 
 Each setting is an environment variable.

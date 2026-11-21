@@ -50,7 +50,7 @@ For: admins who install githubgate with its Helm chart.
 | `terminationGracePeriodSeconds` | `30` | Seconds githubgate has to shut down. |
 | `serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor. |
 | `serviceMonitor.interval` | `30s` | Scrape interval. |
-| `crds.install` | `true` | Install the CRDs with the chart. Set to false when you manage them yourself. |
+| `crds.install` | `true` | Install the CRDs with the chart. Set to false when you manage them yourself. Each GitHub release has the same CRDs as one file, `crds.yaml`, at `https://github.com/solidDoWant/githubgate/releases/download/v<version>/crds.yaml`. Apply it with `kubectl apply -f`. |
 | `serviceAccount.create` | `true` | Create the ServiceAccount. |
 | `serviceAccount.name` | `""` | ServiceAccount name. Defaults to the full name. |
 | `serviceAccount.annotations` | `{}` | Annotations for the ServiceAccount. |

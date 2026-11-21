@@ -96,10 +96,15 @@ spec:
         params:
           - name: ref
             value: $(params.ref)
+        workspaces:
+          - name: source
+            workspace: source
         taskSpec:
           params:
             - name: ref
               type: string
+          workspaces:
+            - name: source
           steps:
             - name: release
               image: mirror.gcr.io/library/python:3.14.9@sha256:30a34d141e34b8fbedabecb8f86b3d49a62e348d8112ad3c1289f0b2b216ad3e
@@ -115,7 +120,7 @@ spec:
                   value: $(params.ref)
               script: |
                 #!/usr/bin/env python3
-                import json, os, re, sys, urllib.error, urllib.parse, urllib.request
+                import json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
                 tag = os.environ["REF"].rsplit("/", 1)[-1]
                 if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?", tag):
                     sys.exit(f"not a version tag: {tag}")
@@ -129,20 +134,32 @@ spec:
                     )
                     with urllib.request.urlopen(request, timeout=30) as response:
                         return response.read()
+                def create_release():
+                    changelog = call("GET", "/contents/CHANGELOG.md?ref=" + urllib.parse.quote(tag), accept="application/vnd.github.raw+json").decode()
+                    section = re.search(r"^## " + re.escape(version) + r"\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.M | re.S)
+                    if not section or not section.group(1).strip():
+                        sys.exit(f"CHANGELOG.md at {tag} has no ## {version} section")
+                    prerelease = "-rc." in version
+                    call("POST", "/releases", {
+                        "tag_name": tag, "name": tag, "body": section.group(1).strip() + "\n",
+                        "prerelease": prerelease, "make_latest": "false" if prerelease else "true",
+                    })
+                    print(f"created release {tag}")
                 try:
                     call("GET", "/releases/tags/" + urllib.parse.quote(tag))
                     print(f"release {tag} exists already; leaving it")
-                    sys.exit(0)
+                    exists = True
                 except urllib.error.HTTPError as error:
                     if error.code != 404:
                         raise
-                changelog = call("GET", "/contents/CHANGELOG.md?ref=" + urllib.parse.quote(tag), accept="application/vnd.github.raw+json").decode()
-                section = re.search(r"^## " + re.escape(version) + r"\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.M | re.S)
-                if not section or not section.group(1).strip():
-                    sys.exit(f"CHANGELOG.md at {tag} has no ## {version} section")
-                prerelease = "-rc." in version
-                call("POST", "/releases", {
-                    "tag_name": tag, "name": tag, "body": section.group(1).strip() + "\n",
-                    "prerelease": prerelease, "make_latest": "false" if prerelease else "true",
-                })
-                print(f"created release {tag}")
+                    exists = False
+                if not exists:
+                    create_release()
+                # The files publish built; assets that are already there stay as they are.
+                workspace = "$(workspaces.source.path)"
+                subprocess.run(
+                    [sys.executable, "-I", workspace + "/src/scripts/ci/upload-release-assets.py",
+                     tag, workspace + "/src/build/release-assets"],
+                    check=True,
+                    env=dict(os.environ, GITHUBGATE_REPO="{{ repo_owner }}/{{ repo_name }}"),
+                )

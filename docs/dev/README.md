@@ -26,3 +26,7 @@ Run `nix develop` (or let `direnv` load `.envrc`), then `make help` for the full
 - `make build`: build `bin/githubgate` and `bin/githubgate-client`.
 - `make fmt lint test`: format, run every check and run the unit tests.
 - `make generate`: make the generated code and the reference pages again after you change API types, markers, the chart values or the CI template.
+
+## Release files
+
+The release run builds the files of the GitHub release in `build/release-assets` (`scripts/ci/build-release-assets.sh`): `crds.yaml` (the files of `config/crd/bases`, which the chart's `templates/crds` are generated from), the client binaries for linux and darwin on amd64 and arm64, and `checksums.txt`. The `github-release` task then uploads them with `scripts/ci/upload-release-assets.py`. It skips every asset the release already has, so a repeated run neither duplicates nor replaces them. `make test` checks that `crds.yaml` equals the CRDs the chart renders and that the linux/amd64 client reports the release version. Only a real tag run proves the upload against github.com.

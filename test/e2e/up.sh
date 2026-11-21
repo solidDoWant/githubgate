@@ -80,7 +80,12 @@ create_cluster_once() {
 	if [[ -x "$ci_kind_config" ]]; then
 		# ci-kind-config keeps each node's image store between builds, keyed by
 		# the cluster name, so it takes the name and image instead of kind.
-		"$ci_kind_config" --name "$cluster" --image "$node_image" test/e2e/kind-config.yaml | timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --config=- --wait 120s
+		# Run it to completion first, so the log shows how long it takes apart
+		# from kind, which reads its config to the end before it starts.
+		echo "e2e-up: ci-kind-config start"
+		"$ci_kind_config" --name "$cluster" --image "$node_image" test/e2e/kind-config.yaml >"$work/kind-config.yaml"
+		echo "e2e-up: ci-kind-config end, kind start"
+		timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --config="$work/kind-config.yaml" --wait 120s
 	else
 		timeout --kill-after=10 "$create_timeout" kind create cluster -v 1 --retain --name "$cluster" --image "$node_image" --config test/e2e/kind-config.yaml --wait 120s
 	fi
@@ -94,11 +99,13 @@ create_cluster() {
 	local attempt out
 	for attempt in 1 2; do
 		out="$work/create-$attempt.log"
-		if create_cluster_once >"$out" 2>&1; then
-			cat "$out"
+		# tee passes each line on as it arrives, so the caller's timestamps
+		# show when each kind step ran; the copy in $out is searched below.
+		if create_cluster_once 2>&1 | tee "$out"; then
+			echo "e2e-up: kind end"
 			return 0
 		fi
-		cat "$out"
+		echo "e2e-up: kind end (failed)"
 		if [[ "$attempt" == 2 ]] || ! grep -q 'Multi-User System' "$out"; then
 			return 1
 		fi

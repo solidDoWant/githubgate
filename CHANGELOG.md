@@ -2,6 +2,44 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.6.4-rc.1
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release is a candidate (a test version before the final release) for 0.6.4. It publishes the changes of 0.6.0 to 0.6.3 with a complete GitHub release. The versions 0.6.0, 0.6.1, 0.6.2 and 0.6.3 have tags in git, but none of them was fully published. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes two problems with `publicRead`. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.6.4-rc.1 --namespace githubgate --create-namespace
+```
+
+### Upgrade notes for admins
+
+- Do not install 0.6.0 or 0.6.2. Their release runs stopped before they published anything, so no images, no chart and no GitHub release exist for them. ([#226](https://github.com/solidDoWant/githubgate/pull/226), [#237](https://github.com/solidDoWant/githubgate/pull/237))
+- Upgrade from 0.5.0, 0.6.1 or 0.6.3 to 0.6.4 when it is released. The images and the charts of 0.6.1 and 0.6.3 work, but these versions have no GitHub release, no `crds.yaml` and no client binaries. 0.6.4 has the same code with all release files. ([#231](https://github.com/solidDoWant/githubgate/pull/231), [#237](https://github.com/solidDoWant/githubgate/pull/237), [#242](https://github.com/solidDoWant/githubgate/pull/242))
+
+Policies, chart values and clients of 0.5.0 work without a change.
+
+### Deployment
+
+- Each GitHub release now has the file `crds.yaml`. It contains all the CRDs of githubgate. You can install them with `kubectl apply -f https://github.com/solidDoWant/githubgate/releases/download/v0.6.4-rc.1/crds.yaml`. ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231))
+
+### Client (`git`, `gh`)
+
+- Each GitHub release now has the `githubgate-client` binaries for Linux and macOS, on amd64 and arm64, and the file `checksums.txt` with their SHA-256 sums. You can download the client from the release page instead of copying it from the image. The steps are in [the client](https://github.com/solidDoWant/githubgate/blob/master/docs/user/client.md). ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231))
+
+### Security
+
+- With `publicRead`, read-only requests for the paths `/orgs/OWNER/...` and `/users/OWNER/...` of the installation's own owner now follow the policy rules. Before, they went out as public reads, also when no rule allowed them. For example, `gh api orgs/OWNER/repos` now gets `403` unless a rule allows it. Requests for other owners do not change. ([#223](https://github.com/solidDoWant/githubgate/pull/223))
+
+### Fixes
+
+- A `publicRead` rule that names a repository that does not exist, or that the installation cannot reach, no longer breaks every public read of that caller. Before, each public read of that caller failed. ([#227](https://github.com/solidDoWant/githubgate/pull/227))
+- When githubgate intercepts a pod, it now also sets `NIX_SSL_CERT_FILE` to the CA bundle, and adds to a value that the pod already has. Tools built with Nix read this variable before `SSL_CERT_FILE`. Before, these tools in an intercepted pod did not trust the certificate of githubgate. ([#245](https://github.com/solidDoWant/githubgate/pull/245))
+
+Internal work: the release pipeline builds the release files and attaches them to the GitHub release. It runs as one task, which creates the GitHub release and uploads its files after it pushes the images and the chart. The release upload and the stage TLS check use the same request code and the same CA bundle. The CI stage containers trust the CA of githubgate's own proxy for every tool, and each CI run makes sure that a stage container can connect to `api.github.com` over verified TLS before any stage starts. The e2e tests print pod diagnostics when a pod does not become ready in time ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231), [#234](https://github.com/solidDoWant/githubgate/pull/234), [#237](https://github.com/solidDoWant/githubgate/pull/237), [#239](https://github.com/solidDoWant/githubgate/pull/239), [#242](https://github.com/solidDoWant/githubgate/pull/242), [#246](https://github.com/solidDoWant/githubgate/pull/246)).
+
+### Known issues
+
+None.
+
 ## 0.6.3
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release publishes the changes of 0.6.0, 0.6.1 and 0.6.2 with a complete GitHub release. The versions 0.6.0, 0.6.1 and 0.6.2 have tags in git, but none of them was fully published. Use 0.6.3 instead. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes two problems with `publicRead`. Install or upgrade with the Helm chart:

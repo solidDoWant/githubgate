@@ -7,13 +7,13 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Authorizing
 
 1. Setting the `githubgate.soliddowant.dev/authorize` annotation on an authorization puts a user code, the verification URI and an expiry in its status. Once the user named in `spec.login` approves the code, the authorization becomes Ready and its status shows the login and both expiry times.
-    Tests:
+    Tests: `internal/controller: TestDeviceFlowAuthorization/the user code is shown, and once the named user approves it the token is stored and the authorization is Ready`
 2. If a different GitHub user approves the code, no token is stored, and the authorization reports `WrongUser`.
-    Tests:
+    Tests: `internal/controller: TestDeviceFlowAuthorization/a code approved by another GitHub user stores nothing and reports WrongUser`
 3. A code nobody approves before it expires, a denied code, and an App with device flow off each end in a condition naming the reason. No token is stored, and no new flow starts until the annotation changes again.
-    Tests:
+    Tests: `internal/controller: TestDeviceFlowExpiredCode`, `internal/controller: TestDeviceFlowAuthorization/a denied code stores nothing and reports AuthorizationDenied`, `internal/controller: TestDeviceFlowAuthorization/an App with the device flow off reports DeviceFlowDisabled and stores nothing`
 4. A flow never starts without a new annotation value: not after a restart, not after a leader change, and not after a failed refresh.
-    Tests:
+    Tests: `internal/controller: TestDeviceFlowAuthorization/no flow starts without an annotation`, `internal/controller: TestDeviceFlowAuthorization/a flow the leader does not hold is reported lost and is not started again`
 5. The client ID can be given inline or from a Secret (`clientIDSecretRef`, key `client-id` by default). Setting both is rejected. A missing Secret or key is reported on the authorization, and the App stays Ready.
     Tests: `api/v1alpha1: TestCRDValidation/app with inline client ID`, `api/v1alpha1: TestCRDValidation/app with client ID from a secret`, `api/v1alpha1: TestCRDValidation/app with both client IDs`, `internal/model: TestUserAuthorizationResolution`, `internal/controller: TestStatusOfUserAuthorizations/an authorization whose App has an inline client ID requires authorization`, `internal/controller: TestStatusOfUserAuthorizations/a missing client ID Secret is reported on the authorization and recovers, and the App stays Ready`, `internal/controller: TestStatusOfUserAuthorizations/an App without a client ID makes the authorization an invalid spec, and the App stays Ready`
 

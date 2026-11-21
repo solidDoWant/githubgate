@@ -76,6 +76,7 @@ type Config struct {
 	APIAddress         string
 	HealthAddress      string
 	GitHubBaseURL      string
+	GitHubOAuthURL     string
 	// Proxy turns on proxy mode's listener on ProxyAddress, served with
 	// the certificate in ProxyCertFile and ProxyKeyFile.
 	Proxy         bool
@@ -142,6 +143,7 @@ func ParseFlags(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&config.ProxyUpstreamGit, "proxy-upstream-git", "https://"+proxy.HostGit, "where the proxy sends github.com git requests")
 	flags.StringVar(&config.ProxyUpstreamCAFile, "proxy-upstream-ca-file", "", "extra CA certificates the proxy's upstreams may be served with")
 	flags.StringVar(&config.GitHubBaseURL, "github-base-url", "", "GitHub REST API root (default api.github.com)")
+	flags.StringVar(&config.GitHubOAuthURL, "github-oauth-url", controller.DefaultOAuthURL, "where GitHub serves the device flow of user authorizations")
 
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
@@ -309,7 +311,10 @@ func Run(ctx context.Context, config Config) error {
 
 	if err := errors.Join(
 		manager.Add(watcher),
-		controller.Setup(manager, controller.Options{AdminNamespaces: config.AdminNamespaces, GitHub: githubRegistry}),
+		controller.Setup(manager, controller.Options{
+			AdminNamespaces: config.AdminNamespaces, GitHub: githubRegistry,
+			OAuthURL: config.GitHubOAuthURL, APIURL: config.GitHubBaseURL,
+		}),
 	); err != nil {
 		return err
 	}

@@ -126,7 +126,10 @@ func startEnv(t *testing.T) *env {
 		require.NoError(t, err)
 
 		registry := github.NewRegistry(github.Options{BaseURL: api.URL, Transport: transport})
-		require.NoError(t, controller.Setup(manager, controller.Options{AdminNamespaces: []string{adminNamespace}, GitHub: registry}))
+		require.NoError(t, controller.Setup(manager, controller.Options{
+			AdminNamespaces: []string{adminNamespace}, GitHub: registry,
+			OAuthURL: api.URL, APIURL: api.URL, Transport: transport,
+		}))
 
 		done := make(chan error, 1)
 

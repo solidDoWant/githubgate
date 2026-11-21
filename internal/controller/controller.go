@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"time"
 
@@ -55,6 +56,13 @@ type Options struct {
 	AdminNamespaces []string
 	// GitHub makes the App clients used for the GitHub checks.
 	GitHub *github.Registry
+	// OAuthURL is where GitHub serves the device flow; DefaultOAuthURL when empty.
+	OAuthURL string
+	// APIURL is GitHub's REST API root, for GET /user; api.github.com when empty.
+	APIURL string
+	// Transport carries the device flow and GET /user requests;
+	// http.DefaultTransport when nil.
+	Transport http.RoundTripper
 }
 
 // Setup registers the four status reconcilers with the manager. They run

@@ -335,3 +335,17 @@ func TestUserRulesReachTheCallerAcceptedOrNot(t *testing.T) {
 	require.NotNil(t, byName["inside"].View)
 	assert.Equal(t, "user", byName["inside"].View.Name)
 }
+
+func TestRepositoryOperationIsNotAUserOperation(t *testing.T) {
+	assert.NotEmpty(t, model.InvalidUserOperation("repos/get"))
+	assert.NotEmpty(t, model.InvalidUserOperation("repos/create-using-template"))
+
+	in := userInputs()
+	in.UserAuthorizations = []githubgatev1alpha1.GitHubUserAuthorization{
+		userAuthorization(adminNamespace, "user", createSigningKey, "repos/create-using-template"),
+	}
+	in.Policies = []githubgatev1alpha1.GitHubAccessPolicy{policy(tenantNamespace, userRule("r", "user", "repos/create-using-template"))}
+
+	decisions, _ := model.Build(in).PolicyRules(policyName(tenantNamespace))
+	assert.Equal(t, model.ReasonInvalidSpec, decisions[0].Reason)
+}

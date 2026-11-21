@@ -248,3 +248,32 @@ func templateLiterals(template string) int {
 
 	return count
 }
+
+// No operation callable as a user can name a repository, organization, team,
+// enterprise or App path, whatever its parameters are called.
+func TestUserOperationNamesNoAccountScope(t *testing.T) {
+	accepted := 0
+
+	for _, op := range restCatalogue {
+		if !UserOperation(op.ID) {
+			continue
+		}
+
+		accepted++
+
+		assert.True(t, op.Template == "/user" || strings.HasPrefix(op.Template, "/user/"), op.Template)
+
+		for _, segment := range strings.Split(op.Template, "/") {
+			for _, word := range []string{"repo", "owner", "org", "team", "enterprise", "app", "template"} {
+				if strings.HasPrefix(segment, "{") {
+					assert.NotContains(t, segment, word, op.Template)
+				}
+			}
+		}
+	}
+
+	assert.NotZero(t, accepted)
+	assert.False(t, UserOperation("repos/create-using-template"))
+	assert.False(t, UserOperation("repos/get"))
+	assert.True(t, UserOperation("users/create-ssh-signing-key-for-authenticated-user"))
+}

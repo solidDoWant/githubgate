@@ -2,6 +2,36 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.6.0
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release adds files to each GitHub release: the CRDs in one file and the `githubgate-client` binaries. It also fixes one case where `publicRead` sent a request that the policy rules did not allow. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.6.0 --namespace githubgate --create-namespace
+```
+
+### Upgrade notes for admins
+
+None. Policies, chart values and clients of 0.5.0 work without a change.
+
+### Deployment
+
+- Each GitHub release now has the file `crds.yaml`. It contains all the CRDs of githubgate. You can install them with `kubectl apply -f https://github.com/solidDoWant/githubgate/releases/download/v0.6.0/crds.yaml`. ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222))
+
+### Client (`git`, `gh`)
+
+- Each GitHub release now has the `githubgate-client` binaries for Linux and macOS, on amd64 and arm64, and the file `checksums.txt` with their SHA-256 sums. You can download the client from the release page instead of copying it from the image. The steps are in [the client](https://github.com/solidDoWant/githubgate/blob/master/docs/user/client.md). ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222))
+
+### Security
+
+- With `publicRead`, read-only requests for the paths `/orgs/OWNER/...` and `/users/OWNER/...` of the installation's own owner now follow the policy rules. Before, they went out as public reads, also when no rule allowed them. For example, `gh api orgs/OWNER/repos` now gets `403` unless a rule allows it. Requests for other owners do not change. ([#223](https://github.com/solidDoWant/githubgate/pull/223))
+
+Internal work: the release pipeline builds the release files and attaches them to the GitHub release, and its tasks share one volume ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222)).
+
+### Known issues
+
+- If a `publicRead` rule names a repository that does not exist or that the installation cannot reach, every public read of that caller fails. Remove or correct that repository name in the rule. A fix is in progress. ([#221](https://github.com/solidDoWant/githubgate/issues/221))
+
 ## 0.5.0
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release lets the proxy send two more kinds of requests, if a policy turns them on: reads of public repositories of other owners, and downloads from `github.com` web pages such as release assets. Install or upgrade with the Helm chart:

@@ -21,6 +21,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 start=$SECONDS
+start_time=$(date +%s)
 log() { echo "e2e-up: [+$((SECONDS - start))s] $*" >&2; }
 
 # The cluster needs nothing from the image builds and the builds need nothing
@@ -44,18 +45,25 @@ diagnose_node() {
 	echo "==== kind node diagnostics for $cluster ===="
 	echo "---- docker info"
 	docker info 2>&1 || true
-	echo "---- df of the docker data root"
-	df -P /var/lib/docker 2>&1 || true
-	docker run --rm -v /var/lib/docker:/storage:ro --entrypoint /bin/sh "$node_image" -c 'df -P /storage' 2>&1 || true
 	echo "---- docker system df"
 	docker system df 2>&1 || true
 	echo "---- host load and memory"
 	cat /proc/loadavg 2>&1 || true
 	free -m 2>&1 || true
 	nproc 2>&1 || true
+	echo "---- containers running in the daemon (other stages share it)"
+	docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>&1 || true
+	echo "---- dmesg (OOM kills, if readable)"
+	{ dmesg 2>&1 || true; } | grep -i -E 'oom|out of memory|killed process|cgroup' | tail -40 || true
+	echo "---- daemon events for the cluster's containers since the script started"
+	timeout 20 docker events --since "$start_time" --until "$(date +%s)" --filter "label=io.x-k8s.kind.cluster=$cluster" 2>&1 || true
 	for node in $(docker ps -a --filter "label=io.x-k8s.kind.cluster=$cluster" --format '{{.Names}}'); do
-		echo "---- docker logs $node (systemd output)"
-		docker logs --tail 300 "$node" 2>&1 || true
+		echo "---- docker inspect state of $node"
+		docker inspect --format 'status={{.State.Status}} exitcode={{.State.ExitCode}} oomkilled={{.State.OOMKilled}} restartcount={{.RestartCount}} error={{.State.Error}} restartpolicy={{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}} created={{.Created}} startedat={{.State.StartedAt}} finishedat={{.State.FinishedAt}}' "$node" 2>&1 || true
+		# Timestamps tell the first boot from the restarted one: a second
+		# "Welcome to" banner starts the second boot.
+		echo "---- docker logs $node (systemd output, all boots, timestamped)"
+		docker logs --timestamps --tail 600 "$node" 2>&1 || true
 		echo "---- limits of $node"
 		docker inspect --format 'memory={{.HostConfig.Memory}} memswap={{.HostConfig.MemorySwap}} nanocpus={{.HostConfig.NanoCpus}} cpushares={{.HostConfig.CpuShares}} cgroupns={{.HostConfig.CgroupnsMode}} privileged={{.HostConfig.Privileged}} state={{.State.Status}} oom={{.State.OOMKilled}}' "$node" 2>&1 || true
 		echo "---- cgroup of $node"

@@ -25,7 +25,7 @@ func publicReadFixture(t *testing.T, repositories ...githubgatev1alpha1.Reposito
 
 	f.inputs.Policies[0].Spec.Rules = []githubgatev1alpha1.AccessRule{{
 		Name:            "proxy",
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
 		Repositories:    repositories,
 		Permissions:     map[string]githubgatev1alpha1.Level{"contents": "read"},
 		Proxy:           &githubgatev1alpha1.ProxyMode{Enabled: true, PublicRead: true},

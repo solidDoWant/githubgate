@@ -181,7 +181,7 @@ func tokenRecorder(next http.Handler, log *transcript) http.Handler {
 func rule(name, repo string, set map[string]githubgatev1alpha1.Level) githubgatev1alpha1.AccessRule {
 	return githubgatev1alpha1.AccessRule{
 		Name:            name,
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
 		Repositories:    []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repo)},
 		Permissions:     set,
 		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},
@@ -193,7 +193,7 @@ func proxyRule(name, repo string, set map[string]githubgatev1alpha1.Level, mode 
 
 	return githubgatev1alpha1.AccessRule{
 		Name:            name,
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
 		Repositories:    []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repo)},
 		Permissions:     set,
 		Proxy:           &mode,

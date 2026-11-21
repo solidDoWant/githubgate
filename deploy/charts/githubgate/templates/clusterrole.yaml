@@ -32,6 +32,7 @@ rules:
   - githubaccesspolicies
   - githubapps
   - githubinstallations
+  - githubuserauthorizations
   verbs:
   - get
   - list
@@ -42,6 +43,7 @@ rules:
   - githubaccesspolicies/status
   - githubapps/status
   - githubinstallations/status
+  - githubuserauthorizations/status
   verbs:
   - get
   - patch

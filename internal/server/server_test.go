@@ -110,7 +110,7 @@ func keyPEM() []byte {
 func tokenRule(name string, set map[string]githubgatev1alpha1.Level, repositories ...githubgatev1alpha1.Repository) githubgatev1alpha1.AccessRule {
 	return githubgatev1alpha1.AccessRule{
 		Name:            name,
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: "main"},
 		Repositories:    repositories,
 		Permissions:     set,
 		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},

@@ -103,11 +103,18 @@ type ProxyMode struct {
 	WebPaths bool `json:"webPaths,omitempty"`
 }
 
-// AccessRule gives the policy's ServiceAccounts access through one installation.
+// AccessRule gives the policy's ServiceAccounts access through one
+// installation, or, as a user rule, through one user authorization.
 //
+// +kubebuilder:validation:XValidation:rule="has(self.installationRef) != has(self.userAuthorizationRef)",message="exactly one of installationRef and userAuthorizationRef must be set"
+// +kubebuilder:validation:XValidation:rule="has(self.userAuthorizationRef) || (has(self.repositories) && has(self.permissions))",message="a rule with installationRef needs repositories and permissions"
+// +kubebuilder:validation:XValidation:rule="!has(self.userAuthorizationRef) || (!has(self.repositories) && !has(self.permissions))",message="a user rule has no repositories or permissions: its user authorization's operations replace them"
+// +kubebuilder:validation:XValidation:rule="!has(self.userAuthorizationRef) || ((!has(self.token) || !self.token.enabled) && has(self.proxy) && self.proxy.enabled)",message="a user rule needs token mode off and proxy mode on: a user access token is never handed out"
+// +kubebuilder:validation:XValidation:rule="!has(self.userAuthorizationRef) || !has(self.proxy) || (has(self.proxy.allowOperations) && self.proxy.allowOperations.all(o, !o.contains('*')))",message="a user rule needs proxy.allowOperations, with exact operation ids and no globs"
+// +kubebuilder:validation:XValidation:rule="!has(self.userAuthorizationRef) || !has(self.proxy) || !(has(self.proxy.denyOperations) || has(self.proxy.allowMutations) || has(self.proxy.denyMutations) || has(self.proxy.pushRefs) || has(self.proxy.publicRead) || has(self.proxy.webPaths))",message="a user rule may set only proxy.enabled and proxy.allowOperations"
 // +kubebuilder:validation:XValidation:rule="(has(self.token) && self.token.enabled) || (has(self.proxy) && self.proxy.enabled)",message="at least one mode must be enabled"
 // +kubebuilder:validation:XValidation:rule="!(has(self.token) && self.token.enabled) || !has(self.proxy) || !(has(self.proxy.pushRefs) || has(self.proxy.allowOperations) || has(self.proxy.denyOperations) || has(self.proxy.allowMutations) || has(self.proxy.denyMutations))",message="proxy.pushRefs and the proxy operation and mutation lists need token mode off: a token in the caller's hands can't enforce them"
-// +kubebuilder:validation:XValidation:rule="!has(self.proxy) || !has(self.proxy.publicRead) || !self.proxy.publicRead || self.repositories.exists(r, !r.contains('*'))",message="proxy.publicRead needs at least one repository named without a pattern: the public-read token is limited to those repositories"
+// +kubebuilder:validation:XValidation:rule="!has(self.proxy) || !has(self.proxy.publicRead) || !self.proxy.publicRead || !has(self.repositories) || self.repositories.exists(r, !r.contains('*'))",message="proxy.publicRead needs at least one repository named without a pattern: the public-read token is limited to those repositories"
 type AccessRule struct {
 	// Name identifies the rule within the policy.
 	//
@@ -116,20 +123,32 @@ type AccessRule struct {
 	Name string `json:"name"`
 
 	// InstallationRef is the GitHubInstallation the rule draws on.
-	InstallationRef ObjectReference `json:"installationRef"`
+	//
+	// +optional
+	InstallationRef *ObjectReference `json:"installationRef,omitempty"`
+
+	// UserAuthorizationRef is the GitHubUserAuthorization a user rule draws
+	// on. A user rule is proxy-only and lists exact operations in
+	// proxy.allowOperations.
+	//
+	// +optional
+	UserAuthorizationRef *ObjectReference `json:"userAuthorizationRef,omitempty"`
 
 	// Repositories are names or `*` globs under the installation's owner.
-	// At most 256.
+	// At most 256. A rule with installationRef needs them.
 	//
+	// +optional
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=256
 	// +listType=set
-	Repositories []Repository `json:"repositories"`
+	Repositories []Repository `json:"repositories,omitempty"`
 
-	// Permissions maps GitHub App permission names to levels.
+	// Permissions maps GitHub App permission names to levels. A rule with
+	// installationRef needs them.
 	//
+	// +optional
 	// +kubebuilder:validation:MinProperties=1
-	Permissions map[string]Level `json:"permissions"`
+	Permissions map[string]Level `json:"permissions,omitempty"`
 
 	// Token configures token mode.
 	//

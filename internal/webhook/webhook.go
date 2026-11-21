@@ -1,5 +1,5 @@
 // Package webhook serves the validating admission webhook for GitHubApp,
-// GitHubInstallation and GitHubAccessPolicy.
+// GitHubInstallation, GitHubUserAuthorization and GitHubAccessPolicy.
 package webhook
 
 import (
@@ -98,6 +98,23 @@ func (h *Handler) validate(ctx context.Context, request *admissionv1.AdmissionRe
 		}
 
 		return validateCeiling(installation.Spec.Ceiling)
+	case "GitHubUserAuthorization":
+		var authorization githubgatev1alpha1.GitHubUserAuthorization
+		if err := json.Unmarshal(request.Object.Raw, &authorization); err != nil {
+			return "cannot decode the GitHubUserAuthorization"
+		}
+
+		if message := h.checkAdminNamespace(request.Namespace); message != "" {
+			return message
+		}
+
+		for index, operation := range authorization.Spec.Ceiling.Operations {
+			if message := model.InvalidUserOperation(string(operation)); message != "" {
+				return fmt.Sprintf("spec.ceiling.operations[%d]: %s", index, message)
+			}
+		}
+
+		return ""
 	case "GitHubAccessPolicy":
 		var policy githubgatev1alpha1.GitHubAccessPolicy
 		if err := json.Unmarshal(request.Object.Raw, &policy); err != nil {
@@ -140,6 +157,18 @@ func (h *Handler) validateRules(ctx context.Context, namespace string, rules []g
 			return path + "." + field + ": " + message
 		}
 
+		if rule.UserAuthorizationRef != nil {
+			if message := validateUserRuleOperations(path, rule.Proxy); message != "" {
+				return message
+			}
+		}
+
+		// CEL requires exactly one reference; a user rule has no
+		// installation ceiling to check here.
+		if rule.InstallationRef == nil {
+			continue
+		}
+
 		ref := types.NamespacedName{Namespace: rule.InstallationRef.Namespace, Name: rule.InstallationRef.Name}
 		if ref.Namespace == "" {
 			ref.Namespace = namespace
@@ -162,6 +191,20 @@ func (h *Handler) validateRules(ctx context.Context, namespace string, rules []g
 
 		if !permissions.Contained(model.GrantOf(rule.Repositories, rule.Permissions), ceiling) {
 			return fmt.Sprintf("%s: the rule is outside the ceiling of GitHubInstallation %s", path, ref)
+		}
+	}
+
+	return ""
+}
+
+func validateUserRuleOperations(path string, proxy *githubgatev1alpha1.ProxyMode) string {
+	if proxy == nil {
+		return ""
+	}
+
+	for index, operation := range proxy.AllowOperations {
+		if message := model.InvalidUserOperation(string(operation)); message != "" {
+			return fmt.Sprintf("%s.proxy.allowOperations[%d]: %s", path, index, message)
 		}
 	}
 

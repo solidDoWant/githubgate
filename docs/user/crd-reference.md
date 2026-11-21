@@ -11,11 +11,11 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec.rules` | list of object |  | Rules are keyed by name. They have no order and only add access. At most 256. |
-| `spec.rules[].installationRef` | object | yes | InstallationRef is the GitHubInstallation the rule draws on. |
+| `spec.rules[].installationRef` | object |  | InstallationRef is the GitHubInstallation the rule draws on. |
 | `spec.rules[].installationRef.name` | string | yes | Name is the object's name. |
 | `spec.rules[].installationRef.namespace` | string |  | Namespace defaults to the referring object's own namespace. |
 | `spec.rules[].name` | string | yes | Name identifies the rule within the policy. |
-| `spec.rules[].permissions` | object | yes | Permissions maps GitHub App permission names to levels. |
+| `spec.rules[].permissions` | object |  | Permissions maps GitHub App permission names to levels. A rule with installationRef needs them. |
 | `spec.rules[].proxy` | object |  | Proxy configures proxy mode. |
 | `spec.rules[].proxy.allowMutations` | list of string |  | AllowMutations, when set, are the only GraphQL mutations allowed. At most 256. |
 | `spec.rules[].proxy.allowOperations` | list of string |  | AllowOperations, when set, are the only REST operations allowed. At most 256. |
@@ -25,9 +25,12 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | `spec.rules[].proxy.publicRead` | boolean |  | PublicRead, when true, lets read-only requests reach repositories of owners outside the installation, and read-only REST endpoints that name no repository. They are sent with a token of the installation that has only `metadata: read`, so they reach public data only. Off by default. |
 | `spec.rules[].proxy.pushRefs` | list of string |  | PushRefs, when set, are the only refs a request may write. At most 256. |
 | `spec.rules[].proxy.webPaths` | boolean |  | WebPaths, when true, forwards `GET` and `HEAD` requests on github.com that are not git smart HTTP, such as release downloads, with no credential. Off by default. |
-| `spec.rules[].repositories` | list of string | yes | Repositories are names or `*` globs under the installation's owner. At most 256. |
+| `spec.rules[].repositories` | list of string |  | Repositories are names or `*` globs under the installation's owner. At most 256. A rule with installationRef needs them. |
 | `spec.rules[].token` | object |  | Token configures token mode. |
 | `spec.rules[].token.enabled` | boolean | yes | Enabled turns token mode on for the rule. It has no default. |
+| `spec.rules[].userAuthorizationRef` | object |  | UserAuthorizationRef is the GitHubUserAuthorization a user rule draws on. A user rule is proxy-only and lists exact operations in proxy.allowOperations. |
+| `spec.rules[].userAuthorizationRef.name` | string | yes | Name is the object's name. |
+| `spec.rules[].userAuthorizationRef.namespace` | string |  | Namespace defaults to the referring object's own namespace. |
 | `spec.serviceAccounts` | list of string | yes | ServiceAccounts are names of ServiceAccounts in this namespace. At most 256. |
 | `status.conditions` | list of object |  | Conditions include `Ready`. |
 | `status.conditions[].lastTransitionTime` | time | yes | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
@@ -58,6 +61,10 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | `spec.appIDSecretRef` | object |  | AppIDSecretRef names a Secret key holding the App ID as a decimal string. The key defaults to `app-id`. |
 | `spec.appIDSecretRef.key` | string |  | Key is the key in the Secret's data. The default depends on the field. |
 | `spec.appIDSecretRef.name` | string | yes | Name is the Secret's name. |
+| `spec.clientID` | string |  | ClientID is the App's OAuth client ID, set inline. Only a GitHubUserAuthorization of the App needs it. |
+| `spec.clientIDSecretRef` | object |  | ClientIDSecretRef names a Secret key holding the App's OAuth client ID. The key defaults to `client-id`. |
+| `spec.clientIDSecretRef.key` | string |  | Key is the key in the Secret's data. The default depends on the field. |
+| `spec.clientIDSecretRef.name` | string | yes | Name is the Secret's name. |
 | `spec.privateKeySecretRef` | object | yes | PrivateKeySecretRef names a Secret key holding the App's PEM private key (PKCS#1 or PKCS#8 RSA). The key defaults to `private-key.pem`. |
 | `spec.privateKeySecretRef.key` | string |  | Key is the key in the Secret's data. The default depends on the field. |
 | `spec.privateKeySecretRef.name` | string | yes | Name is the Secret's name. |
@@ -95,3 +102,35 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | `status.grantedPermissions` | object |  | GrantedPermissions are the permissions GitHub reports for the installation. |
 | `status.installationID` | integer |  | InstallationID is the installation's ID on GitHub. |
 | `status.observedGeneration` | integer |  | ObservedGeneration is the generation the status describes. |
+
+## GitHubUserAuthorization
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `spec.allowedNamespaces` | object |  | AllowedNamespaces says who may reference this authorization from a policy. |
+| `spec.allowedNamespaces.names` | list of string |  | Names lists namespaces by name. |
+| `spec.allowedNamespaces.selector` | object |  | Selector admits every namespace whose labels match. |
+| `spec.appRef` | object | yes | AppRef is the GitHubApp the user authorizes. The App needs a client ID. |
+| `spec.appRef.name` | string | yes | Name is the object's name. |
+| `spec.appRef.namespace` | string |  | Namespace defaults to the referring object's own namespace. |
+| `spec.ceiling` | object |  | Ceiling is the most any policy may call as this user. |
+| `spec.ceiling.operations` | list of string |  | Operations are exact GitHub REST operation ids. The webhook accepts only operations whose path names no owner, repository, organization or enterprise. An empty list allows nothing. At most 256. |
+| `spec.login` | string | yes | Login is the GitHub user who must authorize the App. A token of any other user is discarded. It is compared case-insensitively. |
+| `status.accessTokenExpiresAt` | time |  | AccessTokenExpiresAt is when the stored access token expires. |
+| `status.authorization` | object |  | Authorization is set only while a device flow is in progress. |
+| `status.authorization.expiresAt` | time | yes | ExpiresAt is when the user code stops working. |
+| `status.authorization.request` | string | yes | Request is the value of the authorize annotation this flow answers. |
+| `status.authorization.userCode` | string | yes | UserCode is the code the user enters at the verification URI. |
+| `status.authorization.verificationURI` | string | yes | VerificationURI is where the user enters the code. |
+| `status.conditions` | list of object |  | Conditions include `Ready` and `AuthorizationRequired`. |
+| `status.conditions[].lastTransitionTime` | time | yes | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
+| `status.conditions[].message` | string | yes | message is a human readable message indicating details about the transition. This may be an empty string. |
+| `status.conditions[].observedGeneration` | integer |  | observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance. |
+| `status.conditions[].reason` | string | yes | reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty. |
+| `status.conditions[].status` | string | yes | status of the condition, one of True, False, Unknown. One of `True`, `False`, `Unknown`. |
+| `status.conditions[].type` | string | yes | type of condition in CamelCase or in foo.example.com/CamelCase. |
+| `status.lastAuthorizeRequest` | string |  | LastAuthorizeRequest is the last authorize annotation value that was handled. A flow starts only for a different value. |
+| `status.lastRefreshTime` | time |  | LastRefreshTime is when the tokens were last refreshed. |
+| `status.login` | string |  | Login is the login the stored token belongs to. |
+| `status.observedGeneration` | integer |  | ObservedGeneration is the generation the status describes. |
+| `status.refreshTokenExpiresAt` | time |  | RefreshTokenExpiresAt is when the stored refresh token expires. |

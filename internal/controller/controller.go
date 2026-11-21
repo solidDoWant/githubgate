@@ -1,5 +1,5 @@
-// Package controller writes the status of GitHubApp, GitHubInstallation and
-// GitHubAccessPolicy objects. Its reconcilers are leader-elected, so only one
+// Package controller writes the status of GitHubApp, GitHubInstallation,
+// GitHubUserAuthorization and GitHubAccessPolicy objects. Its reconcilers are leader-elected, so only one
 // replica writes status. They decide acceptance with the same model code that
 // serving uses.
 package controller
@@ -57,7 +57,7 @@ type Options struct {
 	GitHub *github.Registry
 }
 
-// Setup registers the three status reconcilers with the manager. They run
+// Setup registers the four status reconcilers with the manager. They run
 // only on the elected leader.
 func Setup(manager ctrl.Manager, options Options) error {
 	base := base{client: manager.GetClient(), options: options}
@@ -97,9 +97,14 @@ func Setup(manager ctrl.Manager, options Options) error {
 		return err
 	}
 
+	if err := setupUserAuthorizations(manager, base); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(manager).Named("githubaccesspolicy-status").
 		For(&githubgatev1alpha1.GitHubAccessPolicy{}).
 		Watches(&githubgatev1alpha1.GitHubInstallation{}, handler.EnqueueRequestsFromMapFunc(base.policiesOfInstallation)).
+		Watches(&githubgatev1alpha1.GitHubUserAuthorization{}, handler.EnqueueRequestsFromMapFunc(base.policiesOfUserAuthorization)).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(base.policiesInNamespace)).
 		Complete(&policyReconciler{base})
 }
@@ -172,12 +177,7 @@ func (b base) policiesOfInstallation(ctx context.Context, object client.Object) 
 
 	for _, policy := range list.Items {
 		for _, rule := range policy.Spec.Rules {
-			namespace := rule.InstallationRef.Namespace
-			if namespace == "" {
-				namespace = policy.Namespace
-			}
-
-			if namespace == object.GetNamespace() && rule.InstallationRef.Name == object.GetName() {
+			if refersTo(rule.InstallationRef, policy.Namespace, object) {
 				requests = append(requests, request(policy.Namespace, policy.Name))
 				break
 			}
@@ -185,6 +185,40 @@ func (b base) policiesOfInstallation(ctx context.Context, object client.Object) 
 	}
 
 	return requests
+}
+
+func (b base) policiesOfUserAuthorization(ctx context.Context, object client.Object) []reconcile.Request {
+	var list githubgatev1alpha1.GitHubAccessPolicyList
+	if err := b.client.List(ctx, &list); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for _, policy := range list.Items {
+		for _, rule := range policy.Spec.Rules {
+			if refersTo(rule.UserAuthorizationRef, policy.Namespace, object) {
+				requests = append(requests, request(policy.Namespace, policy.Name))
+				break
+			}
+		}
+	}
+
+	return requests
+}
+
+// refersTo reports whether ref, from an object in ownNamespace, names object.
+func refersTo(ref *githubgatev1alpha1.ObjectReference, ownNamespace string, object client.Object) bool {
+	if ref == nil {
+		return false
+	}
+
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = ownNamespace
+	}
+
+	return namespace == object.GetNamespace() && ref.Name == object.GetName()
 }
 
 func (b base) policiesInNamespace(ctx context.Context, object client.Object) []reconcile.Request {

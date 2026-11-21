@@ -78,10 +78,28 @@ func policy(rule githubgatev1alpha1.AccessRule) *githubgatev1alpha1.GitHubAccess
 func rule(installation string, repos string, perms map[string]githubgatev1alpha1.Level) githubgatev1alpha1.AccessRule {
 	return githubgatev1alpha1.AccessRule{
 		Name:            "r",
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: "githubgate", Name: installation},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: "githubgate", Name: installation},
 		Repositories:    []githubgatev1alpha1.Repository{githubgatev1alpha1.Repository(repos)},
 		Permissions:     perms,
 		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},
+	}
+}
+
+func userAuthorization(operations ...githubgatev1alpha1.OperationName) *githubgatev1alpha1.GitHubUserAuthorization {
+	return &githubgatev1alpha1.GitHubUserAuthorization{
+		Spec: githubgatev1alpha1.GitHubUserAuthorizationSpec{
+			AppRef:  githubgatev1alpha1.ObjectReference{Name: "app"},
+			Login:   "octocat",
+			Ceiling: githubgatev1alpha1.UserCeiling{Operations: operations},
+		},
+	}
+}
+
+func userRule(operations ...githubgatev1alpha1.OperationPattern) githubgatev1alpha1.AccessRule {
+	return githubgatev1alpha1.AccessRule{
+		Name:                 "signing-keys",
+		UserAuthorizationRef: &githubgatev1alpha1.ObjectReference{Namespace: "githubgate", Name: "user"},
+		Proxy:                &githubgatev1alpha1.ProxyMode{Enabled: true, AllowOperations: operations},
 	}
 }
 
@@ -149,6 +167,46 @@ func TestValidate(t *testing.T) {
 			kind: "GitHubAccessPolicy", namespace: "tenant",
 			object: policy(rule("org", "other", map[string]githubgatev1alpha1.Level{"contents": "read"})),
 			field:  "spec.rules[0]",
+		},
+		"user authorization in admin namespace": {
+			kind: "GitHubUserAuthorization", namespace: "githubgate",
+			object:  userAuthorization("users/create-ssh-signing-key-for-authenticated-user", "users/delete-ssh-signing-key-for-authenticated-user"),
+			allowed: true,
+		},
+		"user authorization outside admin namespaces": {
+			kind: "GitHubUserAuthorization", namespace: "tenant",
+			object: userAuthorization("users/create-ssh-signing-key-for-authenticated-user"),
+			field:  "metadata.namespace",
+		},
+		"user authorization with an unknown operation": {
+			kind: "GitHubUserAuthorization", namespace: "githubgate",
+			object: userAuthorization("users/create-ssh-signing-key-for-authenticated-user", "users/no-such-operation"),
+			field:  "spec.ceiling.operations[1]",
+		},
+		"user authorization with a glob operation": {
+			kind: "GitHubUserAuthorization", namespace: "githubgate",
+			object: userAuthorization("users/*"),
+			field:  "spec.ceiling.operations[0]",
+		},
+		"user authorization with a repository operation": {
+			kind: "GitHubUserAuthorization", namespace: "githubgate",
+			object: userAuthorization("repos/get"),
+			field:  "spec.ceiling.operations[0]",
+		},
+		"user authorization with an organization operation": {
+			kind: "GitHubUserAuthorization", namespace: "githubgate",
+			object: userAuthorization("orgs/get"),
+			field:  "spec.ceiling.operations[0]",
+		},
+		"user rule with a user operation": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object:  policy(userRule("users/create-ssh-signing-key-for-authenticated-user")),
+			allowed: true,
+		},
+		"user rule with a repository operation": {
+			kind: "GitHubAccessPolicy", namespace: "tenant",
+			object: policy(userRule("repos/get")),
+			field:  "spec.rules[0].proxy.allowOperations[0]",
 		},
 		"policy rule naming a missing installation": {
 			kind: "GitHubAccessPolicy", namespace: "tenant",

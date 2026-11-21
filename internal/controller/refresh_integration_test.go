@@ -184,6 +184,8 @@ func readyCondition(t *testing.T, e *env, object *githubgatev1alpha1.GitHubUserA
 }
 
 func TestUserTokenRefresh(t *testing.T) {
+	t.Parallel()
+
 	e := startDeviceFlowEnv(t)
 
 	t.Run("the leader refreshes a token with less than four hours left, every replica serves the new token, and no refresh token is used twice", func(t *testing.T) {

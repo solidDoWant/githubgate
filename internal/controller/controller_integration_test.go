@@ -214,6 +214,8 @@ func (e *env) requireReady(t *testing.T, object client.Object, conditions func()
 }
 
 func TestStatusOfAppsInstallationsAndPolicies(t *testing.T) {
+	t.Parallel()
+
 	e := startEnv(t)
 
 	t.Run("an App with a missing or invalid key Secret recovers without a restart", func(t *testing.T) {

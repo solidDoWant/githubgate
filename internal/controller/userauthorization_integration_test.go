@@ -55,6 +55,8 @@ func ruleReasons(t *testing.T, policy *githubgatev1alpha1.GitHubAccessPolicy) ma
 }
 
 func TestStatusOfUserAuthorizations(t *testing.T) {
+	t.Parallel()
+
 	e := startEnv(t)
 
 	e.keySecret(t, "key", map[string][]byte{"private-key.pem": keyPEM(e.key)})

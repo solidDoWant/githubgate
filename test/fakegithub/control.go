@@ -24,6 +24,15 @@ func (s *Server) ControlHandler() http.Handler {
 	mux.HandleFunc("GET /tokens", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.Tokens()) })
 	mux.HandleFunc("GET /jwts", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.JWTs()) })
 
+	mux.HandleFunc("POST /oauth-apps", s.controlCreateOAuthApp)
+	mux.HandleFunc("POST /oauth-apps/{client_id}/device-flow", s.controlSetDeviceFlow)
+	mux.HandleFunc("POST /device-codes/approve", s.controlApproveDeviceCode)
+	mux.HandleFunc("POST /device-codes/deny", s.controlDenyDeviceCode)
+	mux.HandleFunc("POST /user-token-lifetimes", s.controlSetUserTokenLifetimes)
+	mux.HandleFunc("POST /device-interval", s.controlSetDeviceInterval)
+	mux.HandleFunc("GET /user-tokens", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.UserTokens()) })
+	mux.HandleFunc("GET /refresh-reuses", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.RefreshReuses()) })
+
 	return mux
 }
 
@@ -154,5 +163,95 @@ func (s *Server) controlSetTokenLifetime(writer http.ResponseWriter, request *ht
 	}
 
 	s.SetTokenLifetime(time.Duration(body.Seconds) * time.Second)
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) controlCreateOAuthApp(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		ClientID   string `json:"client_id"`
+		DeviceFlow bool   `json:"device_flow"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	s.CreateOAuthApp(OAuthApp{ClientID: body.ClientID, DeviceFlow: body.DeviceFlow})
+	writer.WriteHeader(http.StatusCreated)
+}
+
+func (s *Server) controlSetDeviceFlow(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	if err := s.SetDeviceFlow(request.PathValue("client_id"), body.Enabled); err != nil {
+		writeJSONError(writer, http.StatusNotFound, err.Error())
+
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) controlApproveDeviceCode(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		UserCode string `json:"user_code"`
+		Login    string `json:"login"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	if err := s.ApproveDeviceCode(body.UserCode, body.Login); err != nil {
+		writeJSONError(writer, http.StatusNotFound, err.Error())
+
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) controlDenyDeviceCode(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		UserCode string `json:"user_code"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	if err := s.DenyDeviceCode(body.UserCode); err != nil {
+		writeJSONError(writer, http.StatusNotFound, err.Error())
+
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) controlSetUserTokenLifetimes(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		AccessSeconds  int64 `json:"access_seconds"`
+		RefreshSeconds int64 `json:"refresh_seconds"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	s.SetUserTokenLifetimes(time.Duration(body.AccessSeconds)*time.Second, time.Duration(body.RefreshSeconds)*time.Second)
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) controlSetDeviceInterval(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Seconds int64 `json:"seconds"`
+	}
+	if !decode(writer, request, &body) {
+		return
+	}
+
+	s.SetDeviceInterval(time.Duration(body.Seconds) * time.Second)
 	writer.WriteHeader(http.StatusNoContent)
 }

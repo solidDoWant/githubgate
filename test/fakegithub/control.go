@@ -30,6 +30,7 @@ func (s *Server) ControlHandler() http.Handler {
 	mux.HandleFunc("POST /device-codes/deny", s.controlDenyDeviceCode)
 	mux.HandleFunc("POST /user-token-lifetimes", s.controlSetUserTokenLifetimes)
 	mux.HandleFunc("POST /device-interval", s.controlSetDeviceInterval)
+	mux.HandleFunc("GET /device-codes", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.DeviceCodes()) })
 	mux.HandleFunc("GET /user-tokens", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.UserTokens()) })
 	mux.HandleFunc("GET /refresh-reuses", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.RefreshReuses()) })
 

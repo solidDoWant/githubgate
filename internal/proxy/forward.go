@@ -41,6 +41,14 @@ type TokenSource interface {
 	ProxyToken(ctx context.Context, caller auth.Identity, decision Decision) (token, githubStatus string, err error)
 }
 
+// UserTokens gives the current access token of a user authorization. It
+// never refreshes: the leader does.
+type UserTokens interface {
+	// UserToken returns the access token, or "" and the reason none is
+	// usable now. Neither the reason nor the error contains a credential.
+	UserToken(ctx context.Context, authorization *model.UserAuthorization) (token, reason string, err error)
+}
+
 // TokenError is a token that couldn't be had, as the caller sees it. Message
 // never contains a credential.
 type TokenError struct {
@@ -104,9 +112,12 @@ func NewTransport(extraRoots []byte) (*http.Transport, error) {
 type ForwarderOptions struct {
 	// Rules returns a caller's accepted rules from the current snapshot;
 	// each request is decided against one call.
-	Rules     func(namespace, serviceAccount string) []*model.Rule
-	Tokens    TokenSource
-	Upstreams Upstreams
+	Rules  func(namespace, serviceAccount string) []*model.Rule
+	Tokens TokenSource
+	// UserTokens gives user rules their access token; with none, every
+	// request a user rule allows is refused with 503.
+	UserTokens UserTokens
+	Upstreams  Upstreams
 	// Transport sends requests upstream; NewTransport(nil) when nil.
 	Transport http.RoundTripper
 	// Audit receives one line per forwarded or refused request; discarded
@@ -193,6 +204,12 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
+	if decision.Access == AccessUser {
+		f.forwardAsUser(recorder, request, classified, decision, entry)
+
+		return
+	}
+
 	token, githubStatus, err := f.options.Tokens.ProxyToken(request.Context(), caller, decision)
 	entry.githubStatus = githubStatus
 
@@ -208,6 +225,34 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 
 		entry.reason = tokenError.Code
 		writeRefusal(recorder, classified.Host, graphQL, refuse(tokenError.Status, tokenError.Code, tokenError.Message))
+
+		return
+	}
+
+	entry.reason = "allowed"
+	f.reverseProxy(classified, token, entry).ServeHTTP(recorder, request)
+}
+
+// forwardAsUser forwards a request a user rule allows with its
+// authorization's current access token, or refuses it with 503 when there
+// is none. It never falls back to an installation token.
+func (f *HTTPForwarder) forwardAsUser(recorder http.ResponseWriter, request *http.Request, classified Request, decision Decision, entry *auditEntry) {
+	authorization := decision.UserAuthorization
+	token, reason := "", "no user token source is configured"
+
+	if f.options.UserTokens != nil {
+		var err error
+
+		token, reason, err = f.options.UserTokens.UserToken(request.Context(), authorization)
+		if err != nil {
+			token, reason = "", "its stored token can't be read now"
+		}
+	}
+
+	if token == "" {
+		refusal := UserNotReady(authorization.NamespacedName, reason)
+		entry.reason = refusal.Code
+		writeRefusal(recorder, classified.Host, false, refuse(refusal.Status, refusal.Code, refusal.Message))
 
 		return
 	}
@@ -281,13 +326,23 @@ func (f *HTTPForwarder) reverseProxy(classified Request, token string, entry *au
 				entry.githubStatus = codeGitHubUnavailable
 			}
 
+			if user := entry.userAuthorization(); user != nil && errors.Is(err, errUpstreamRefusedToken) {
+				// GitHub refused the stored user token: the authorization
+				// can't serve until the leader refreshes it.
+				refusal := UserNotReady(user.NamespacedName, "GitHub refused its access token")
+				entry.reason = refusal.Code
+				writeRefusal(writer, classified.Host, false, refuse(refusal.Status, refusal.Code, refusal.Message))
+
+				return
+			}
+
 			writeRefusal(writer, classified.Host, classified.Kind == KindGraphQL,
 				refuse(http.StatusServiceUnavailable, codeGitHubUnavailable, "GitHub could not be reached or refused githubgate's token"))
 		},
 	}
 }
 
-var errUpstreamRefusedToken = errors.New("GitHub refused the installation token")
+var errUpstreamRefusedToken = errors.New("GitHub refused the token githubgate sent")
 
 // readBody reads what the decision needs from the body: a GraphQL
 // document's mutations, and the refs a REST operation writes. It replaces

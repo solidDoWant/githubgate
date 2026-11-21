@@ -183,3 +183,26 @@ func containsString(list []string, value string) bool {
 
 	return false
 }
+
+// userRuleOf returns the Rule of a user rule of policy, accepted or not.
+func userRuleOf(policy types.NamespacedName, rule githubgatev1alpha1.AccessRule, acceptance Acceptance, view View) *Rule {
+	ref := reference(*rule.UserAuthorizationRef, policy.Namespace)
+	authorization, _ := view.UserAuthorization(ref)
+
+	operations := []string{}
+	if rule.Proxy != nil {
+		operations = stringsOf(rule.Proxy.AllowOperations)
+	}
+
+	return &Rule{
+		Policy: policy,
+		Name:   rule.Name,
+		User: &UserRule{
+			Authorization: ref,
+			View:          authorization,
+			Operations:    operations,
+			Accepted:      acceptance.Accepted,
+			Reason:        acceptance.Reason,
+		},
+	}
+}

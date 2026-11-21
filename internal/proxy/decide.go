@@ -61,8 +61,11 @@ type Decision struct {
 	// Rules are the rules that allowed the request.
 	Rules []*model.Rule
 	// Access is how an allowed request is sent: with the rules' token, with
-	// the public-read token, or with no credential.
+	// the public-read token, with a user access token, or with no credential.
 	Access Access
+	// UserAuthorization is the authorization whose access token an allowed
+	// user request is forwarded with; set only with AccessUser.
+	UserAuthorization *model.UserAuthorization
 }
 
 // Access is the credential an allowed request is forwarded with.
@@ -77,6 +80,9 @@ const (
 	AccessPublicRead Access = "public_read"
 	// AccessWeb forwards a github.com web path with no credential.
 	AccessWeb Access = "web"
+	// AccessUser forwards with the current access token of a user
+	// authorization.
+	AccessUser Access = "user"
 )
 
 // Allowed reports whether the request may be forwarded.
@@ -87,6 +93,10 @@ func (d Decision) Allowed() bool { return d.Status == 0 }
 // give it a token, so one rule's lists or pushRefs can't be undone by
 // another rule's permissions. Anything it can't decide is refused.
 func Decide(rules []*model.Rule, request Decided) Decision {
+	if decision, decided := decideUser(rules, request); decided {
+		return decision
+	}
+
 	candidates := make([]*model.Rule, 0, len(rules))
 
 	for _, rule := range rules {
@@ -113,6 +123,68 @@ func Decide(rules []*model.Rule, request Decided) Decision {
 	}
 
 	return decision
+}
+
+// decideUser decides a request by the caller's user rules alone when one of
+// them lists its operation, and reports whether it did. Only REST requests
+// to api.github.com can use a user rule. An operation a user rule lists is
+// never decided by the installation rules, even while that rule isn't
+// accepted, so it never gets an installation token instead.
+func decideUser(rules []*model.Rule, request Decided) (Decision, bool) {
+	if request.Kind != KindREST || request.Host != HostAPI {
+		return Decision{}, false
+	}
+
+	listing := []*model.Rule{}
+
+	for _, rule := range rules {
+		if rule.User != nil && slices.Contains(rule.User.Operations, request.Operation) {
+			listing = append(listing, rule)
+		}
+	}
+
+	if len(listing) == 0 {
+		return Decision{}, false
+	}
+
+	slices.SortStableFunc(listing, func(left, right *model.Rule) int {
+		return strings.Compare(left.Policy.String()+"/"+left.Name, right.Policy.String()+"/"+right.Name)
+	})
+
+	authorizations := map[types.NamespacedName]bool{}
+
+	for _, rule := range listing {
+		if !rule.User.Accepted {
+			return denied(fmt.Sprintf("operation %q: user rule %q is not accepted: %s", request.Operation, rule.Name, rule.User.Reason)), true
+		}
+
+		authorizations[rule.User.Authorization] = true
+	}
+
+	if len(authorizations) > 1 {
+		return denied(fmt.Sprintf("operation %q: covered by more than one user authorization", request.Operation)), true
+	}
+
+	authorization := listing[0].User.View
+	if authorization == nil || !authorization.Resolved {
+		reason := model.ReasonRefNotFound
+		if authorization != nil {
+			reason = authorization.Reason
+		}
+
+		return UserNotReady(listing[0].User.Authorization, reason), true
+	}
+
+	return Decision{Rules: listing, Access: AccessUser, UserAuthorization: authorization}, true
+}
+
+// UserNotReady is the refusal of a request a user authorization can't serve
+// now; it never falls back to an installation token.
+func UserNotReady(authorization types.NamespacedName, reason string) Decision {
+	return Decision{
+		Status: http.StatusServiceUnavailable, Code: codeUnavailable,
+		Message: fmt.Sprintf("user authorization %s is not ready: %s", authorization, reason),
+	}
 }
 
 // decideWeb allows a github.com web path when a rule turns web paths on.

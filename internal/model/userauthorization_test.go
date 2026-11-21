@@ -300,5 +300,38 @@ func TestAcceptedUserRuleIsNeverServedAsAnInstallationRule(t *testing.T) {
 	decisions, _ := snapshot.PolicyRules(policyName(tenantNamespace))
 	require.Len(t, decisions, 1)
 	require.True(t, decisions[0].Accepted)
-	assert.Empty(t, snapshot.Rules(tenantNamespace, "ci-build"))
+
+	rules := snapshot.Rules(tenantNamespace, "ci-build")
+	require.Len(t, rules, 1)
+	assert.Nil(t, rules[0].Installation, "a user rule has no installation")
+	assert.Nil(t, rules[0].Proxy, "a user rule is not an installation proxy rule")
+	assert.False(t, rules[0].Token, "a user rule is not a token rule")
+	require.NotNil(t, rules[0].User)
+	assert.Equal(t, []string{createSigningKey}, rules[0].User.Operations)
+	assert.True(t, rules[0].User.Accepted)
+}
+
+func TestUserRulesReachTheCallerAcceptedOrNot(t *testing.T) {
+	outside := userRule("outside", "user", "users/list-emails-for-authenticated-user")
+	in := userInputs()
+	in.Policies = []githubgatev1alpha1.GitHubAccessPolicy{policy(tenantNamespace, userRule("inside", "user", createSigningKey), outside)}
+
+	snapshot := model.Build(in)
+
+	rules := snapshot.Rules(tenantNamespace, "ci-build")
+	require.Len(t, rules, 2)
+
+	byName := map[string]*model.UserRule{}
+
+	for _, rule := range rules {
+		require.NotNil(t, rule.User)
+		byName[rule.Name] = rule.User
+	}
+
+	assert.True(t, byName["inside"].Accepted)
+	assert.False(t, byName["outside"].Accepted)
+	assert.Equal(t, model.ReasonOutsideCeiling, byName["outside"].Reason)
+	assert.Equal(t, []string{"users/list-emails-for-authenticated-user"}, byName["outside"].Operations)
+	require.NotNil(t, byName["inside"].View)
+	assert.Equal(t, "user", byName["inside"].View.Name)
 }

@@ -26,6 +26,7 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&GitHubApp{}, &GitHubAppList{},
 		&GitHubInstallation{}, &GitHubInstallationList{},
 		&GitHubAccessPolicy{}, &GitHubAccessPolicyList{},
+		&GitHubUserAuthorization{}, &GitHubUserAuthorizationList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 

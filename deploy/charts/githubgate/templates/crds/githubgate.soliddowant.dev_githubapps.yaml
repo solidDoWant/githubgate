@@ -128,6 +128,29 @@ spec:
                 required:
                 - name
                 type: object
+              clientID:
+                description: |-
+                  ClientID is the App's OAuth client ID, set inline. Only a
+                  GitHubUserAuthorization of the App needs it.
+                maxLength: 255
+                minLength: 1
+                type: string
+              clientIDSecretRef:
+                description: |-
+                  ClientIDSecretRef names a Secret key holding the App's OAuth client
+                  ID. The key defaults to `client-id`.
+                properties:
+                  key:
+                    description: Key is the key in the Secret's data. The default
+                      depends on the field.
+                    type: string
+                  name:
+                    description: Name is the Secret's name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
               privateKeySecretRef:
                 description: |-
                   PrivateKeySecretRef names a Secret key holding the App's PEM private
@@ -150,6 +173,8 @@ spec:
             x-kubernetes-validations:
             - message: exactly one of appID and appIDSecretRef must be set
               rule: has(self.appID) != has(self.appIDSecretRef)
+            - message: at most one of clientID and clientIDSecretRef may be set
+              rule: '!(has(self.clientID) && has(self.clientIDSecretRef))'
           status:
             description: GitHubAppStatus is the observed state of a GitHubApp.
             properties:

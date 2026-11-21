@@ -26,5 +26,5 @@ webhooks:
       - apiGroups: ["githubgate.soliddowant.dev"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["githubapps", "githubinstallations", "githubaccesspolicies"]
+        resources: ["githubapps", "githubinstallations", "githubaccesspolicies", "githubuserauthorizations"]
 {{- end }}

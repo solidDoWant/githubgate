@@ -100,7 +100,7 @@ func permissionSet(level githubgatev1alpha1.Level, repositories ...githubgatev1a
 func rule(name, installationName string, permissions map[string]githubgatev1alpha1.Level, repositories ...githubgatev1alpha1.Repository) githubgatev1alpha1.AccessRule {
 	return githubgatev1alpha1.AccessRule{
 		Name:            name,
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: installationName},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: installationName},
 		Repositories:    repositories,
 		Permissions:     permissions,
 		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},

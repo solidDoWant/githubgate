@@ -37,6 +37,8 @@ type Acceptance struct {
 type View interface {
 	// Installation returns a GitHubInstallation in an admin namespace.
 	Installation(name types.NamespacedName) (*Installation, bool)
+	// UserAuthorization returns a GitHubUserAuthorization in an admin namespace.
+	UserAuthorization(name types.NamespacedName) (*UserAuthorization, bool)
 	// NamespaceLabels returns a Namespace's labels, if the Namespace exists.
 	NamespaceLabels(namespace string) (labels.Set, bool)
 }
@@ -47,11 +49,15 @@ type View interface {
 // rule outside the installation's ceiling. A rule whose installation exists
 // but isn't ready is still accepted, with reason RefNotReady.
 func AcceptRule(policyNamespace string, rule githubgatev1alpha1.AccessRule, view View) Acceptance {
+	if rule.UserAuthorizationRef != nil {
+		return acceptUserRule(policyNamespace, rule, view)
+	}
+
 	if message := invalidRule(rule); message != "" {
 		return Acceptance{Reason: ReasonInvalidSpec, Message: message}
 	}
 
-	ref := reference(rule.InstallationRef, policyNamespace)
+	ref := reference(*rule.InstallationRef, policyNamespace)
 
 	installation, ok := view.Installation(ref)
 	if !ok {
@@ -116,6 +122,10 @@ func Admits(allowed githubgatev1alpha1.AllowedNamespaces, ownNamespace, namespac
 }
 
 func invalidRule(rule githubgatev1alpha1.AccessRule) string {
+	if rule.InstallationRef == nil {
+		return "the rule has neither installationRef nor userAuthorizationRef"
+	}
+
 	token := rule.Token != nil && rule.Token.Enabled
 	if !token && (rule.Proxy == nil || !rule.Proxy.Enabled) {
 		return "the rule enables no mode"

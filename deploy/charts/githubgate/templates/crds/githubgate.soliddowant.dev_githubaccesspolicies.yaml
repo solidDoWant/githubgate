@@ -52,8 +52,9 @@ spec:
                   Rules are keyed by name. They have no order and only add access.
                   At most 256.
                 items:
-                  description: AccessRule gives the policy's ServiceAccounts access
-                    through one installation.
+                  description: |-
+                    AccessRule gives the policy's ServiceAccounts access through one
+                    installation, or, as a user rule, through one user authorization.
                   properties:
                     installationRef:
                       description: InstallationRef is the GitHubInstallation the rule
@@ -84,8 +85,9 @@ spec:
                         - write
                         - admin
                         type: string
-                      description: Permissions maps GitHub App permission names to
-                        levels.
+                      description: |-
+                        Permissions maps GitHub App permission names to levels. A rule with
+                        installationRef needs them.
                       minProperties: 1
                       type: object
                     proxy:
@@ -199,7 +201,7 @@ spec:
                     repositories:
                       description: |-
                         Repositories are names or `*` globs under the installation's owner.
-                        At most 256.
+                        At most 256. A rule with installationRef needs them.
                       items:
                         description: |-
                           Repository is a repository name under an installation's owner (not
@@ -222,13 +224,51 @@ spec:
                       required:
                       - enabled
                       type: object
+                    userAuthorizationRef:
+                      description: |-
+                        UserAuthorizationRef is the GitHubUserAuthorization a user rule draws
+                        on. A user rule is proxy-only and lists exact operations in
+                        proxy.allowOperations.
+                      properties:
+                        name:
+                          description: Name is the object's name.
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: Namespace defaults to the referring object's
+                            own namespace.
+                          type: string
+                      required:
+                      - name
+                      type: object
                   required:
-                  - installationRef
                   - name
-                  - permissions
-                  - repositories
                   type: object
                   x-kubernetes-validations:
+                  - message: exactly one of installationRef and userAuthorizationRef
+                      must be set
+                    rule: has(self.installationRef) != has(self.userAuthorizationRef)
+                  - message: a rule with installationRef needs repositories and permissions
+                    rule: has(self.userAuthorizationRef) || (has(self.repositories)
+                      && has(self.permissions))
+                  - message: 'a user rule has no repositories or permissions: its
+                      user authorization''s operations replace them'
+                    rule: '!has(self.userAuthorizationRef) || (!has(self.repositories)
+                      && !has(self.permissions))'
+                  - message: 'a user rule needs token mode off and proxy mode on:
+                      a user access token is never handed out'
+                    rule: '!has(self.userAuthorizationRef) || ((!has(self.token) ||
+                      !self.token.enabled) && has(self.proxy) && self.proxy.enabled)'
+                  - message: a user rule needs proxy.allowOperations, with exact operation
+                      ids and no globs
+                    rule: '!has(self.userAuthorizationRef) || !has(self.proxy) ||
+                      (has(self.proxy.allowOperations) && self.proxy.allowOperations.all(o,
+                      !o.contains(''*'')))'
+                  - message: a user rule may set only proxy.enabled and proxy.allowOperations
+                    rule: '!has(self.userAuthorizationRef) || !has(self.proxy) ||
+                      !(has(self.proxy.denyOperations) || has(self.proxy.allowMutations)
+                      || has(self.proxy.denyMutations) || has(self.proxy.pushRefs)
+                      || has(self.proxy.publicRead) || has(self.proxy.webPaths))'
                   - message: at least one mode must be enabled
                     rule: (has(self.token) && self.token.enabled) || (has(self.proxy)
                       && self.proxy.enabled)
@@ -243,7 +283,7 @@ spec:
                       without a pattern: the public-read token is limited to those
                       repositories'
                     rule: '!has(self.proxy) || !has(self.proxy.publicRead) || !self.proxy.publicRead
-                      || self.repositories.exists(r, !r.contains(''*''))'
+                      || !has(self.repositories) || self.repositories.exists(r, !r.contains(''*''))'
                 maxItems: 256
                 type: array
                 x-kubernetes-list-map-keys:

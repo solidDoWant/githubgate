@@ -7,6 +7,7 @@ import (
 // GitHubAppSpec is the desired state of a GitHubApp.
 //
 // +kubebuilder:validation:XValidation:rule="has(self.appID) != has(self.appIDSecretRef)",message="exactly one of appID and appIDSecretRef must be set"
+// +kubebuilder:validation:XValidation:rule="!(has(self.clientID) && has(self.clientIDSecretRef))",message="at most one of clientID and clientIDSecretRef may be set"
 type GitHubAppSpec struct {
 	// AppID is the App's ID, set inline.
 	//
@@ -19,6 +20,20 @@ type GitHubAppSpec struct {
 	//
 	// +optional
 	AppIDSecretRef *SecretKeyReference `json:"appIDSecretRef,omitempty"`
+
+	// ClientID is the App's OAuth client ID, set inline. Only a
+	// GitHubUserAuthorization of the App needs it.
+	//
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	ClientID string `json:"clientID,omitempty"`
+
+	// ClientIDSecretRef names a Secret key holding the App's OAuth client
+	// ID. The key defaults to `client-id`.
+	//
+	// +optional
+	ClientIDSecretRef *SecretKeyReference `json:"clientIDSecretRef,omitempty"`
 
 	// PrivateKeySecretRef names a Secret key holding the App's PEM private
 	// key (PKCS#1 or PKCS#8 RSA). The key defaults to `private-key.pem`.

@@ -296,7 +296,7 @@ func rule(name, installationName string, level githubgatev1alpha1.Level) githubg
 
 	return githubgatev1alpha1.AccessRule{
 		Name:            name,
-		InstallationRef: githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: installationName},
+		InstallationRef: &githubgatev1alpha1.ObjectReference{Namespace: adminNamespace, Name: installationName},
 		Repositories:    []githubgatev1alpha1.Repository{"foo"},
 		Permissions:     map[string]githubgatev1alpha1.Level{permission: level},
 		Token:           &githubgatev1alpha1.TokenMode{Enabled: true},

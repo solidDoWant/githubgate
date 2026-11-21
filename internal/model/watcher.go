@@ -70,6 +70,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 		&githubgatev1alpha1.GitHubApp{},
 		&githubgatev1alpha1.GitHubInstallation{},
 		&githubgatev1alpha1.GitHubAccessPolicy{},
+		&githubgatev1alpha1.GitHubUserAuthorization{},
 		&corev1.Secret{},
 		&corev1.Namespace{},
 	}
@@ -132,9 +133,11 @@ func ReadInputs(ctx context.Context, reader client.Reader, adminNamespaces []str
 
 	var policies githubgatev1alpha1.GitHubAccessPolicyList
 
+	var users githubgatev1alpha1.GitHubUserAuthorizationList
+
 	var namespaces corev1.NamespaceList
 
-	for _, list := range []client.ObjectList{&apps, &installations, &policies, &namespaces} {
+	for _, list := range []client.ObjectList{&apps, &installations, &policies, &users, &namespaces} {
 		if err := reader.List(ctx, list); err != nil {
 			return Inputs{}, fmt.Errorf("listing %T: %w", list, err)
 		}
@@ -150,6 +153,7 @@ func ReadInputs(ctx context.Context, reader client.Reader, adminNamespaces []str
 	}
 
 	in.Apps, in.Installations, in.Policies, in.Namespaces = apps.Items, installations.Items, policies.Items, namespaces.Items
+	in.UserAuthorizations = users.Items
 
 	return in, nil
 }

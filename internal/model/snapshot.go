@@ -33,8 +33,10 @@ type Inputs struct {
 	Apps            []githubgatev1alpha1.GitHubApp
 	Installations   []githubgatev1alpha1.GitHubInstallation
 	Policies        []githubgatev1alpha1.GitHubAccessPolicy
-	Secrets         []corev1.Secret
-	Namespaces      []corev1.Namespace
+	// UserAuthorizations are used only in the admin namespaces.
+	UserAuthorizations []githubgatev1alpha1.GitHubUserAuthorization
+	Secrets            []corev1.Secret
+	Namespaces         []corev1.Namespace
 }
 
 // App is a usable view of a GitHubApp.
@@ -50,6 +52,11 @@ type App struct {
 	Message    string
 
 	privateKey *rsa.PrivateKey
+	// The client ID, inline or from a Secret, is resolved by the user
+	// authorizations that need it, so a missing one never makes the App
+	// not ready.
+	clientID          string
+	clientIDSecretRef *githubgatev1alpha1.SecretKeyReference
 }
 
 // PrivateKey returns the App's parsed private key, or nil when not ready.
@@ -91,6 +98,7 @@ type PolicyRule struct {
 type Snapshot struct {
 	apps            map[types.NamespacedName]*App
 	installations   map[types.NamespacedName]*Installation
+	users           map[types.NamespacedName]*UserAuthorization
 	namespaceLabels map[string]labels.Set
 	// policiesOf lists, for each ServiceAccount, the accepted rules of each
 	// policy that names it. Each policy's rules are stored once and shared,
@@ -104,6 +112,12 @@ type Snapshot struct {
 func (s *Snapshot) App(name types.NamespacedName) (*App, bool) {
 	app, ok := s.apps[name]
 	return app, ok
+}
+
+// UserAuthorization returns a GitHubUserAuthorization in an admin namespace.
+func (s *Snapshot) UserAuthorization(name types.NamespacedName) (*UserAuthorization, bool) {
+	authorization, ok := s.users[name]
+	return authorization, ok
 }
 
 // Installation returns a GitHubInstallation in an admin namespace.
@@ -162,6 +176,7 @@ func Build(in Inputs) *Snapshot {
 	snapshot := &Snapshot{
 		apps:            map[types.NamespacedName]*App{},
 		installations:   map[types.NamespacedName]*Installation{},
+		users:           map[types.NamespacedName]*UserAuthorization{},
 		namespaceLabels: map[string]labels.Set{},
 		policiesOf:      map[types.NamespacedName][][]*Rule{},
 		policies:        map[types.NamespacedName][]PolicyRule{},
@@ -197,6 +212,14 @@ func Build(in Inputs) *Snapshot {
 		}
 	}
 
+	for index := range in.UserAuthorizations {
+		authorization := &in.UserAuthorizations[index]
+		if admin(authorization.Namespace) {
+			name := types.NamespacedName{Namespace: authorization.Namespace, Name: authorization.Name}
+			snapshot.users[name] = buildUserAuthorization(authorization, snapshot, secrets)
+		}
+	}
+
 	for index := range in.Policies {
 		buildPolicy(&in.Policies[index], snapshot)
 	}
@@ -208,6 +231,8 @@ func buildApp(object *githubgatev1alpha1.GitHubApp, secrets map[types.Namespaced
 	app := &App{
 		NamespacedName:    types.NamespacedName{Namespace: object.Namespace, Name: object.Name},
 		AllowedNamespaces: object.Spec.AllowedNamespaces,
+		clientID:          object.Spec.ClientID,
+		clientIDSecretRef: object.Spec.ClientIDSecretRef,
 	}
 
 	versions := []string{}
@@ -365,11 +390,13 @@ func buildPolicy(object *githubgatev1alpha1.GitHubAccessPolicy, snapshot *Snapsh
 		acceptance := AcceptRule(object.Namespace, rule, snapshot)
 		decisions = append(decisions, PolicyRule{Name: rule.Name, Acceptance: acceptance})
 
-		if !acceptance.Accepted {
+		// User rules are decided here but not served yet, so a user rule
+		// never reaches the installation rules' decision.
+		if !acceptance.Accepted || rule.InstallationRef == nil {
 			continue
 		}
 
-		installation, _ := snapshot.Installation(reference(rule.InstallationRef, object.Namespace))
+		installation, _ := snapshot.Installation(reference(*rule.InstallationRef, object.Namespace))
 		grant := GrantOf(rule.Repositories, rule.Permissions)
 		accepted = append(accepted, &Rule{
 			Policy:       policy,

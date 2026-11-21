@@ -84,11 +84,46 @@ func validPolicy(name string) *githubgatev1alpha1.GitHubAccessPolicy {
 			ServiceAccounts: []string{"ci-build"},
 			Rules: []githubgatev1alpha1.AccessRule{{
 				Name:            "read",
-				InstallationRef: githubgatev1alpha1.ObjectReference{Name: "inst"},
+				InstallationRef: &githubgatev1alpha1.ObjectReference{Name: "inst"},
 				Repositories:    []githubgatev1alpha1.Repository{"foo", "ci-*", "a.b_c"},
 				Permissions:     map[string]githubgatev1alpha1.Level{"contents": "read"},
 				Token:           &githubgatev1alpha1.TokenMode{Enabled: true},
 			}},
+		},
+	}
+}
+
+func validUserAuthorization(name string) *githubgatev1alpha1.GitHubUserAuthorization {
+	return &githubgatev1alpha1.GitHubUserAuthorization{
+		ObjectMeta: objectMeta(name),
+		Spec: githubgatev1alpha1.GitHubUserAuthorizationSpec{
+			AppRef: githubgatev1alpha1.ObjectReference{Name: "app"},
+			Login:  "solid-Do-Want1",
+			Ceiling: githubgatev1alpha1.UserCeiling{Operations: []githubgatev1alpha1.OperationName{
+				"users/create-ssh-signing-key-for-authenticated-user",
+			}},
+		},
+	}
+}
+
+// userRulePolicy returns a policy with one valid user rule, changed by modify.
+func userRulePolicy(name string, modify func(*githubgatev1alpha1.AccessRule)) *githubgatev1alpha1.GitHubAccessPolicy {
+	rule := githubgatev1alpha1.AccessRule{
+		Name:                 "signing-keys",
+		UserAuthorizationRef: &githubgatev1alpha1.ObjectReference{Namespace: "ci", Name: "user"},
+		Proxy: &githubgatev1alpha1.ProxyMode{Enabled: true, AllowOperations: []githubgatev1alpha1.OperationPattern{
+			"users/create-ssh-signing-key-for-authenticated-user",
+		}},
+	}
+	if modify != nil {
+		modify(&rule)
+	}
+
+	return &githubgatev1alpha1.GitHubAccessPolicy{
+		ObjectMeta: objectMeta(name),
+		Spec: githubgatev1alpha1.GitHubAccessPolicySpec{
+			ServiceAccounts: []string{"coder-provisioner"},
+			Rules:           []githubgatev1alpha1.AccessRule{rule},
 		},
 	}
 }
@@ -386,6 +421,143 @@ func TestCRDValidation(t *testing.T) {
 
 			return policy
 		}},
+		{name: "app with inline client ID", object: func(n string) client.Object {
+			app := validApp(n)
+			app.Spec.ClientID = "Iv23liAbCdEf012345"
+
+			return app
+		}},
+		{name: "app with client ID from a secret", object: func(n string) client.Object {
+			app := validApp(n)
+			app.Spec.ClientIDSecretRef = &githubgatev1alpha1.SecretKeyReference{Name: "ids"}
+
+			return app
+		}},
+		{name: "app with both client IDs", invalid: true, object: func(n string) client.Object {
+			app := validApp(n)
+			app.Spec.ClientID = "Iv23liAbCdEf012345"
+			app.Spec.ClientIDSecretRef = &githubgatev1alpha1.SecretKeyReference{Name: "ids"}
+
+			return app
+		}},
+		{name: "user authorization", object: func(n string) client.Object { return validUserAuthorization(n) }},
+		{name: "user authorization with a login starting with a hyphen", invalid: true, object: func(n string) client.Object {
+			authorization := validUserAuthorization(n)
+			authorization.Spec.Login = "-octocat"
+
+			return authorization
+		}},
+		{name: "user authorization with a double hyphen in the login", invalid: true, object: func(n string) client.Object {
+			authorization := validUserAuthorization(n)
+			authorization.Spec.Login = "octo--cat"
+
+			return authorization
+		}},
+		{name: "user authorization with a 39-character login", object: func(n string) client.Object {
+			authorization := validUserAuthorization(n)
+			authorization.Spec.Login = strings.Repeat("a", 39)
+
+			return authorization
+		}},
+		{name: "user authorization with a 40-character login", invalid: true, object: func(n string) client.Object {
+			authorization := validUserAuthorization(n)
+			authorization.Spec.Login = strings.Repeat("a", 40)
+
+			return authorization
+		}},
+		{name: "user authorization with a glob in the ceiling", invalid: true, object: func(n string) client.Object {
+			authorization := validUserAuthorization(n)
+			authorization.Spec.Ceiling.Operations = []githubgatev1alpha1.OperationName{"users/*"}
+
+			return authorization
+		}},
+		{name: "user authorization with a 242-character name", object: func(string) client.Object {
+			return validUserAuthorization(strings.Repeat("a", 242))
+		}},
+		{name: "user authorization with a 243-character name", invalid: true, object: func(string) client.Object {
+			return validUserAuthorization(strings.Repeat("a", 243))
+		}},
+		{name: "user rule", object: func(n string) client.Object { return userRulePolicy(n, nil) }},
+		{name: "user rule with installationRef", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.InstallationRef = &githubgatev1alpha1.ObjectReference{Name: "inst"}
+			})
+		}},
+		{name: "rule with neither installationRef nor userAuthorizationRef", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) { rule.UserAuthorizationRef = nil })
+		}},
+		{name: "user rule with repositories", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Repositories = []githubgatev1alpha1.Repository{"foo"}
+			})
+		}},
+		{name: "user rule with permissions", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Permissions = map[string]githubgatev1alpha1.Level{"contents": "read"}
+			})
+		}},
+		{name: "user rule with token mode enabled", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Token = &githubgatev1alpha1.TokenMode{Enabled: true}
+			})
+		}},
+		{name: "user rule with token mode disabled", object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Token = &githubgatev1alpha1.TokenMode{Enabled: false}
+			})
+		}},
+		{name: "user rule with proxy mode disabled", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) { rule.Proxy.Enabled = false })
+		}},
+		{name: "user rule without proxy mode", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) { rule.Proxy = nil })
+		}},
+		{name: "user rule without allowOperations", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) { rule.Proxy.AllowOperations = nil })
+		}},
+		{name: "user rule with a glob in allowOperations", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Proxy.AllowOperations = append(rule.Proxy.AllowOperations, "users/*")
+			})
+		}},
+		{name: "user rule with denyOperations", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Proxy.DenyOperations = []githubgatev1alpha1.OperationPattern{"users/list-emails-for-authenticated-user"}
+			})
+		}},
+		{name: "user rule with allowMutations", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Proxy.AllowMutations = []githubgatev1alpha1.MutationPattern{"addStar"}
+			})
+		}},
+		{name: "user rule with denyMutations", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Proxy.DenyMutations = []githubgatev1alpha1.MutationPattern{"addStar"}
+			})
+		}},
+		{name: "user rule with pushRefs", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) {
+				rule.Proxy.PushRefs = []githubgatev1alpha1.RefPattern{"refs/heads/main"}
+			})
+		}},
+		{name: "user rule with publicRead", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) { rule.Proxy.PublicRead = true })
+		}},
+		{name: "user rule with webPaths", invalid: true, object: func(n string) client.Object {
+			return userRulePolicy(n, func(rule *githubgatev1alpha1.AccessRule) { rule.Proxy.WebPaths = true })
+		}},
+		{name: "installation rule without repositories", invalid: true, object: func(n string) client.Object {
+			policy := validPolicy(n)
+			policy.Spec.Rules[0].Repositories = nil
+
+			return policy
+		}},
+		{name: "installation rule without permissions", invalid: true, object: func(n string) client.Object {
+			policy := validPolicy(n)
+			policy.Spec.Rules[0].Permissions = nil
+
+			return policy
+		}},
 	}
 
 	for index, test := range tests {
@@ -425,7 +597,9 @@ func TestAllKindsHaveTheGithubgateCategory(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, map[string]bool{"GitHubApp": true, "GitHubInstallation": true, "GitHubAccessPolicy": true}, kinds)
+	require.Equal(t, map[string]bool{
+		"GitHubApp": true, "GitHubInstallation": true, "GitHubAccessPolicy": true, "GitHubUserAuthorization": true,
+	}, kinds)
 }
 
 func isInvalid(err error) bool {

@@ -292,6 +292,65 @@ func TestUserTokenRefresh(t *testing.T) {
 		assert.GreaterOrEqual(t, e.refreshCount(t, object.Name, "revoked"), 1.0)
 	})
 
+	t.Run("a spec change after authorizing clears the stored tokens, and changing it back serves nothing until a new flow", func(t *testing.T) {
+		object, _ := e.authorizeWithLifetime(t, "specchange", 0)
+		e.requireReady(t, object, func() []metav1.Condition { return object.Status.Conditions }, metav1.ConditionTrue, "Ready")
+
+		setLogin := func(login string) {
+			require.NoError(t, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+				if err := e.client.Get(t.Context(), client.ObjectKeyFromObject(object), object); err != nil {
+					return err
+				}
+
+				object.Spec.Login = login
+
+				return e.client.Update(t.Context(), object)
+			}))
+		}
+
+		setLogin("someone-else")
+		e.requireReady(t, object, func() []metav1.Condition { return object.Status.Conditions }, metav1.ConditionFalse, controller.ReasonSpecChanged)
+
+		require.Eventually(t, func() bool {
+			data := e.secretData(t, object.Name)
+			if data == nil {
+				return false
+			}
+
+			for _, key := range []string{
+				controller.KeyAccessToken, controller.KeyAccessTokenExpiresAt, controller.KeyRefreshToken, controller.KeyRefreshTokenExpires,
+			} {
+				if _, found := data[key]; found {
+					return false
+				}
+			}
+
+			return true
+		}, 30*time.Second, 50*time.Millisecond, "the token keys were not cleared after the spec changed")
+
+		setLogin("octocat")
+
+		require.Eventually(t, func() bool {
+			if err := e.client.Get(t.Context(), client.ObjectKeyFromObject(object), object); err != nil {
+				return false
+			}
+
+			return object.Status.ObservedGeneration == object.Generation
+		}, 30*time.Second, 50*time.Millisecond, "waiting for the reverted spec to be observed")
+
+		e.requireReady(t, object, func() []metav1.Condition { return object.Status.Conditions }, metav1.ConditionFalse, controller.ReasonSpecChanged)
+		requireAuthorizationRequired(t, object, metav1.ConditionTrue, controller.ReasonSpecChanged)
+		assert.Never(t, func() bool {
+			for _, token := range e.replicaTokens(t, object) {
+				if token != "" {
+					return true
+				}
+			}
+
+			return false
+		}, 2*time.Second, 100*time.Millisecond, "a replica serves the old pair after the spec changed back")
+	})
+
 	t.Run("a GitHub outage during a refresh keeps the authorization Ready while the access token is valid, and the refresh is retried", func(t *testing.T) {
 		var attempts atomic.Int64
 

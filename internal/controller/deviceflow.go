@@ -61,6 +61,9 @@ var flowOutcomes = map[string]bool{
 	ReasonWrongUser:            true,
 	ReasonFlowLost:             true,
 	ReasonRefreshTokenRevoked:  true,
+	// The tokens of a changed spec are cleared, so this stays until a new
+	// flow, even when the spec changes back.
+	ReasonSpecChanged: true,
 }
 
 // flow is a device flow in progress on this leader. The device code lives

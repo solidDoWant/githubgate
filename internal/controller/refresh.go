@@ -235,14 +235,7 @@ func (r *userAuthorizationReconciler) clearTokens(
 	secret *corev1.Secret,
 	sent, result, reason, message string,
 ) refreshOutcome {
-	written, err := r.writeTokens(ctx, object, secret, sent, func(current *corev1.Secret) {
-		data := maps.Clone(current.Data)
-		for _, key := range tokenKeys {
-			delete(data, key)
-		}
-
-		current.Data = data
-	})
+	written, err := r.writeTokens(ctx, object, secret, sent, removeTokenKeys)
 
 	switch {
 	case err != nil:
@@ -254,6 +247,40 @@ func (r *userAuthorizationReconciler) clearTokens(
 	default:
 		return refreshOutcome{result: result, reason: reason, message: message}
 	}
+}
+
+// clearSpecChanged removes the token keys when the stored pair was
+// authorized for another login, App or client ID, so a later revert of the
+// spec never brings the old pair back. It decides from an uncached read and
+// clears on that copy's resourceVersion; a pair written in between is kept,
+// and the next reconcile decides again.
+func (r *userAuthorizationReconciler) clearSpecChanged(
+	ctx context.Context,
+	object *githubgatev1alpha1.GitHubUserAuthorization,
+	authorization *model.UserAuthorization,
+) error {
+	unlock := r.workers.lock(client.ObjectKeyFromObject(object))
+	defer unlock()
+
+	secret, state, tokens, err := getUserTokens(ctx, r.apiReader, object, authorization)
+	if err != nil || state != tokenSpecChanged {
+		return err
+	}
+
+	_, err = r.writeTokens(ctx, object, secret, tokens.refreshToken, removeTokenKeys)
+
+	return err
+}
+
+// removeTokenKeys removes the token keys from a token Secret, keeping what
+// the pair was bound to.
+func removeTokenKeys(current *corev1.Secret) {
+	data := maps.Clone(current.Data)
+	for _, key := range tokenKeys {
+		delete(data, key)
+	}
+
+	current.Data = data
 }
 
 // writeTokens changes the token Secret on the resourceVersion of secret, the

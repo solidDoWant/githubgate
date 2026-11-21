@@ -50,6 +50,9 @@ type Request struct {
 	// Owner and Repo are the repository the request is for, empty when it
 	// names none. REST values are as they appeared in the path.
 	Owner, Repo string
+	// Accounts are the organizations and users a REST path names with its
+	// {org} and {username} parameters, as they appeared in the path.
+	Accounts []string
 	// Contents is the contents level a git request needs; empty otherwise
 	// (GitHub enforces the permissions of REST and GraphQL requests).
 	Contents permissions.Level
@@ -153,6 +156,12 @@ func classifyKind(classified Request, method string, query url.Values) (Request,
 	classified.Kind, classified.Operation = KindREST, match.ID
 	classified.Owner, _ = match.Owner()
 	classified.Repo, _ = match.Repo()
+
+	for _, name := range []string{"org", "username"} {
+		if value, named := match.Params[name]; named {
+			classified.Accounts = append(classified.Accounts, value)
+		}
+	}
 
 	return classified, nil
 }

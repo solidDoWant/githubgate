@@ -4,14 +4,18 @@
 # where docker, crane and helm reach ghcr.io through the CI cluster's
 # registrygate (the owner's registry proxy), which pushes only for the release
 # ServiceAccount. The GitHub release is a separate
-# task, so this script never holds a GitHub token.
+# task, so this script never holds a GitHub token. It also builds the files
+# for the GitHub release (build/release-assets); that task uploads them.
 #
 #   scripts/ci/publish-release.sh <version>|v<version>
 #
 # In order, each step safe to run again for the same version:
 #   1. both images for linux/amd64 and linux/arm64 (`make build-images`);
 #   2. for a final version (no -rc.K suffix), both images tagged latest;
-#   3. the chart, pushed to oci://ghcr.io/soliddowant/charts.
+#   3. the chart, pushed to oci://ghcr.io/soliddowant/charts;
+#   4. build/release-assets: crds.yaml, the client binaries and checksums.txt
+#      (scripts/ci/build-release-assets.sh), built first so that a build
+#      failure stops the release before anything is pushed.
 # PUBLISH_DRY_RUN=true prints the commands instead of running them (tests).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -33,6 +37,7 @@ run() {
 
 images=(ghcr.io/soliddowant/githubgate ghcr.io/soliddowant/githubgate-client)
 
+run ./scripts/ci/build-release-assets.sh "$version" build/release-assets
 run make build-images VERSION="$version" PUSH_ALL=true
 if [[ "$version" != *-* ]]; then
 	for image in "${images[@]}"; do

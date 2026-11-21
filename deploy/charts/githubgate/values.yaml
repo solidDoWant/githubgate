@@ -100,7 +100,7 @@ serviceMonitor:
   # -- Scrape interval.
   interval: 30s
 crds:
-  # -- Install the CRDs with the chart. Set to false when you manage them yourself.
+  # -- Install the CRDs with the chart. Set to false when you manage them yourself. Each GitHub release has the same CRDs as one file, `crds.yaml`, at `https://github.com/solidDoWant/githubgate/releases/download/v<version>/crds.yaml`. Apply it with `kubectl apply -f`.
   install: true
 serviceAccount:
   # -- Create the ServiceAccount.

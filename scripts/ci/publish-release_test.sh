@@ -15,6 +15,9 @@ grep -qF "would run: helm package deploy/charts/githubgate --version 1.2.3 --app
 	fail "no chart package: $out"
 grep -qF "would run: helm push build/chart/githubgate-1.2.3.tgz oci://ghcr.io/soliddowant/charts" <<<"$out" ||
 	fail "no chart push: $out"
+grep -qF "would run: ./scripts/ci/build-release-assets.sh 1.2.3 build/release-assets" <<<"$out" || fail "no release assets build: $out"
+[[ "$(grep -n 'build-release-assets' <<<"$out" | cut -d: -f1)" -lt "$(grep -n 'make build-images' <<<"$out" | cut -d: -f1)" ]] ||
+	fail "assets built after the images were pushed: $out"
 # The chart is pushed after the images and latest.
 [[ "$(grep -n 'helm push' <<<"$out" | cut -d: -f1)" -gt "$(grep -n 'crane tag' <<<"$out" | tail -n1 | cut -d: -f1)" ]] ||
 	fail "chart pushed before latest moved: $out"

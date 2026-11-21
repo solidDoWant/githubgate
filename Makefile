@@ -67,6 +67,8 @@ test: ## Run unit tests: Go (race detector; GO_TEST_JSON=file also writes the go
 	./scripts/check-tracking-ids_test.py
 	./scripts/release_test.sh
 	./scripts/ci/publish-release_test.sh
+	./scripts/ci/release-assets_test.sh
+	./scripts/ci/upload-release-assets_test.py
 
 # Fuzz targets run by test-fuzz, as package:FuzzName.
 FUZZ_TARGETS = \

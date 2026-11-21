@@ -2,8 +2,8 @@ apiVersion: v2
 name: githubgate
 description: Gives Kubernetes workloads limited GitHub access through GitHub Apps, by ServiceAccount, without handing them the App's private key.
 type: application
-version: 0.6.1
-appVersion: 0.6.1
+version: 0.6.2
+appVersion: 0.6.2
 # helm push turns sources[0] into the org.opencontainers.image.source
 # annotation, which links the ghcr.io chart package to this repository.
 home: https://github.com/solidDoWant/githubgate

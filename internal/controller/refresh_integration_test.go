@@ -73,7 +73,15 @@ func (e *env) secretData(t *testing.T, name string) map[string][]byte {
 func (e *env) authorizeShortLived(t *testing.T, name string) (*githubgatev1alpha1.GitHubUserAuthorization, string) {
 	t.Helper()
 
-	e.fake.SetUserTokenLifetimes(3*time.Hour, 0)
+	return e.authorizeWithLifetime(t, name, 3*time.Hour)
+}
+
+// authorizeWithLifetime authorizes name through the device flow; the fake
+// issues access tokens that last lifetime, or GitHub's 8 hours when zero.
+func (e *env) authorizeWithLifetime(t *testing.T, name string, lifetime time.Duration) (*githubgatev1alpha1.GitHubUserAuthorization, string) {
+	t.Helper()
+
+	e.fake.SetUserTokenLifetimes(lifetime, 0)
 	t.Cleanup(func() { e.fake.SetUserTokenLifetimes(0, 0) })
 
 	object := deviceAuthorization(name)
@@ -324,5 +332,39 @@ func TestUserTokenRefresh(t *testing.T) {
 			return condition != nil && condition.Status == metav1.ConditionTrue && !strings.Contains(condition.Message, "RefreshFailed") &&
 				string(e.secretData(t, object.Name)[controller.KeyAccessToken]) != first
 		}, 30*time.Second, 50*time.Millisecond, "waiting for the refresh after the outage")
+	})
+
+	t.Run("a refused access token makes the leader refresh at once, and a burst of requests causes one refresh", func(t *testing.T) {
+		object, first := e.authorizeWithLifetime(t, "woken", 0)
+		name := client.ObjectKeyFromObject(object)
+
+		// The token has 8 hours left, so nothing is due.
+		assert.Never(t, func() bool { return e.refreshCount(t, object.Name, "ok") > 0 }, time.Second, 100*time.Millisecond)
+
+		requester := controller.NewRefreshRequester(e.client)
+		for range 5 {
+			require.NoError(t, requester.Request(t.Context(), name))
+		}
+
+		var current string
+
+		require.Eventually(t, func() bool {
+			current = string(e.secretData(t, object.Name)[controller.KeyAccessToken])
+
+			return current != first
+		}, 30*time.Second, 50*time.Millisecond, "waiting for the woken refresh")
+
+		require.Eventually(t, func() bool {
+			for _, token := range e.replicaTokens(t, object) {
+				if token != current {
+					return false
+				}
+			}
+
+			return true
+		}, 30*time.Second, 50*time.Millisecond, "waiting for every replica to serve the new token")
+
+		assert.Never(t, func() bool { return e.refreshCount(t, object.Name, "ok") > 1 }, 2*time.Second, 100*time.Millisecond)
+		assert.Equal(t, 1.0, e.refreshCount(t, object.Name, "ok"))
 	})
 }

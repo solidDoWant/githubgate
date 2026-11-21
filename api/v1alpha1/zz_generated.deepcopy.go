@@ -529,6 +529,10 @@ func (in *GitHubUserAuthorizationStatus) DeepCopyInto(out *GitHubUserAuthorizati
 		in, out := &in.LastRefreshTime, &out.LastRefreshTime
 		*out = (*in).DeepCopy()
 	}
+	if in.RefreshRequestedAt != nil {
+		in, out := &in.RefreshRequestedAt, &out.RefreshRequestedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Authorization != nil {
 		in, out := &in.Authorization, &out.Authorization
 		*out = new(DeviceAuthorizationStatus)

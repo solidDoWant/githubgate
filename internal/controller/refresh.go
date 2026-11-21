@@ -162,12 +162,13 @@ type refreshOutcome struct {
 }
 
 // refreshIfDue refreshes object's token pair when its access token has less
-// than refreshBefore left. It decides from an uncached read, so it never
+// than refreshBefore left, or at once when force is set. It decides from an uncached read, so it never
 // spends a refresh token that another write already replaced.
 func (r *userAuthorizationReconciler) refreshIfDue(
 	ctx context.Context,
 	object *githubgatev1alpha1.GitHubUserAuthorization,
 	authorization *model.UserAuthorization,
+	force bool,
 ) refreshOutcome {
 	name := client.ObjectKeyFromObject(object)
 
@@ -179,7 +180,7 @@ func (r *userAuthorizationReconciler) refreshIfDue(
 		return refreshOutcome{result: refreshFailed, message: "the token Secret could not be read"}
 	}
 
-	if state != tokenValid || time.Until(tokens.accessTokenExpiresAt) >= refreshBefore {
+	if state != tokenValid || (!force && time.Until(tokens.accessTokenExpiresAt) >= refreshBefore) {
 		return refreshOutcome{result: refreshNotDue, state: state, tokens: tokens}
 	}
 

@@ -133,4 +133,5 @@ Every field of the `githubgate.soliddowant.dev/v1alpha1` resources. A field mark
 | `status.lastRefreshTime` | time |  | LastRefreshTime is when the tokens were last refreshed. |
 | `status.login` | string |  | Login is the login the stored token belongs to. |
 | `status.observedGeneration` | integer |  | ObservedGeneration is the generation the status describes. |
+| `status.refreshRequestedAt` | time |  | RefreshRequestedAt is when a replica last saw GitHub refuse the stored access token. The leader refreshes at once when it is later than LastRefreshTime. |
 | `status.refreshTokenExpiresAt` | time |  | RefreshTokenExpiresAt is when the stored refresh token expires. |

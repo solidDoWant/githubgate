@@ -49,6 +49,13 @@ type UserTokens interface {
 	UserToken(ctx context.Context, authorization *model.UserAuthorization) (token, reason string, err error)
 }
 
+// UserTokenRefuser is implemented by a UserTokens that can tell the leader
+// GitHub refused an access token, so it refreshes at once. The call never
+// refreshes and must not block the response.
+type UserTokenRefuser interface {
+	UserTokenRefused(ctx context.Context, authorization *model.UserAuthorization)
+}
+
 // TokenError is a token that couldn't be had, as the caller sees it. Message
 // never contains a credential.
 type TokenError struct {
@@ -329,6 +336,10 @@ func (f *HTTPForwarder) reverseProxy(classified Request, token string, entry *au
 			if user := entry.userAuthorization(); user != nil && errors.Is(err, errUpstreamRefusedToken) {
 				// GitHub refused the stored user token: the authorization
 				// can't serve until the leader refreshes it.
+				if refuser, ok := f.options.UserTokens.(UserTokenRefuser); ok {
+					refuser.UserTokenRefused(context.WithoutCancel(request.Context()), user)
+				}
+
 				refusal := UserNotReady(user.NamespacedName, "GitHub refused its access token")
 				entry.reason = refusal.Code
 				writeRefusal(writer, classified.Host, false, refuse(refusal.Status, refusal.Code, refusal.Message))

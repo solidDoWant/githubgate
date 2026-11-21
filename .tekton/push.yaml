@@ -35,9 +35,9 @@ spec:
           computeResources:
             requests:
               cpu: "8"
-              memory: 8Gi
+              memory: 13Gi
             limits:
-              memory: 8Gi
+              memory: 13Gi
       stepSpecs:
         - name: run
           computeResources:

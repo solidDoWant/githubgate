@@ -1081,6 +1081,23 @@ curl -sSfL --cacert /tmp/ca-bundle.crt -H "Authorization: token $SA_TOKEN" -o /t
 			secrets = append(secrets, token.Token)
 		}
 
+		// User access and refresh tokens and device codes, from any user
+		// authorization the suite ran.
+		var userTokens []struct {
+			Token string `json:"token"`
+		}
+
+		var deviceCodes []string
+
+		c.controlGet(t, "/user-tokens", &userTokens)
+		c.controlGet(t, "/device-codes", &deviceCodes)
+
+		for _, token := range userTokens {
+			secrets = append(secrets, token.Token)
+		}
+
+		secrets = append(secrets, deviceCodes...)
+
 		for _, pod := range []string{"ci-build", "ci-release", "ci-client", "ci-proxied", "ci-proxied-limited"} {
 			secrets = append(secrets, strings.TrimSpace(c.kubectl(t, "", "exec", "-n", callerNamespace, pod, "--", "cat", "/var/run/secrets/githubgate/token")))
 		}
@@ -1095,7 +1112,7 @@ curl -sSfL --cacert /tmp/ca-bundle.crt -H "Authorization: token $SA_TOKEN" -o /t
 		corpus += c.kubectl(t, "", "logs", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "--all-containers", "--prefix", "--tail=-1")
 		corpus += c.kubectl(t, "", "logs", "-n", "fake", "deploy/fakegithub", "--tail=-1")
 		corpus += c.kubectl(t, "", "get", "events", "-A", "-o", "yaml")
-		corpus += c.kubectl(t, "", "get", "githubapps,githubinstallations,githubaccesspolicies", "-A", "-o", "yaml")
+		corpus += c.kubectl(t, "", "get", "githubapps,githubinstallations,githubuserauthorizations,githubaccesspolicies", "-A", "-o", "yaml")
 
 		for _, pod := range strings.Fields(c.kubectl(t, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "-o", "jsonpath={.items[*].metadata.name}")) {
 			corpus += c.kubectl(t, "", "get", "--raw", fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:8080/proxy/metrics", gateNamespace, pod))

@@ -3,6 +3,8 @@
 package controller_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -281,6 +283,42 @@ func TestDeviceFlowAuthorization(t *testing.T) {
 		assert.Equal(t, map[string][]byte{"access-token": []byte("not ours")}, secret.Data)
 		assert.Empty(t, secret.OwnerReferences)
 		assert.Empty(t, secret.Labels)
+	})
+
+	// Runs last, so it searches what every flow above wrote.
+	t.Run("no user token, refresh token or device code appears in status, events or metrics", func(t *testing.T) {
+		var authorizations githubgatev1alpha1.GitHubUserAuthorizationList
+		require.NoError(t, e.client.List(t.Context(), &authorizations))
+
+		var events corev1.EventList
+		require.NoError(t, e.client.List(t.Context(), &events))
+
+		corpus, err := json.Marshal([]any{authorizations, events})
+		require.NoError(t, err)
+
+		for _, gatherer := range e.gatherers {
+			families, err := gatherer.Gather()
+			require.NoError(t, err)
+
+			for _, family := range families {
+				corpus = fmt.Append(corpus, family.String())
+			}
+		}
+
+		// The search is only meaningful if it reads what the flows wrote.
+		require.Contains(t, string(corpus), "OctoCat", "the status is collected")
+
+		secrets := e.fake.DeviceCodes()
+		require.NotEmpty(t, secrets, "the flows used device codes")
+
+		for _, issued := range e.fake.UserTokens() {
+			secrets = append(secrets, issued.Token)
+		}
+
+		for _, secret := range secrets {
+			require.NotEmpty(t, secret)
+			assert.NotContains(t, string(corpus), secret, "a secret of %d characters leaked", len(secret))
+		}
 	})
 }
 

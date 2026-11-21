@@ -24,6 +24,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -362,7 +364,7 @@ func Run(ctx context.Context, config Config) error {
 			return errors.Join(err, api.Close(), health.Close())
 		}
 
-		forwarder, err := newForwarder(config, store, srv, audit)
+		forwarder, err := newForwarder(config, store, srv, userTokenReader{manager.GetClient()}, audit)
 		if err != nil {
 			return errors.Join(err, api.Close(), health.Close(), runOptions.Proxy.Close())
 		}
@@ -419,7 +421,7 @@ func listeners(config Config) (api, health net.Listener, err error) {
 
 // newForwarder returns the proxy's forwarder to the configured upstreams,
 // with tokens from the token API's cache.
-func newForwarder(config Config, store *model.Store, srv *server.Server, audit *slog.Logger) (*proxy.HTTPForwarder, error) {
+func newForwarder(config Config, store *model.Store, srv *server.Server, userTokens proxy.UserTokens, audit *slog.Logger) (*proxy.HTTPForwarder, error) {
 	upstreams, err := config.proxyUpstreams()
 	if err != nil {
 		return nil, err
@@ -449,12 +451,37 @@ func newForwarder(config Config, store *model.Store, srv *server.Server, audit *
 
 			return snapshot.Rules(namespace, serviceAccount)
 		},
-		Tokens:    srv,
-		Upstreams: upstreams,
-		Transport: transport,
-		Audit:     audit,
-		Count:     srv.CountProxy,
+		Tokens:     srv,
+		UserTokens: userTokens,
+		Upstreams:  upstreams,
+		Transport:  transport,
+		Audit:      audit,
+		Count:      srv.CountProxy,
 	})
+}
+
+// userTokenReader gives the proxy a user authorization's access token from
+// the manager's cache, so every replica serves what the leader stored.
+type userTokenReader struct {
+	reader client.Reader
+}
+
+func (u userTokenReader) UserToken(ctx context.Context, authorization *model.UserAuthorization) (string, string, error) {
+	token, ok, err := controller.UserAccessToken(ctx, u.reader, authorization)
+	if err != nil || ok {
+		return token, "", err
+	}
+
+	reason := "no usable access token is stored"
+
+	var object githubgatev1alpha1.GitHubUserAuthorization
+	if u.reader.Get(ctx, authorization.NamespacedName, &object) == nil {
+		if ready := meta.FindStatusCondition(object.Status.Conditions, "Ready"); ready != nil && ready.Status != metav1.ConditionTrue {
+			reason = ready.Reason
+		}
+	}
+
+	return "", reason, nil
 }
 
 func proxyListener(config Config) (net.Listener, error) {

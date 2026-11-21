@@ -39,6 +39,16 @@ func (e *auditEntry) decision() string {
 	return "refused"
 }
 
+// userAuthorization is the authorization an allowed user request is
+// forwarded for, or nil.
+func (e *auditEntry) userAuthorization() *model.UserAuthorization {
+	if e.decisionResult == nil || e.decisionResult.Access != AccessUser {
+		return nil
+	}
+
+	return e.decisionResult.UserAuthorization
+}
+
 func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 	repositories := []string{}
 	permissionSet := ""
@@ -46,6 +56,11 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 	rules := []string{}
 
 	access := ""
+	userAuthorization, login := "", ""
+
+	if user := e.userAuthorization(); user != nil {
+		userAuthorization, login = user.String(), user.Login
+	}
 
 	if result := e.decisionResult; result != nil && result.Allowed() {
 		access = string(result.Access)
@@ -101,6 +116,8 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 		slog.String("permissions", permissionSet),
 		slog.String("installation", installation),
 		slog.Any("rules", rules),
+		slog.String("user_authorization", userAuthorization),
+		slog.String("login", login),
 		slog.String("decision", e.decision()),
 		slog.String("reason", e.reason),
 		slog.Int("status", e.status),

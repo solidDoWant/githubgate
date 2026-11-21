@@ -75,7 +75,8 @@ type Installation struct {
 	Message           string
 }
 
-// Rule is an accepted policy rule.
+// Rule is a policy rule a caller can use: an accepted installation rule, or
+// a user rule, accepted or not. A user rule has no Installation.
 type Rule struct {
 	Policy       types.NamespacedName
 	Name         string
@@ -86,6 +87,23 @@ type Rule struct {
 	Token bool
 	// Proxy is the rule's proxy mode, or nil when it doesn't enable it.
 	Proxy *ProxyRule
+	// User is set on a user rule only.
+	User *UserRule
+}
+
+// UserRule is what a rule with userAuthorizationRef calls as a user. A user
+// rule that isn't accepted is kept so that the operations it lists are
+// refused instead of being decided by the installation rules.
+type UserRule struct {
+	// Authorization is the GitHubUserAuthorization the rule references.
+	Authorization types.NamespacedName
+	// View is that authorization, or nil when it doesn't exist.
+	View *UserAuthorization
+	// Operations are the exact operation ids the rule lists.
+	Operations []string
+	// Accepted is the rule's acceptance; Reason says why it isn't.
+	Accepted bool
+	Reason   string
 }
 
 // PolicyRule is the acceptance decision on one rule of a policy.
@@ -142,8 +160,9 @@ func (s *Snapshot) NamespaceLabels(namespace string) (labels.Set, bool) {
 	return set, ok
 }
 
-// Rules returns the accepted rules that name a ServiceAccount, from the
-// policies in the ServiceAccount's own namespace.
+// Rules returns the rules that name a ServiceAccount, from the policies in
+// the ServiceAccount's own namespace: the accepted installation rules and
+// every user rule.
 func (s *Snapshot) Rules(namespace, serviceAccount string) []*Rule {
 	policies := s.policiesOf[types.NamespacedName{Namespace: namespace, Name: serviceAccount}]
 
@@ -390,8 +409,12 @@ func buildPolicy(object *githubgatev1alpha1.GitHubAccessPolicy, snapshot *Snapsh
 		acceptance := AcceptRule(object.Namespace, rule, snapshot)
 		decisions = append(decisions, PolicyRule{Name: rule.Name, Acceptance: acceptance})
 
-		// User rules are decided here but not served yet, so a user rule
-		// never reaches the installation rules' decision.
+		if rule.UserAuthorizationRef != nil {
+			accepted = append(accepted, userRuleOf(policy, rule, acceptance, snapshot))
+
+			continue
+		}
+
 		if !acceptance.Accepted || rule.InstallationRef == nil {
 			continue
 		}

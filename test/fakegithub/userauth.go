@@ -90,6 +90,7 @@ type userState struct {
 	refresh         map[string]*refreshRecord
 	access          map[string]*accessRecord
 	issued          []IssuedUserToken
+	deviceCodes     []string
 	signingKeys     map[string][]SSHSigningKey // by lower-case login
 	accessLifetime  time.Duration
 	refreshLifetime time.Duration
@@ -261,6 +262,14 @@ func (s *Server) UserTokens() []IssuedUserToken {
 	return append([]IssuedUserToken(nil), s.users.issued...)
 }
 
+// DeviceCodes returns every device code issued so far, for leak searches.
+func (s *Server) DeviceCodes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]string(nil), s.users.deviceCodes...)
+}
+
 // SSHSigningKeys returns the signing keys on a user's account.
 func (s *Server) SSHSigningKeys(login string) []SSHSigningKey {
 	s.mu.Lock()
@@ -329,6 +338,7 @@ func (s *Server) handleDeviceCode(writer http.ResponseWriter, request *http.Requ
 		interval:  s.users.deviceInterval,
 	}
 	s.users.devices[code] = device
+	s.users.deviceCodes = append(s.users.deviceCodes, code)
 	s.mu.Unlock()
 
 	writeOAuth(writer, request, map[string]any{

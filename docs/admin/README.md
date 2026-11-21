@@ -25,8 +25,9 @@ githubgate also writes one JSON line for each request to the proxy, when the res
 
 - `host` and `method`: the GitHub host and the HTTP method of the request.
 - `kind`: `rest`, `graphql`, `git-info-refs`, `git-upload-pack`, `git-receive-pack` or `web` (a `github.com` web path).
-- `access`: how githubgate sent an allowed request. `rules` is a token of the rules. `public_read` is the token for public data, and then `repositories` names the repository that the caller read. `web` is no credential. The field is empty when githubgate refused the request.
+- `access`: how githubgate sent an allowed request. `rules` is a token of the rules. `public_read` is the token for public data, and then `repositories` names the repository that the caller read. `web` is no credential. `user` is the user access token of a `GitHubUserAuthorization`. The field is empty when githubgate refused the request.
 - `operation`: the REST operation id, for example `repos/create-release`.
+- `user_authorization` and `login`: for a request that a user rule allowed, the `GitHubUserAuthorization` (`namespace/name`) and the GitHub user in its `spec.login`. Both are empty for other requests. The line never holds the user access token.
 - `mutations`: the names of the GraphQL mutations in the request.
 - `refs`: the git refs that the request writes, when githubgate read them.
 - `github_status`: the HTTP status from GitHub, `not_called` when githubgate did not send the request, or the GitHub error code when githubgate could not get a token.

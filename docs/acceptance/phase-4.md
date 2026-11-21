@@ -20,15 +20,15 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Using it
 
 6. A pod whose ServiceAccount has a user rule listing `users/create-ssh-signing-key-for-authenticated-user` adds a signing key through the proxy, and then deletes it with a rule listing the delete operation. GitHub receives the user access token, and the pod never sees it.
-    Tests:
+    Tests: `internal/proxy: TestProxyForwardsUserRuleRequestsWithTheUserAccessToken`, `internal/proxy: TestDecideByUserRules/an operation an accepted user rule lists is forwarded as that user`, `internal/proxy: TestDecideByUserRules/two user rules of one authorization forward as that user`
 7. Through the same pod, an operation the rule doesn't list (for example `users/list-emails-for-authenticated-user`), a GraphQL request, a git request and a `github.com` web path never get the user token. They are decided by the installation rules as before.
-    Tests:
+    Tests: `internal/proxy: TestProxyNeverSendsTheUserTokenForOperationsNoUserRuleLists`, `internal/proxy: TestDecideByUserRules/an operation no user rule lists is decided by the installation rules`, `internal/proxy: TestDecideByUserRules/a user operation no user rule lists is decided by the installation rules`, `internal/proxy: TestDecideByUserRules/a listed operation on the uploads host is decided by the installation rules`, `internal/proxy: TestDecideByUserRules/a GraphQL request is decided by the installation rules`, `internal/proxy: TestDecideByUserRules/a git request is decided by the installation rules`, `internal/proxy: TestDecideByUserRules/a github.com web path is decided by the installation rules`, `internal/proxy: TestDecideByUserRules/an operation listed by a user rule that isn't accepted is refused, not decided by the installation rules`, `internal/model: TestUserRulesReachTheCallerAcceptedOrNot`
 8. The CRD rejects a user rule that has `installationRef`, `repositories`, `permissions`, an enabled token mode, globs in `allowOperations`, or an empty `allowOperations`. A user rule with an operation outside the authorization's ceiling, or from a namespace it doesn't admit, is not accepted, and its condition names the reason.
     Tests: `api/v1alpha1: TestCRDValidation/user rule`, `api/v1alpha1: TestCRDValidation/user rule with installationRef`, `api/v1alpha1: TestCRDValidation/user rule with repositories`, `api/v1alpha1: TestCRDValidation/user rule with permissions`, `api/v1alpha1: TestCRDValidation/user rule with token mode enabled`, `api/v1alpha1: TestCRDValidation/user rule with proxy mode disabled`, `api/v1alpha1: TestCRDValidation/user rule without allowOperations`, `api/v1alpha1: TestCRDValidation/user rule with a glob in allowOperations`, `internal/webhook: TestValidate`, `internal/model: TestUserRuleAcceptance`, `internal/controller: TestStatusOfUserAuthorizations/a user rule is accepted only inside the ceiling and from an admitted namespace`
 9. While the authorization is not Ready, a request its user rule covers gets `503` naming the authorization, and never an installation token.
-    Tests:
+    Tests: `internal/proxy: TestProxyRefusesUserRuleRequestsWithoutAUsableToken`, `internal/proxy: TestDecideByUserRules/an authorization that is not resolved answers 503 naming it`
 10. Two user rules of one caller that cover the same operation through different authorizations make that operation's requests fail with `403`.
-    Tests:
+    Tests: `internal/proxy: TestDecideByUserRules/two authorizations covering one operation are refused`
 
 ## Keeping it working
 
@@ -42,7 +42,7 @@ Frozen once approved. Only the owner adds scenarios. Each scenario lists its tes
 ## Safety, live and docs
 
 14. No user access token, refresh token or device code appears in any log, event, status, metric, error message or audit line. The leak search covers every token the fake issued.
-    Tests:
+    Tests: `internal/controller: TestDeviceFlowAuthorization/no user token, refresh token or device code appears in status, events or metrics`, `internal/proxy: TestProxyForwardsUserRuleRequestsWithTheUserAccessToken`, `internal/proxy: TestProxyRefusesUserRuleRequestsWithoutAUsableToken`
 15. **Live:** on github.com with the test App, the operator authorizes as the owner through the device flow, adds a signing key through the proxy, sees it on the account, deletes it, and sees one refresh succeed.
     Tests:
 16. **Docs:** an admin page shows how to set up the App (account permission, device flow, client ID), how to create and authorize a `GitHubUserAuthorization`, what each condition means, and how to re-authorize. The user page shows a user rule. The reference lists the new kind, the new `GitHubApp` fields and the rule field.

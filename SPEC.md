@@ -25,7 +25,7 @@ This file is the authoritative reference. Each phase is done when its checklist 
 
 Non-negotiable. Tests enforce them, and only the owner can change them.
 
-1. **The private key never leaves githubgate, and a token goes only to GitHub.** An App's private key is used only to sign App JWTs sent to GitHub's API. Installation tokens are returned only to the caller they were minted for (token mode) or sent only to GitHub (proxy mode). No key or token is ever logged or put in status, events, metrics or errors.
+1. **The private key never leaves githubgate, and a token goes only to GitHub.** An App's private key is used only to sign App JWTs sent to GitHub's API. Installation tokens are returned only to the caller they were minted for (token mode) or sent only to GitHub (proxy mode). User access tokens and refresh tokens (phase 4) are sent only to GitHub, never to a caller. No key or token is ever logged or put in status, events, metrics or errors.
 2. **A caller gets no more than its policy, and a policy no more than its installation's ceiling.** A token or request is allowed only when a `GitHubAccessPolicy` in the caller's own namespace names the caller's ServiceAccount, has an accepted rule covering every repository and permission involved, and that rule is inside the referenced `GitHubInstallation`'s ceiling and admitted by its `allowedNamespaces`. Repository scoping is always also enforced by GitHub, by minting tokens limited to the allowed repositories.
 3. **Fail closed.** If githubgate can't decide (token review unavailable, caches not synced, key missing or invalid, GitHub unreachable, rules that disagree), it denies. It never widens a token's repositories or permissions to make a request work.
 4. **Ordinary tools keep working.** `git` (through the credential helper) and `gh` (through the client) work as against GitHub, with no change to scripts beyond the documented setup.
@@ -57,8 +57,9 @@ API group `githubgate.soliddowant.dev`, version `v1alpha1`. All kinds are namesp
 
 | Kind | Who writes it, where | Spec |
 |---|---|---|
-| `GitHubApp` | admin, **admin namespaces only** | exactly one of `appID` (inline) or `appIDSecretRef` (key `app-id` by default), `privateKeySecretRef` (key `private-key.pem` by default), `allowedNamespaces` (who may create installations of it) |
+| `GitHubApp` | admin, **admin namespaces only** | exactly one of `appID` (inline) or `appIDSecretRef` (key `app-id` by default), at most one of `clientID` or `clientIDSecretRef` (key `client-id` by default; phase 4, needed only for user authorizations), `privateKeySecretRef` (key `private-key.pem` by default), `allowedNamespaces` (who may create installations of it) |
 | `GitHubInstallation` | admin, **admin namespaces only** | `appRef`, `owner` (the user or organisation login the App is installed on, as in `owner/repo`; githubgate finds the installation id), `ceiling` (list of `{repositories, permissions}`: the most any policy may get through it), `allowedNamespaces` (who may reference it from a policy) |
+| `GitHubUserAuthorization` (phase 4) | admin, **admin namespaces only** | `appRef`, `login` (the one GitHub user who may authorize it), `ceiling.operations` (exact REST operation ids: the most any policy may call as that user), `allowedNamespaces`; authorized once through GitHub's device flow, see "User access tokens" |
 | `GitHubAccessPolicy` | tenant, its own namespace | `serviceAccounts` (names in this namespace), `rules` (below) |
 
 **Admin namespaces** are set by the server flag `--admin-namespaces` (default: its own namespace). `GitHubApp` and `GitHubInstallation` objects elsewhere are ignored and rejected by the webhook, because a ceiling in a tenant's namespace would let the tenant raise it.
@@ -177,6 +178,10 @@ Responses are streamed back unchanged except for headers that would leak the ins
 
 Two opt-in fields of a rule's `proxy` block serve data that needs no credential, for VM workspaces under interception. With `publicRead`, a read-only REST or git fetch request for an owner outside the caller's installations, or a read-only REST request that names no repository and that the rules refuse, is sent with an installation token that has only `metadata: read`. That token reads public data and no private repository contents. With `webPaths`, a `GET` or `HEAD` on `github.com` that is not git smart HTTP is sent with no credential. Writes outside the installation, and the installation's own repositories, keep the rules above. `docs/design/phase-3.md` gives the details.
 
+### User access tokens (phase 4)
+
+Some resources belong to a user account (SSH signing keys, for example), and GitHub serves them only to a GitHub App's **user access token**. A `GitHubUserAuthorization` is authorized once by its user through GitHub's device flow, started by an annotation. githubgate stores the tokens in a Secret it owns in the admin namespace, and only the leader refreshes them, because refresh tokens are single-use. A policy rule with `userAuthorizationRef` instead of `installationRef` is proxy-only. It lists exact operation ids inside the authorization's ceiling, and only REST requests to `api.github.com` for those operations are sent with the user access token. Every other request is decided by the installation rules, and a user token never fills in for an installation token or the other way round. `docs/design/phase-4.md` gives the details.
+
 ### Signed commits (phase 2)
 
 GitHub marks a commit "Verified" when it creates the commit itself through its API with an App's token. `githubgate-client push <remote> <branch>` takes the local commits not yet on the remote branch and re-creates each one through GitHub's API (token or proxy mode), then resets the local branch to the signed commits. Commit ids change; messages, file contents and modes are kept. GitHub signs only commits the App itself authors, so the App's bot is the author and the original author is kept in a `Co-authored-by:` trailer. Plain `git push` keeps working and stays unsigned. It uses the Git Database REST API (checked live: Verified, and it keeps file modes and symlinks). Merge commits and submodule changes are refused.
@@ -193,7 +198,7 @@ A native sidecar (`githubgate-client intercept`) listens on the pod's loopback f
 
 ## 5. Security model
 
-- **RBAC:** create `TokenReview`; get/list/watch the three kinds and Namespaces cluster-wide; update their status; get/list/watch Secrets **in admin namespaces only**; leases. Nothing else.
+- **RBAC:** create `TokenReview`; get/list/watch the four kinds and Namespaces cluster-wide; update their status; get/list/watch Secrets **in admin namespaces only**, and from phase 4 create/update/patch there for the user-token Secrets it owns; leases. Nothing else.
 - **Who can change access:** only whoever can write `GitHubAccessPolicy` objects in a namespace (here: Flux from the infra repo). Callers need no Kubernetes RBAC at all. A compromised agent that commits to its own project repository gains nothing, because no policy lives there.
 - **Token mode trade-off:** a caller holds a real token for up to one hour, limited by repositories and permissions only. Finer limits (refs, operations) exist only in proxy mode.
 - **Threats in scope:** a caller asking for repositories, permissions or installations beyond its policy; a tenant raising its own ceiling; a stolen ServiceAccount token from another audience; replaying a token review result for a deleted ServiceAccount (30 s cache bound); leaking keys or tokens through logs, status, errors or metrics; in proxy mode, smuggling operations through GraphQL batching, aliases or unparseable documents, git pushes to refs outside `pushRefs`, and request paths that parse differently at githubgate and at GitHub.
@@ -201,7 +206,8 @@ A native sidecar (`githubgate-client intercept`) listens on the pod's loopback f
 
 ## 6. Won't do
 
-- GitHub Enterprise Server; OAuth Apps; user-to-server tokens; personal access tokens.
+- GitHub Enterprise Server; OAuth Apps; personal access tokens.
+- Handing user access tokens to callers (they are used in proxy mode only), the OAuth web flow, and more than one user per `GitHubUserAuthorization`.
 - Per-caller display names on issues, comments or PRs (GitHub has no such option for Apps), or attribution text added to them.
 - Revoking tokens already handed out when a policy changes.
 - Fine-grained limits in token mode.
@@ -217,6 +223,7 @@ Each phase ends with a release the owner can deploy, and is done when its checkl
 1. **Token mode** (`docs/acceptance/phase-1.md`): the three kinds with status and webhook, ServiceAccount auth, token API, multiple Apps and installations, HA, the client (`token`, `git-credential`, `gh`, `configure`), Helm chart, audit and metrics, a fake GitHub for tests, and a live test against a real test App. Usable result: CI release pipelines get `contents: write` tokens and PR pipelines read-only ones; workspaces use `git`/`gh` through the client.
 2. **Proxy mode and signed commits**: host impersonation for the three GitHub hosts, REST/GraphQL/git-push limits, `push` with Verified commits. Usable result: workspaces push and open PRs without ever seeing a GitHub token, and can't push to protected refs or create releases.
 3. **Transparent interception**: the sidecar, the injection webhook, and the same sidecar for KubeVirt VM workspaces. Usable result: no wrappers or helpers needed in pods or VMs.
+4. **User access tokens** (`docs/acceptance/phase-4.md`): `GitHubUserAuthorization`, device-flow authorization, refresh, and user rules in proxy mode. Usable result: the Coder provisioner adds and removes per-workspace SSH signing keys on the owner's account through the proxy, with no personal access token. Added at the owner's request (2026-11-21), which moved user-to-server tokens out of "Won't do".
 
 ## 8. Testing
 

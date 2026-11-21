@@ -69,6 +69,7 @@ test: ## Run unit tests: Go (race detector; GO_TEST_JSON=file also writes the go
 	./scripts/ci/publish-release_test.sh
 	./scripts/ci/ca-bundle_test.sh
 	./scripts/ci/release-assets_test.sh
+	./scripts/ci/github-api-check_test.py
 	./scripts/ci/upload-release-assets_test.py
 	./scripts/ci/tekton-release_test.py
 

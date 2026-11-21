@@ -22,9 +22,17 @@ spec:
     serviceAccountName: ci-release
   workspaces:
     # Shared by the step and dockerd at the same path, so the stage container
-    # can mount the checkout.
+    # can mount the checkout. It is a claim, not an emptyDir: github-release
+    # reads the assets publish built, and every task's pod gets its own
+    # emptyDir.
     - name: source
-      emptyDir: {}
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
   taskRunSpecs:
     # The stage runs inside the dind sidecar's cgroup: it cross-compiles four
     # binaries, scans them and assembles two images for two platforms. No CPU

@@ -112,6 +112,7 @@ spec:
                 exit 1
               fi
 #@pull_request }
+              export GITHUBGATE_REPO="{{ repo_owner }}/{{ repo_name }}"
               exec ./scripts/ci/stages.sh @EVENT@
         workspaces:
           - name: source

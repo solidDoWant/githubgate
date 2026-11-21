@@ -4,8 +4,8 @@
 # dind. Runs in the docker Task's step, from the checkout at $WS/src, where WS
 # is the Task's workspace: the step and dockerd see it at the same path.
 #
-#   scripts/ci/stages.sh pull_request|push
-#   RELEASE_VERSION=<version> scripts/ci/stages.sh release
+#   GITHUBGATE_REPO=<owner/name> scripts/ci/stages.sh pull_request|push
+#   GITHUBGATE_REPO=<owner/name> RELEASE_VERSION=<version> scripts/ci/stages.sh release
 #
 # A pull request runs the stages its changes need (scripts/ci/changes.py); a
 # push runs them all and then cleans the Docker storage that the cache
@@ -65,13 +65,6 @@ else
 	./scripts/ci/changed-files.sh >"$ci/changed-files"
 	stages=$(in_image ./scripts/ci/changes.py pull_request <"$ci/changed-files")
 fi
-if [ -z "$stages" ]; then
-	echo "no stage needs to run for these changes"
-	echo '[]' >"$ci/stages.json"
-	if [ -n "${DOCKER_TASK_OUTPUT:-}" ]; then cp "$ci/stages.json" "$DOCKER_TASK_OUTPUT"; fi
-	exit 0
-fi
-echo "stages: $stages"
 
 # What a stage needs to reach the container registries like this step's own
 # Docker CLI. The CI cluster sends registry traffic through its registrygate
@@ -91,6 +84,24 @@ fi
 if [ -f "${HOME:-/nonexistent}/.docker/config.json" ]; then
 	cp "$HOME/.docker/config.json" "$ci/docker/config.json"
 fi
+
+# Every run checks, from a stage container with the stage CA bundle, the way the
+# release stage reaches GitHub, that one read-only GitHub API request verifies,
+# so a broken bundle or interception fails a pull request, not a release.
+repo="${GITHUBGATE_REPO:?GITHUBGATE_REPO must name the repository (owner/name)}"
+if ! docker run --rm --network host -v "$WS:$WS" -w "$src" -e CI_CA="$ci/ca-bundle.crt" "$image" \
+	bash -c 'source /etc/devshell.sh && export SSL_CERT_FILE="$CI_CA" && exec ./scripts/ci/github-api-check.py "$1"' bash "$repo"; then
+	echo "a stage container cannot reach the GitHub API over verified TLS; see above" >&2
+	exit 1
+fi
+
+if [ -z "$stages" ]; then
+	echo "no stage needs to run for these changes"
+	echo '[]' >"$ci/stages.json"
+	if [ -n "${DOCKER_TASK_OUTPUT:-}" ]; then cp "$ci/stages.json" "$DOCKER_TASK_OUTPUT"; fi
+	exit 0
+fi
+echo "stages: $stages"
 
 # The Go caches live on dockerd's volume, which the cache promoter keeps after
 # a successful master push run.

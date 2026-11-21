@@ -33,7 +33,7 @@ Policies, chart values and clients of 0.5.0 work without a change.
 
 - A `publicRead` rule that names a repository that does not exist, or that the installation cannot reach, no longer breaks every public read of that caller. Before, each public read of that caller failed. ([#227](https://github.com/solidDoWant/githubgate/pull/227))
 
-Internal work: the release pipeline builds the release files and attaches them to the GitHub release. It runs as one task, which creates the GitHub release and uploads its files after it pushes the images and the chart. The release task now trusts the CA of githubgate's own proxy in CI, so the upload works ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231)).
+Internal work: the release pipeline builds the release files and attaches them to the GitHub release. It runs as one task, which creates the GitHub release and uploads its files after it pushes the images and the chart. The CI stages now trust the CA of githubgate's own proxy in real CI runs, so the upload to GitHub works. Each CI run now makes sure that a stage container can connect to `api.github.com` over verified TLS before any stage starts ([#218](https://github.com/solidDoWant/githubgate/pull/218), [#222](https://github.com/solidDoWant/githubgate/pull/222), [#226](https://github.com/solidDoWant/githubgate/pull/226), [#231](https://github.com/solidDoWant/githubgate/pull/231), [#234](https://github.com/solidDoWant/githubgate/pull/234)).
 
 ### Known issues
 

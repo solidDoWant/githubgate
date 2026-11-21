@@ -90,6 +90,13 @@ type GitHubUserAuthorizationStatus struct {
 	// +optional
 	LastRefreshTime *metav1.Time `json:"lastRefreshTime,omitempty"`
 
+	// RefreshRequestedAt is when a replica last saw GitHub refuse the
+	// stored access token. The leader refreshes at once when it is later
+	// than LastRefreshTime.
+	//
+	// +optional
+	RefreshRequestedAt *metav1.Time `json:"refreshRequestedAt,omitempty"`
+
 	// LastAuthorizeRequest is the last authorize annotation value that was
 	// handled. A flow starts only for a different value.
 	//

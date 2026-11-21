@@ -203,6 +203,15 @@ type fakeUserTokens struct {
 	mu     sync.Mutex
 	tokens map[types.NamespacedName]string
 	reason string
+	// refused lists the authorizations whose token GitHub refused.
+	refused []types.NamespacedName
+}
+
+func (f *fakeUserTokens) UserTokenRefused(_ context.Context, authorization *model.UserAuthorization) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.refused = append(f.refused, authorization.NamespacedName)
 }
 
 func (f *fakeUserTokens) UserToken(_ context.Context, authorization *model.UserAuthorization) (string, string, error) {
@@ -389,6 +398,8 @@ func TestProxyRefusesUserRuleRequestsWithoutAUsableToken(t *testing.T) {
 		name    string
 		prepare func(user *userProxy)
 		reason  string
+		// refused is how many times the leader is asked to refresh.
+		refused int
 	}{
 		{
 			name: "no stored token answers 503 naming the authorization",
@@ -403,7 +414,8 @@ func TestProxyRefusesUserRuleRequestsWithoutAUsableToken(t *testing.T) {
 			prepare: func(user *userProxy) {
 				user.userTokens.tokens = map[types.NamespacedName]string{ownerAuthorization.NamespacedName: "ghu_revokedEarly"}
 			},
-			reason: "GitHub refused its access token",
+			reason:  "GitHub refused its access token",
+			refused: 1,
 		},
 	}
 
@@ -427,6 +439,10 @@ func TestProxyRefusesUserRuleRequestsWithoutAUsableToken(t *testing.T) {
 
 			assert.Empty(t, user.tokens.decisions, "it never falls back to an installation token")
 			assert.Empty(t, user.github.SSHSigningKeys("octocat"))
+
+			user.userTokens.mu.Lock()
+			assert.Len(t, user.userTokens.refused, test.refused)
+			user.userTokens.mu.Unlock()
 
 			lines := user.auditLines(t)
 			require.Len(t, lines, 1)

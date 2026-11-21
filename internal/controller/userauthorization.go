@@ -132,7 +132,12 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 		case state == tokenValid:
 			// Only the leader runs this reconciler, so only the leader
 			// refreshes.
-			requeue = r.refreshStatus(req.NamespacedName, status, object.Generation, r.refreshIfDue(ctx, &object, authorization))
+			force, wait := wakeRefresh(status)
+			requeue = r.refreshStatus(req.NamespacedName, status, object.Generation, r.refreshIfDue(ctx, &object, authorization, force))
+
+			if wait > 0 && (requeue == 0 || wait < requeue) {
+				requeue = wait
+			}
 		case state == tokenSpecChanged:
 			setOutcome(&status.Conditions, object.Generation, ReasonSpecChanged,
 				"the stored token was authorized for another login, App or client ID; it is not used; set the annotation again")

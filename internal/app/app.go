@@ -364,7 +364,7 @@ func Run(ctx context.Context, config Config) error {
 			return errors.Join(err, api.Close(), health.Close())
 		}
 
-		forwarder, err := newForwarder(config, store, srv, userTokenReader{manager.GetClient()}, audit)
+		forwarder, err := newForwarder(config, store, srv, userTokenReader{reader: manager.GetClient(), refresh: controller.NewRefreshRequester(manager.GetClient()), log: manager.GetLogger().WithName("proxy")}, audit)
 		if err != nil {
 			return errors.Join(err, api.Close(), health.Close(), runOptions.Proxy.Close())
 		}
@@ -463,7 +463,22 @@ func newForwarder(config Config, store *model.Store, srv *server.Server, userTok
 // userTokenReader gives the proxy a user authorization's access token from
 // the manager's cache, so every replica serves what the leader stored.
 type userTokenReader struct {
-	reader client.Reader
+	reader  client.Reader
+	refresh *controller.RefreshRequester
+	log     logr.Logger
+}
+
+// UserTokenRefused asks the leader to refresh the authorization's token now.
+// It runs in the background so the response isn't delayed.
+func (u userTokenReader) UserTokenRefused(ctx context.Context, authorization *model.UserAuthorization) {
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		if err := u.refresh.Request(ctx, authorization.NamespacedName); err != nil {
+			u.log.Error(err, "could not ask the leader to refresh a refused user token", "authorization", authorization.String())
+		}
+	}()
 }
 
 func (u userTokenReader) UserToken(ctx context.Context, authorization *model.UserAuthorization) (string, string, error) {

@@ -263,6 +263,13 @@ spec:
                 description: ObservedGeneration is the generation the status describes.
                 format: int64
                 type: integer
+              refreshRequestedAt:
+                description: |-
+                  RefreshRequestedAt is when a replica last saw GitHub refuse the
+                  stored access token. The leader refreshes at once when it is later
+                  than LastRefreshTime.
+                format: date-time
+                type: string
               refreshTokenExpiresAt:
                 description: RefreshTokenExpiresAt is when the stored refresh token
                   expires.

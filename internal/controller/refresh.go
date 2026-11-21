@@ -162,8 +162,10 @@ type refreshOutcome struct {
 }
 
 // refreshIfDue refreshes object's token pair when its access token has less
-// than refreshBefore left, or at once when force is set. It decides from an uncached read, so it never
-// spends a refresh token that another write already replaced.
+// than refreshBefore left, or at once when force is set and an uncached read
+// of object still asks for a wake-up. It decides from uncached reads, so it
+// never spends a refresh token that another write already replaced, nor
+// answers one wake-up twice.
 func (r *userAuthorizationReconciler) refreshIfDue(
 	ctx context.Context,
 	object *githubgatev1alpha1.GitHubUserAuthorization,
@@ -178,6 +180,17 @@ func (r *userAuthorizationReconciler) refreshIfDue(
 	secret, state, tokens, err := getUserTokens(ctx, r.apiReader, object, authorization)
 	if err != nil {
 		return refreshOutcome{result: refreshFailed, message: "the token Secret could not be read"}
+	}
+
+	if force && state == tokenValid {
+		// The cached object may not hold the refresh time this leader wrote
+		// last, so a wake-up it already answered would refresh again.
+		var fresh githubgatev1alpha1.GitHubUserAuthorization
+		if err := r.apiReader.Get(ctx, name, &fresh); err != nil {
+			return refreshOutcome{result: refreshFailed, tokens: tokens, message: "the GitHubUserAuthorization could not be read"}
+		}
+
+		force, _ = wakeRefresh(&fresh.Status)
 	}
 
 	if state != tokenValid || (!force && time.Until(tokens.accessTokenExpiresAt) >= refreshBefore) {

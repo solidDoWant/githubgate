@@ -103,7 +103,10 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 
 	authorization, found := snapshot.UserAuthorization(req.NamespacedName)
 
-	var requeue time.Duration
+	var (
+		requeue   time.Duration
+		refreshed bool
+	)
 
 	switch {
 	case !found:
@@ -138,7 +141,9 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 			// refreshes.
 			failed := failedAttempt(status.Conditions)
 			force, wait := wakeRefresh(status)
-			requeue = r.refreshStatus(req.NamespacedName, status, object.Generation, r.refreshIfDue(ctx, &object, authorization, force))
+			outcome := r.refreshIfDue(ctx, &object, authorization, force)
+			refreshed = outcome.result == refreshOK
+			requeue = r.refreshStatus(req.NamespacedName, status, object.Generation, outcome)
 
 			if wait > 0 && (requeue == 0 || wait < requeue) {
 				requeue = wait
@@ -175,6 +180,10 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 
 	r.metrics.observe(req.NamespacedName, status)
 
+	if refreshed {
+		return reconcile.Result{RequeueAfter: requeue}, patchStatus(ctx, r.client, &object, status)
+	}
+
 	return reconcile.Result{RequeueAfter: requeue}, update(ctx, r.client, &object, &object.Status, status)
 }
 
@@ -209,6 +218,22 @@ func setAttemptFailed(status *githubgatev1alpha1.GitHubUserAuthorizationStatus, 
 	apimeta.SetStatusCondition(&status.Conditions, metav1.Condition{
 		Type: ConditionAuthorizationRequired, Status: metav1.ConditionFalse, Reason: reason, Message: message, ObservedGeneration: generation,
 	})
+}
+
+// patchStatus writes the status of a refresh that GitHub already answered.
+// The refresh token it spent is gone, so the write must not fail on a
+// replica's concurrent refreshRequestedAt patch: a merge patch without a
+// resourceVersion sends only the fields that changed and keeps that request.
+func patchStatus(
+	ctx context.Context,
+	c client.Client,
+	object *githubgatev1alpha1.GitHubUserAuthorization,
+	desired *githubgatev1alpha1.GitHubUserAuthorizationStatus,
+) error {
+	patch := client.MergeFrom(object.DeepCopy())
+	object.Status = *desired
+
+	return c.Status().Patch(ctx, object, patch)
 }
 
 func readyReason(conditions []metav1.Condition) string {

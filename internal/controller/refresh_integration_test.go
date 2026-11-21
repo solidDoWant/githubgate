@@ -426,4 +426,52 @@ func TestUserTokenRefresh(t *testing.T) {
 		assert.Never(t, func() bool { return e.refreshCount(t, object.Name, "ok") > 1 }, 2*time.Second, 100*time.Millisecond)
 		assert.Equal(t, 1.0, e.refreshCount(t, object.Name, "ok"))
 	})
+
+	t.Run("a status write while a woken refresh runs causes one refresh, and the refresh time is recorded", func(t *testing.T) {
+		object, _ := e.authorizeWithLifetime(t, "wokenrace", 0)
+		name := client.ObjectKeyFromObject(object)
+
+		// The token has 8 hours left, so nothing is due before the wake-up.
+		assert.Never(t, func() bool { return e.refreshCount(t, object.Name, "ok") > 0 }, time.Second, 100*time.Millisecond)
+
+		var grants atomic.Int64
+
+		// A second replica asks for a refresh while GitHub answers the first
+		// request's refresh.
+		e.onRefresh(t, func(http.ResponseWriter, *http.Request) bool {
+			if grants.Add(1) == 1 {
+				var current githubgatev1alpha1.GitHubUserAuthorization
+				assert.NoError(t, e.client.Get(t.Context(), name, &current))
+
+				// A later second than the first request's, so the patch
+				// always changes the object.
+				asked := time.Now().UTC().Truncate(time.Second)
+				if previous := current.Status.RefreshRequestedAt; previous != nil && !asked.After(previous.Time) {
+					asked = previous.Add(time.Second)
+				}
+
+				patch := client.MergeFrom(current.DeepCopy())
+				current.Status.RefreshRequestedAt = &metav1.Time{Time: asked}
+				assert.NoError(t, e.client.Status().Patch(t.Context(), &current, patch))
+			}
+
+			return false
+		})
+
+		require.NoError(t, controller.NewRefreshRequester(e.client).Request(t.Context(), name))
+
+		require.Eventually(t, func() bool { return grants.Load() >= 1 }, 30*time.Second, 50*time.Millisecond, "waiting for the woken refresh")
+
+		require.Eventually(t, func() bool {
+			var current githubgatev1alpha1.GitHubUserAuthorization
+			if err := e.client.Get(t.Context(), name, &current); err != nil {
+				return false
+			}
+
+			return current.Status.LastRefreshTime != nil
+		}, 30*time.Second, 50*time.Millisecond, "waiting for the refresh time")
+
+		assert.Never(t, func() bool { return grants.Load() > 1 }, 3*time.Second, 100*time.Millisecond, "more than one refresh")
+		assert.Equal(t, 1.0, e.refreshCount(t, object.Name, "ok"))
+	})
 }

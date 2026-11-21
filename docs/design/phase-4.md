@@ -222,11 +222,14 @@ The operator accepted every finding. Where this section and the text above diffe
 | wrong user | False, `WrongUser` | True, `WrongUser` |
 | flow lost (leader change or crash) | False, `FlowLost` | True, `FlowLost` |
 | authorized | True, `Ready` | False, `Authorized` |
+| re-authorization failed (`AuthorizationExpired`, `AuthorizationDenied`, `DeviceFlowDisabled`, `TokenExpiryDisabled`, `WrongUser` or `FlowLost`) while a valid token is stored | True, `Ready` (message names the stored login, the request and the failure) | False, the failure reason (same message) |
 | refresh failing, access token still valid | True, `Ready` (message says the refresh is failing) | False, `Authorized` |
 | refresh token refused | False, `RefreshTokenRevoked` | True, `RefreshTokenRevoked` |
 | spec changed after authorizing | False, `SpecChanged` | True, `SpecChanged` |
 | client ID missing / Secret missing / Secret invalid | False, `InvalidSpec` / `SecretUnavailable` / `SecretInvalid` | unchanged |
 | App not found / not Ready / not admitted | False, `RefNotFound` / `RefNotReady` / `NotAllowed` | unchanged |
+
+A failed re-authorization with a valid stored token keeps the token in use. Its outcome stays until a new flow starts or succeeds; a refresh does not replace it with `Authorized`. With no valid stored token, the rows above apply.
 
 `RefreshFailed` is message text only, not a reason. The refresh metric's `result` label takes the values `ok`, `failed` (transient), `revoked` and `conflict` (dropped because a newer pair was written).
 

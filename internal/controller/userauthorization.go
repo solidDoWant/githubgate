@@ -136,11 +136,16 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 		case state == tokenValid:
 			// Only the leader runs this reconciler, so only the leader
 			// refreshes.
+			failed := failedAttempt(status.Conditions)
 			force, wait := wakeRefresh(status)
 			requeue = r.refreshStatus(req.NamespacedName, status, object.Generation, r.refreshIfDue(ctx, &object, authorization, force))
 
 			if wait > 0 && (requeue == 0 || wait < requeue) {
 				requeue = wait
+			}
+
+			if ready := apimeta.FindStatusCondition(status.Conditions, ConditionReady); failed != "" && ready != nil && ready.Status == metav1.ConditionTrue {
+				setAttemptFailed(status, object.Generation, failed)
 			}
 		case state == tokenSpecChanged:
 			// The status is written either way; a failed clear is tried
@@ -171,6 +176,39 @@ func (r *userAuthorizationReconciler) Reconcile(ctx context.Context, req reconci
 	r.metrics.observe(req.NamespacedName, status)
 
 	return reconcile.Result{RequeueAfter: requeue}, update(ctx, r.client, &object, &object.Status, status)
+}
+
+// attemptFailures are the outcomes of a re-authorization that leave a valid
+// stored token in use; the failure stays visible until a new flow starts.
+var attemptFailures = map[string]bool{
+	ReasonAuthorizationExpired: true,
+	ReasonAuthorizationDenied:  true,
+	ReasonDeviceFlowDisabled:   true,
+	ReasonTokenExpiryDisabled:  true,
+	ReasonWrongUser:            true,
+	ReasonFlowLost:             true,
+}
+
+// failedAttempt returns the reason a finished flow failed with, or "".
+func failedAttempt(conditions []metav1.Condition) string {
+	if required := apimeta.FindStatusCondition(conditions, ConditionAuthorizationRequired); required != nil && attemptFailures[required.Reason] {
+		return required.Reason
+	}
+
+	return ""
+}
+
+// setAttemptFailed reports a failed flow while the stored token stays in
+// use: Ready stays true and AuthorizationRequired stays false, and both name
+// the failure.
+func setAttemptFailed(status *githubgatev1alpha1.GitHubUserAuthorizationStatus, generation int64, reason string) {
+	message := "the stored token of " + status.Login + " is still in use; the last authorization attempt (request " +
+		status.LastAuthorizeRequest + ") failed: " + reason
+
+	setReady(&status.Conditions, generation, true, model.ReasonReady, message)
+	apimeta.SetStatusCondition(&status.Conditions, metav1.Condition{
+		Type: ConditionAuthorizationRequired, Status: metav1.ConditionFalse, Reason: reason, Message: message, ObservedGeneration: generation,
+	})
 }
 
 func readyReason(conditions []metav1.Condition) string {

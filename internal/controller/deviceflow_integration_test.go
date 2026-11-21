@@ -194,6 +194,39 @@ func TestDeviceFlowAuthorization(t *testing.T) {
 		e.requireNoNewFlow(t, object)
 	})
 
+	t.Run("a re-authorization approved by another user keeps the stored token in use and keeps reporting WrongUser", func(t *testing.T) {
+		object, _ := e.authorizeWithLifetime(t, "reauthwrong", 0)
+		e.requireReady(t, object, func() []metav1.Condition { return object.Status.Conditions }, metav1.ConditionTrue, "Ready")
+
+		e.setAuthorizeAnnotation(t, object, "2")
+		require.Eventually(t, func() bool {
+			if err := e.client.Get(t.Context(), client.ObjectKeyFromObject(object), object); err != nil {
+				return false
+			}
+
+			return object.Status.Authorization != nil && object.Status.Authorization.Request == "2"
+		}, 30*time.Second, 100*time.Millisecond)
+		require.NoError(t, e.fake.ApproveDeviceCode(object.Status.Authorization.UserCode, "someone-else"))
+
+		kept := func() bool {
+			if err := e.client.Get(t.Context(), client.ObjectKeyFromObject(object), object); err != nil {
+				return false
+			}
+
+			ready := apimeta.FindStatusCondition(object.Status.Conditions, controller.ConditionReady)
+			required := apimeta.FindStatusCondition(object.Status.Conditions, controller.ConditionAuthorizationRequired)
+
+			return object.Status.Authorization == nil && ready != nil && required != nil &&
+				ready.Status == metav1.ConditionTrue && ready.Reason == "Ready" &&
+				required.Status == metav1.ConditionFalse && required.Reason == controller.ReasonWrongUser &&
+				strings.Contains(ready.Message, "still in use") && strings.Contains(ready.Message, "request 2")
+		}
+		require.Eventually(t, kept, 30*time.Second, 100*time.Millisecond)
+
+		assert.Never(t, func() bool { return !kept() }, 3*time.Second, 100*time.Millisecond, "the failed attempt was overwritten")
+		assert.NotNil(t, e.secretData(t, object.Name))
+	})
+
 	t.Run("a denied code stores nothing and reports AuthorizationDenied", func(t *testing.T) {
 		object := deviceAuthorization("denied")
 		e.create(t, object)

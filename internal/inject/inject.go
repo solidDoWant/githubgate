@@ -310,6 +310,7 @@ func removeOwn(pod *corev1.Pod, listen netip.AddrPort) {
 		})
 		if container.Name != SidecarName {
 			container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, ownTrustMount)
+			restrictReservedMounts(container)
 		}
 	}
 
@@ -319,6 +320,24 @@ func removeOwn(pod *corev1.Pod, listen netip.AddrPort) {
 
 	for index := range pod.Spec.Containers {
 		strip(&pod.Spec.Containers[index])
+	}
+}
+
+// restrictReservedMounts removes the mounts a container other than the
+// sidecar must never have, and makes the rest of its trust mounts read-only.
+// The webhook can't tell a forged injected annotation from a reinvocation, so
+// it applies this on every run: the token, state and extra CA volumes are only
+// for the sidecar, and a trust mount that others added must not be writable.
+func restrictReservedMounts(container *corev1.Container) {
+	container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool {
+		return mount.Name == tokenVolume || mount.Name == stateVolume || mount.Name == extraCAVolume
+	})
+
+	for index := range container.VolumeMounts {
+		if container.VolumeMounts[index].Name == trustVolume {
+			container.VolumeMounts[index].ReadOnly = true
+			container.VolumeMounts[index].RecursiveReadOnly = nil
+		}
 	}
 }
 

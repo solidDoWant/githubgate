@@ -438,6 +438,7 @@ func TestReinvocationKeepsTrustMountsAddedByOthers(t *testing.T) {
 	require.NotNil(t, twice)
 
 	virtiofs := twice.Spec.Containers[len(twice.Spec.Containers)-1]
+	shared.ReadOnly = true
 	assert.Contains(t, virtiofs.VolumeMounts, shared)
 	assert.Contains(t, virtiofs.VolumeMounts, corev1.VolumeMount{Name: "githubgate-trust", MountPath: trust, ReadOnly: true})
 
@@ -539,5 +540,37 @@ func TestNoProxyKeepsEnvFromValue(t *testing.T) {
 			assert.Equal(t, test.wantUp, upper)
 			assert.Equal(t, test.wantLow, lower)
 		})
+	}
+}
+
+func TestForgedInjectedAnnotationKeepsNoReservedMountsInWorkloads(t *testing.T) {
+	t.Parallel()
+
+	handler := newHandler(t)
+	pod := basePod()
+	pod.Annotations = map[string]string{"githubgate.soliddowant.dev/injected": "true"}
+	pod.Spec.InitContainers = append([]corev1.Container{{Name: "githubgate-intercept", Image: "ghcr.io/example/x@sha256:abc"}}, pod.Spec.InitContainers...)
+	pod.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{
+		{Name: "githubgate-trust", MountPath: "/rw-trust"},
+		{Name: "githubgate-token", MountPath: "/stolen-token"},
+		{Name: "githubgate-intercept-state", MountPath: "/stolen-state"},
+		{Name: "githubgate-extra-ca", MountPath: "/stolen-extra"},
+	}
+
+	response, out := review(t, handler, pod)
+	require.True(t, response.Allowed)
+
+	for _, group := range [][]corev1.Container{out.Spec.InitContainers, out.Spec.Containers} {
+		for _, container := range group {
+			for _, mount := range container.VolumeMounts {
+				if container.Name != "githubgate-intercept" {
+					assert.NotContains(t, []string{"githubgate-token", "githubgate-intercept-state", "githubgate-extra-ca"}, mount.Name, container.Name)
+				}
+
+				if mount.Name == "githubgate-trust" && container.Name != "githubgate-intercept" {
+					assert.True(t, mount.ReadOnly, "%s mounts trust at %s writable", container.Name, mount.MountPath)
+				}
+			}
+		}
 	}
 }

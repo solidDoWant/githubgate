@@ -574,3 +574,19 @@ func TestForgedInjectedAnnotationKeepsNoReservedMountsInWorkloads(t *testing.T) 
 		}
 	}
 }
+
+func TestForgedInjectedAnnotationCannotChooseInterceptorJoins(t *testing.T) {
+	forged := basePod()
+	forged.Annotations = map[string]string{"githubgate.soliddowant.dev/injected": "true"}
+	forged.Spec.InitContainers = append([]corev1.Container{{
+		Name: "githubgate-intercept", Image: "ghcr.io/example/client@sha256:abc",
+		Args:         []string{"intercept", "--join", "main/SSL_CERT_FILE=/var/run/githubgate/join/main/0/token"},
+		VolumeMounts: []corev1.VolumeMount{{Name: "githubgate-token", MountPath: "/var/run/githubgate/join/main/0"}},
+	}}, forged.Spec.InitContainers...)
+	forged.Spec.Volumes = append(forged.Spec.Volumes, corev1.Volume{Name: "githubgate-token",
+		VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{}}})
+	forged.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "/var/run/githubgate/trust/join/main/SSL_CERT_FILE"}}
+
+	response, _ := review(t, newHandler(t), forged)
+	assert.False(t, response.Allowed)
+}

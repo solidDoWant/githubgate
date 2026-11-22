@@ -91,7 +91,7 @@ func planJoin(pod *corev1.Pod, container *corev1.Container, variable string, env
 	}
 
 	if prior != nil && env.Value == planned.trustPath() {
-		return kept(prior, planned)
+		return kept(pod, prior, planned)
 	}
 
 	source := path.Clean(env.Value)
@@ -130,7 +130,7 @@ func planJoin(pod *corev1.Pod, container *corev1.Container, variable string, env
 }
 
 // kept finds the join the earlier run made for the same variable.
-func kept(prior *corev1.Container, planned join) (join, bool) {
+func kept(pod *corev1.Pod, prior *corev1.Container, planned join) (join, bool) {
 	prefix := planned.container + "/" + planned.variable + "="
 
 	for index := 0; index+1 < len(prior.Args); index++ {
@@ -140,6 +140,10 @@ func kept(prior *corev1.Container, planned join) (join, bool) {
 		}
 
 		for _, mount := range prior.VolumeMounts {
+			if !readableVolume(pod, mount.Name) {
+				continue
+			}
+
 			if source == mount.MountPath || strings.HasPrefix(source, mount.MountPath+"/") {
 				planned.source = source
 				planned.mount = mount
@@ -176,6 +180,10 @@ func nextIndex(taken []join, prior *corev1.Container, container string) string {
 // readableVolume reports whether the volume is one the interceptor can mount
 // the same way: ConfigMap, Secret, projected or emptyDir.
 func readableVolume(pod *corev1.Pod, name string) bool {
+	if slices.Contains(reservedNames, name) {
+		return false
+	}
+
 	index := slices.IndexFunc(pod.Spec.Volumes, func(volume corev1.Volume) bool { return volume.Name == name })
 	if index < 0 {
 		return false

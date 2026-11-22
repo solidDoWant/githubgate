@@ -418,6 +418,43 @@ func TestMutationIsIdempotentOnReinvocation(t *testing.T) {
 	})
 }
 
+func TestReinvocationKeepsTrustMountsAddedByOthers(t *testing.T) {
+	t.Parallel()
+
+	handler := newHandler(t)
+
+	_, once := review(t, handler, basePod())
+	require.NotNil(t, once)
+
+	// KubeVirt's launcher mutator shares the compute container's trust volume
+	// with the guest through a virtiofsd container that mounts it elsewhere.
+	shared := corev1.VolumeMount{Name: "githubgate-trust", MountPath: "/virtiofs-data/githubgate-trust"}
+	once.Spec.Containers = append(once.Spec.Containers, corev1.Container{
+		Name: "virtiofs-githubgate-trust", Image: "ghcr.io/example/v@sha256:abc",
+		VolumeMounts: []corev1.VolumeMount{{Name: "virtiofs-containers", MountPath: "/var/run/kubevirt/virtiofs-containers"}, shared},
+	})
+
+	_, twice := review(t, handler, once)
+	require.NotNil(t, twice)
+
+	virtiofs := twice.Spec.Containers[len(twice.Spec.Containers)-1]
+	assert.Contains(t, virtiofs.VolumeMounts, shared)
+	assert.Contains(t, virtiofs.VolumeMounts, corev1.VolumeMount{Name: "githubgate-trust", MountPath: trust, ReadOnly: true})
+
+	for _, container := range twice.Spec.Containers[:len(twice.Spec.Containers)-1] {
+		assert.Equal(t, once.Spec.Containers[0].VolumeMounts, container.VolumeMounts)
+	}
+
+	_, third := review(t, handler, twice)
+	require.NotNil(t, third)
+
+	twiceJSON, err := json.Marshal(twice.Spec)
+	require.NoError(t, err)
+	thirdJSON, err := json.Marshal(third.Spec)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(twiceJSON), string(thirdJSON))
+}
+
 func TestMutatedPodPassesRestrictedPodSecurity(t *testing.T) {
 	t.Parallel()
 

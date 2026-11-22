@@ -2,6 +2,36 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.7.1
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release fixes VM workspaces, which did not start when githubgate intercepted them. It also makes the injection webhook stricter about the mounts of its own volumes. It has the same product code as the candidate 0.7.1-rc.1 (a test version before the final release). Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.7.1 --namespace githubgate --create-namespace
+```
+
+Apps, installations, policies, user authorizations, chart values and clients of 0.7.0 work without a change.
+
+### Deployment
+
+- KubeVirt VM workspaces work again with interception. KubeVirt adds a mount of the trust volume `githubgate-trust` to share the trust directory with the guest. Before, the injection webhook replaced that mount when it ran a second time, so the VM did not start. Now the webhook keeps a mount of the trust volume that another webhook adds at a different path. The setup is in [VM workspaces](https://github.com/solidDoWant/githubgate/blob/master/docs/admin/interception-setup.md). ([#310](https://github.com/solidDoWant/githubgate/pull/310))
+
+### Security
+
+- The injection webhook now removes mounts of `githubgate-token`, `githubgate-intercept-state` and `githubgate-extra-ca` from workload containers each time it runs. It also makes each mount of `githubgate-trust` in a workload container read-only. Before, a pod that set the annotation `githubgate.soliddowant.dev/injected` itself kept these mounts. ([#316](https://github.com/solidDoWant/githubgate/pull/316))
+- The interceptor no longer copies a CA file from a volume of githubgate or from a volume that it cannot read. Before, a pod that set the annotation `githubgate.soliddowant.dev/injected` itself could make the interceptor copy a githubgate file into the trust directory, where every container can read it. ([#318](https://github.com/solidDoWant/githubgate/pull/318))
+
+### Fixes
+
+- If a CA variable, for example `SSL_CERT_FILE`, points to a file in a mount of the trust volume that githubgate did not add, the webhook now rejects the pod. Before, the interceptor read the file that it wrote itself, and the file grew on each sync. ([#315](https://github.com/solidDoWant/githubgate/pull/315))
+- If a container has a mount at `/var/run/githubgate/trust` that githubgate did not add, the webhook now rejects the pod. The reason starts with `githubgate: pod can't be intercepted` and names the container. Before, the pod had two mounts at the same path, and the API server rejected it with a general validation error. ([#317](https://github.com/solidDoWant/githubgate/pull/317))
+
+Internal work: a CI test no longer prints log lines for connections that it drops on purpose, and CI changes for CPU pinning and for pull request runs ([#309](https://github.com/solidDoWant/githubgate/pull/309), [#322](https://github.com/solidDoWant/githubgate/pull/322), [#323](https://github.com/solidDoWant/githubgate/pull/323)).
+
+### Known issues
+
+- In proxy mode, githubgate can refuse a GraphQL request with the wrong reason. This happens when an exact repository rule refuses the request, for example because of `pushRefs`, and only a pattern rule is left. The caller then gets `403 your proxy rules only use patterns; GraphQL needs exact repository names`. The refusal is correct, but the message does not name the real reason. ([#325](https://github.com/solidDoWant/githubgate/issues/325))
+
 ## 0.7.1-rc.1
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release is a candidate (a test version before the final release) for 0.7.1. It fixes VM workspaces, which did not start when githubgate intercepted them. It also makes the injection webhook stricter about the mounts of its own volumes. Install or upgrade with the Helm chart:

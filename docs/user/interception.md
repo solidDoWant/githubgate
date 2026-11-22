@@ -94,7 +94,7 @@ Interception sends all requests for `github.com` and `api.github.com` to githubg
 - `publicRead: true` lets read-only requests reach repositories of other owners: `git clone`, `git fetch`, `gh api repos/OWNER/REPO`, and nix flake inputs such as `github:NixOS/nixpkgs`. It also lets read-only API requests that name no repository through, for example users, search and the rate limit. githubgate sends these requests with a token that can read public data only. A private repository of another owner gets `404` from GitHub. A write to a repository outside your installation gets `403`. A read-only request that names the owner of your installation, for example `/orgs/OWNER/repos` or `/users/OWNER/repos`, still follows your rules.
 - `webPaths: true` lets `GET` and `HEAD` requests on `github.com` through, for example `curl -L https://github.com/OWNER/REPO/releases/latest/download/ASSET`. githubgate sends them with no credential and returns redirects to you unchanged.
 
-These settings do not change the repositories of your own installation. If your rule does not cover one of them, githubgate refuses the request. GraphQL requests keep the normal rules, so a GraphQL query about another owner's repository does not work. Use the REST API for it.
+These settings do not change the repositories of your own installation. If your rule does not cover one of them, githubgate refuses the request. GraphQL requests keep the normal rules, so a GraphQL query about another owner's repository does not work. Use the REST API for it. A GraphQL request uses only rules with exact repository names, and its token covers all of those repositories at their lowest common level. See [GraphQL requests](proxy-mode.md#graphql-requests).
 
 ## What interception does not cover
 

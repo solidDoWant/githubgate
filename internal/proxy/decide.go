@@ -347,6 +347,7 @@ func decideWithoutRepository(candidates []*model.Rule, request Decided) Decision
 	reasons := []string{}
 	allowing := []*model.Rule{}
 	owner := unescaped(request.Owner)
+	exactReasons := []string{}
 
 	for _, rule := range candidates {
 		if owner != "" && !strings.EqualFold(rule.Installation.Owner, owner) {
@@ -361,6 +362,10 @@ func decideWithoutRepository(candidates []*model.Rule, request Decided) Decision
 
 		if reason := refusedBy(rule, request); reason != "" {
 			reasons = append(reasons, reason)
+
+			if len(exactNames(rule)) > 0 {
+				exactReasons = append(exactReasons, reason)
+			}
 
 			continue
 		}
@@ -387,6 +392,14 @@ func decideWithoutRepository(candidates []*model.Rule, request Decided) Decision
 	}
 
 	if len(exact) == 0 {
+		// The exact-name rules are the ones GraphQL could use; when they
+		// refused the request, their reasons are the useful answer.
+		if len(exactReasons) > 0 {
+			slices.Sort(exactReasons)
+
+			return denied(strings.Join(slices.Compact(exactReasons), "; "))
+		}
+
 		return denied("your proxy rules only use patterns; GraphQL needs exact repository names")
 	}
 

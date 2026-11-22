@@ -39,7 +39,7 @@ render() {
 }
 
 mkdir -p .tekton
-render pull-request pull_request 'event == "pull_request" && target_branch == "master"'
+render pull-request pull_request 'event == "pull_request" && target_branch == "master" && body.action != "ready_for_review"'
 render push push 'event == "push" && target_branch == "master"'
 
 # The release PipelineRun has its own template, with no placeholders: only the

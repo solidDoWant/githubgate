@@ -114,7 +114,9 @@ func planJoin(pod *corev1.Pod, container *corev1.Container, variable string, env
 		}
 	}
 
-	if best == nil || best.SubPathExpr != "" || !readableVolume(pod, best.Name) {
+	// The trust volume holds the interceptor's own output; joining it would
+	// make the interceptor read the file it writes.
+	if best == nil || best.Name == trustVolume || best.SubPathExpr != "" || !readableVolume(pod, best.Name) {
 		return planned, false
 	}
 

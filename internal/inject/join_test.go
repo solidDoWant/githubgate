@@ -246,3 +246,19 @@ func TestNamespaceExtraCA(t *testing.T) {
 		assert.False(t, response.Allowed)
 	})
 }
+
+func TestRejectsCAVariableInsideForeignTrustMount(t *testing.T) {
+	t.Parallel()
+
+	handler := newHandler(t)
+	_, once := review(t, handler, basePod())
+	once.Spec.Containers = append(once.Spec.Containers, corev1.Container{
+		Name: "late", Image: "ghcr.io/example/v@sha256:abc",
+		Env:          []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "/shared/join/late/SSL_CERT_FILE"}},
+		VolumeMounts: []corev1.VolumeMount{{Name: "githubgate-trust", MountPath: "/shared"}},
+	})
+
+	response, _ := review(t, handler, once)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "container \"late\" sets SSL_CERT_FILE to a file githubgate can't read")
+}

@@ -289,6 +289,14 @@ func ownTrustValue(name, value string) bool {
 	return name == "GH_TOKEN" && value == "githubgate"
 }
 
+// ownTrustMount reports whether mount is the trust mount the webhook adds to
+// a workload container. Another mount of the trust volume, such as the one
+// KubeVirt adds to share it with a VM guest over virtiofs, belongs to whoever
+// added it and is kept.
+func ownTrustMount(mount corev1.VolumeMount) bool {
+	return mount.Name == trustVolume && mount.MountPath == trustDir && mount.SubPath == "" && mount.SubPathExpr == ""
+}
+
 // removeOwn removes the trust variables and mounts the webhook added, and
 // the host alias, so a reinvocation starts from what others left. The
 // sidecar and its volumes stay for the sidecar-presence check; mutate
@@ -300,9 +308,9 @@ func removeOwn(pod *corev1.Pod, listen netip.AddrPort) {
 		container.Env = slices.DeleteFunc(container.Env, func(env corev1.EnvVar) bool {
 			return env.ValueFrom == nil && ownTrustValue(env.Name, env.Value)
 		})
-		container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool {
-			return mount.Name == trustVolume && container.Name != SidecarName
-		})
+		if container.Name != SidecarName {
+			container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, ownTrustMount)
+		}
 	}
 
 	for index := range pod.Spec.InitContainers {
@@ -472,7 +480,7 @@ func prepare(container *corev1.Container, joins []join) {
 		container.Env = append(container.Env, corev1.EnvVar{Name: "GH_TOKEN", Value: "githubgate"})
 	}
 
-	container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == trustVolume })
+	container.VolumeMounts = slices.DeleteFunc(container.VolumeMounts, ownTrustMount)
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: trustVolume, MountPath: trustDir, ReadOnly: true})
 }
 

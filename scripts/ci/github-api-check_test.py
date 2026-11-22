@@ -57,6 +57,15 @@ class FakeGitHub(http.server.BaseHTTPRequestHandler):
 
 
 @unittest.skipUnless(shutil.which("go"), "go is needed to make the fake's certificate")
+class QuietServer(http.server.ThreadingHTTPServer):
+    """Ignores the connections a client drops on purpose (a failed TLS handshake)."""
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionError, ssl.SSLError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class GitHubAPICheckTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -73,7 +82,7 @@ class GitHubAPICheckTest(unittest.TestCase):
     def setUp(self):
         FakeGitHub.status = 200
         FakeGitHub.body = {"full_name": "o/r"}
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeGitHub)
+        self.server = QuietServer(("127.0.0.1", 0), FakeGitHub)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(self.cert, self.key)
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)

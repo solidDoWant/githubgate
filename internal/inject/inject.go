@@ -400,6 +400,12 @@ func reject(pod *corev1.Pod, injected bool) string {
 				}
 			}
 
+			for _, mount := range container.VolumeMounts {
+				if mount.MountPath == trustDir && !ownTrustMount(mount) {
+					return "container " + container.Name + " has a mount at " + trustDir + " that githubgate didn't add"
+				}
+			}
+
 			if !injected {
 				for _, mount := range container.VolumeMounts {
 					if slices.Contains(reservedNames, mount.Name) {

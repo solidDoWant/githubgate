@@ -87,6 +87,20 @@ Run it in a clone with a branch checked out. The client creates your new commits
 
 `push` refuses a merge commit, a submodule change and a detached `HEAD`. If the remote branch moved while `push` ran, nothing changes. Fetch, rebase and run `push` again.
 
+## GraphQL requests
+
+`gh pr create`, `gh pr view` and many other `gh` commands send GraphQL requests. GraphQL has no repository in its URL, so githubgate can not tell which repository a request is for. It does this instead:
+
+- It uses only the rules that name repositories exactly. A rule with a `*` pattern, for example `toolgate*`, does not count.
+- It mints one token that covers all of those repositories. The token gets the lowest permission level that your rules give across them.
+
+So one read-only rule can break writes for the others. Suppose a rule gives `pull_requests: write` on `app`, and another rule gives only `contents: read` on `plugins`. The token covers both repositories with `contents: read` only. `gh pr create` then fails with `Resource not accessible by integration`.
+
+To fix this, do one of these:
+
+- Put the read-only repositories in a rule that uses a `*` pattern, for example `toolgate*`. GraphQL ignores that rule.
+- Give all the exact repositories the same permissions.
+
 ## Read a refusal
 
 When your policy does not allow a request, githubgate answers with a status and a reason. The reason names the repository, the operation, the mutation or the ref. For an API request, the body is JSON with `message` and `error`.

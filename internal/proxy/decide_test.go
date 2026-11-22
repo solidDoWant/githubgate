@@ -327,6 +327,17 @@ func TestDecideAllowsOnlyWhatAllowingRulesGive(t *testing.T) {
 			expectedMessage: []string{"exact repository names"},
 		},
 		{
+			name: "GraphQL refused by the exact rule reports its reason, not the patterns-only message",
+			rules: []*model.Rule{
+				proxyRule("a", app1Installation, []string{"foo"}, write("pull_requests"), pushRefs("refs/heads/*/**")),
+				proxyRule("b", app1Installation, []string{"toolgate*"}, read("contents")),
+			},
+			request:         mutation("mergePullRequest"),
+			expectedStatus:  http.StatusForbidden,
+			expectedCode:    "denied",
+			expectedMessage: []string{`"mergePullRequest"`, "pushRefs"},
+		},
+		{
 			name: "GraphQL gets the exact repositories with their lowest common level",
 			rules: []*model.Rule{
 				proxyRule("a", app1Installation, []string{"foo", "foo-*"}, map[string]permissions.Level{"contents": permissions.LevelWrite, "issues": permissions.LevelRead}),

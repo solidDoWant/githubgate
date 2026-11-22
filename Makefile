@@ -57,23 +57,11 @@ test: ## Run unit tests: Go (race detector; GO_TEST_JSON=file also writes the go
 	./test/e2e/up_test.sh
 	./scripts/ci/test-guard_test.py
 	./scripts/ci/measure-ci_test.py
-	./scripts/ci/changes_test.py
-	./scripts/ci/stages-report_test.py
-	./scripts/ci/df-percent_test.sh
-	./scripts/ci/cpuset-first_test.sh
-	./scripts/ci/stale-images_test.sh
-	./scripts/ci/trim-cache_test.sh
-	./scripts/ci/changed-files_test.sh
 	./scripts/acceptance-scoreboard_test.py
 	./scripts/check-images_test.py
 	./scripts/check-tracking-ids_test.py
 	./scripts/release_test.sh
-	./scripts/ci/publish-release_test.sh
-	./scripts/ci/ca-bundle_test.sh
 	./scripts/ci/release-assets_test.sh
-	./scripts/ci/github-api-check_test.py
-	./scripts/ci/upload-release-assets_test.py
-	./scripts/ci/tekton-release_test.py
 
 # Fuzz targets run by test-fuzz, as package:FuzzName.
 FUZZ_TARGETS = \

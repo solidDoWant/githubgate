@@ -4,7 +4,6 @@
 #   - CRD manifests into config/crd/bases (the chart reads them from there);
 #   - the manager's ClusterRole (from the +kubebuilder:rbac markers) into config/rbac/role.yaml;
 #   - the chart's CRD and ClusterRole templates (scripts/generate-chart.sh).
-#   - the Tekton CI PipelineRuns in .tekton/ (scripts/ci/tekton-generate.sh).
 #   - the permission catalogue in internal/permissions and the REST operation and
 #     GraphQL mutation catalogues in internal/operations (scripts/gen-permissions; needs network).
 # Generated code is committed and never edited by hand. Until api/ has types
@@ -26,8 +25,6 @@ controller-gen rbac:roleName=manager-role crd paths=./... \
 # The generated reference pages under docs/admin/.
 ./scripts/docs/generate-reference.sh
 
-# The Tekton CI PipelineRuns in .tekton/, from their template.
-./scripts/ci/tekton-generate.sh
 
 # The GitHub permission catalogue and the REST operation catalogue, from the
 # pinned REST API description, and the mutation catalogue from the pinned

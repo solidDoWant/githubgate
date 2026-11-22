@@ -135,6 +135,9 @@ func TestSkipAndReject(t *testing.T) {
 		"reserved token mount": {func(p *corev1.Pod) {
 			p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "githubgate-token"}}
 		}, "a mount is named githubgate-token"},
+		"foreign mount at trust directory": {func(p *corev1.Pod) {
+			p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "data", MountPath: "/var/run/githubgate/trust"}}
+		}, "container main has a mount at /var/run/githubgate/trust that githubgate didn't add"},
 		"listen without port":         {listenAnnotation("10.0.2.1"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1" isn't a specific IP with port 443`},
 		"listen on another port":      {listenAnnotation("10.0.2.1:8443"), `the githubgate.soliddowant.dev/listen annotation "10.0.2.1:8443" isn't a specific IP with port 443`},
 		"listen on 0.0.0.0":           {listenAnnotation("0.0.0.0:443"), `the githubgate.soliddowant.dev/listen annotation "0.0.0.0:443" isn't a specific IP with port 443`},
@@ -540,4 +543,17 @@ func TestNoProxyKeepsEnvFromValue(t *testing.T) {
 			assert.Equal(t, test.wantLow, lower)
 		})
 	}
+}
+
+func TestReinvocationRejectsForeignMountAtTrustDirectory(t *testing.T) {
+	t.Parallel()
+
+	handler := newHandler(t)
+	_, once := review(t, handler, basePod())
+	once.Spec.Containers[0].VolumeMounts = append(once.Spec.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: "githubgate-trust", MountPath: "/var/run/githubgate/trust", SubPath: "join"})
+
+	response, _ := review(t, handler, once)
+	require.False(t, response.Allowed)
+	assert.Equal(t, "githubgate: pod can't be intercepted: container main has a mount at /var/run/githubgate/trust that githubgate didn't add", response.Result.Message)
 }

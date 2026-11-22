@@ -1,0 +1,76 @@
+# CI for the shared Tekton Pipelines (infra-mk3's container images/ci-tools,
+# whose ci-config documents this format). Every stage runs at once, in the CI
+# image built from flake.nix.
+version: 1
+image:
+  inputs:
+    - path: go.mod
+      lines: '^(module|go|toolchain) '
+env:
+  E2E_CLUSTER: githubgate-ci
+# Files that cannot change what the build or the tests produce.
+not-code:
+  - "*.md"
+  - "docs/**"
+  - ".claude/**"
+  - "LICENSE"
+  - ".github/renovate.json5"
+  - ".github/renovate/**"
+stages:
+  lint:
+    run: make lint
+  unit:
+    run: make test && make build
+  fuzz:
+    # Two workers per target: all stages share the run's CPU budget, and four
+    # workers per target starved the lint and e2e stages.
+    run: make test-fuzz FUZZ_PARALLEL=2
+    # What the fuzz targets build from.
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "**/testdata/**"
+      - "Makefile"
+  generate:
+    run: make check-generate
+    own-tree: true
+  integration:
+    run: make test-integration
+  e2e:
+    run: make test-e2e
+    kind: true
+    # Builds the e2e images while the stage creates its kind cluster
+    # (test/e2e/up.sh waits for it).
+    with: ./test/e2e/build-images.sh
+    # Go test files are never built into what e2e deploys, except its own.
+    ignore:
+      - "**/*_test.go"
+      - "!test/e2e/**"
+  docs:
+    run: make docs-check && ./scripts/check-tracking-ids.py
+    # The style report is advisory.
+    run-pull-request: make docs-check && ./scripts/check-tracking-ids.py && { ./scripts/docs/style_report.sh origin/master || true; }
+    paths:
+      - "**/*.md"
+      - "scripts/docs/**"
+  scoreboard:
+    # The scoreboard's tests read the real checklist; the unit stage runs
+    # them too when code changed.
+    run: ./scripts/acceptance-scoreboard_test.py
+    paths:
+      - "docs/acceptance/**"
+    push: false
+cleanup:
+  # The kind node image and the e2e images to keep in the golden cache.
+  keep-images: ./scripts/ci/e2e-images.sh --node
+test-guard: true
+release:
+  assets: ./scripts/ci/build-release-assets.sh "$RELEASE_VERSION" "$RELEASE_ASSETS"
+  build: make build-images VERSION="$RELEASE_VERSION" PUSH_ALL=true
+  images:
+    - ghcr.io/soliddowant/githubgate
+    - ghcr.io/soliddowant/githubgate-client
+  charts:
+    - deploy/charts/githubgate
+  chart-registry: oci://ghcr.io/soliddowant/charts

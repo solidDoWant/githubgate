@@ -27,7 +27,7 @@ A release is public, and admins deploy it straight from the registries, so every
 - the Helm chart `oci://ghcr.io/soliddowant/charts/githubgate`, version `<version>`;
 - the GitHub release `v<version>`, whose notes are exactly the `## <version>` section of `CHANGELOG.md`. Never use GitHub's generated notes (`--generate-notes`).
 
-The tag starts the Tekton release PipelineRun (`.tekton/release.yaml`, generated from `scripts/ci/tekton-release.yaml.tmpl`). It runs as `ci-release`, builds and pushes the images and chart (`scripts/ci/publish-release.sh`), then the same task creates the GitHub release from the `## <version>` section of `CHANGELOG.md` and uploads its files, through githubgate. You push the tag and verify the result (step 6).
+The tag starts the Tekton release PipelineRun (`.tekton/release.yaml`, the shared release Pipeline). It runs as `ci-release`, builds and pushes what `ci.yaml`'s `release` lists (the assets, the images and the chart), then the same task creates the GitHub release from the `## <version>` section of `CHANGELOG.md` and uploads its files, through githubgate. You push the tag and verify the result (step 6).
 
 ## Hard limits
 

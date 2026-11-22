@@ -75,7 +75,7 @@ stat_dir=$(mktemp -d)
 cp /proc/stat "$stat_dir/before"
 sleep 1
 cp /proc/stat "$stat_dir/after"
-pinned=$(./scripts/ci/cpuset-first.sh "$available" "$cpus" "$stat_dir/before" "$stat_dir/after")
+pinned=$(./scripts/ci/cpuset-first.sh "$available" "$cpus" "$stat_dir/before" "$stat_dir/after" "$(hostname)")
 rm -rf "$stat_dir"
 cpuset=$(echo "$pinned" | head -n 1)
 busy=$(echo "$pinned" | sed -n 2p)

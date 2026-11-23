@@ -2,6 +2,30 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.7.2
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release gives the right reason when githubgate refuses a GraphQL request. It has the same product code as the candidate 0.7.2-rc.1 (a test version before the final release). Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.7.2 --namespace githubgate --create-namespace
+```
+
+Apps, installations, policies, user authorizations, chart values and clients of 0.7.1 work without a change.
+
+### Fixes
+
+- In proxy mode, when an exact repository rule refuses a GraphQL request, for example because of `pushRefs`, the caller now gets that rule's reason. Before, the caller got `403 your proxy rules only use patterns; GraphQL needs exact repository names`, which did not name the real reason. ([#327](https://github.com/solidDoWant/githubgate/pull/327))
+
+### Documentation
+
+- The docs explain that a GraphQL token covers all of the exact repositories in your rules, at the lowest access level among them. ([#330](https://github.com/solidDoWant/githubgate/pull/330))
+
+Internal work: the project's agents act as the GitHub App through githubgate interception, and CI now runs on the shared Tekton Pipelines ([#328](https://github.com/solidDoWant/githubgate/pull/328), [#331](https://github.com/solidDoWant/githubgate/pull/331)).
+
+### Known issues
+
+None.
+
 ## 0.7.2-rc.1
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release is a candidate (a test version before the final release) for 0.7.2. It gives the right reason when githubgate refuses a GraphQL request. It is also the first release built by the shared CI. Install or upgrade with the Helm chart:

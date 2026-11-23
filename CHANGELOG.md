@@ -2,6 +2,35 @@
 
 The release notes of githubgate. Each release has a `## <version>` section, written by the release manager when the release is cut.
 
+## 0.7.3-rc.1
+
+githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release is a candidate (a test version before the final release) for 0.7.3. It fixes paging and branch names with a slash in proxy mode, and it closes two security gaps that a review found in proxy mode. Install or upgrade with the Helm chart:
+
+```
+helm upgrade --install githubgate oci://ghcr.io/soliddowant/charts/githubgate --version 0.7.3-rc.1 --namespace githubgate --create-namespace
+```
+
+Apps, installations, policies, user authorizations, chart values and clients of 0.7.2 work without a change.
+
+### Proxy mode
+
+- Paging through a list past the first page now works. GitHub gives the link to the next page in the forms `/repositories/<id>/...`, `/organizations/<id>/...` and `/user/<id>/...`. The proxy refused these links with `unknown_operation`. Commands such as `gh api --paginate` and `gh issue list --limit 200` now get all pages. ([#340](https://github.com/solidDoWant/githubgate/pull/340), [#347](https://github.com/solidDoWant/githubgate/pull/347))
+- The proxy now accepts a branch name or a file path that has a slash written as `%2F`. An example is `gh pr merge --delete-branch` on a branch with a `/` in its name. The proxy applies the same rules as for the same name with a plain `/`. ([#341](https://github.com/solidDoWant/githubgate/pull/341))
+- When the proxy refuses a request, its audit line now has the `path` of the request and the names of its query parameters in `query`. Parts of the path that look like tokens are hidden, and the line has no query values. Admins can now find which request was refused. ([#343](https://github.com/solidDoWant/githubgate/pull/343))
+
+### Security
+
+- A request by repository ID (`/repositories/<id>/...`) never goes to a different repository now. Before, if a repository was renamed and a new repository took its old name, the request could go to the new repository. For a user rule, githubgate now asks GitHub for the current name of the repository before it sends the request. If GitHub cannot answer, githubgate refuses the request. ([#355](https://github.com/solidDoWant/githubgate/pull/355))
+- A caller can no longer find out which repository IDs an installation reaches. The proxy gave a different answer to a request by repository ID with a bad body when the installation reached the repository. ([#352](https://github.com/solidDoWant/githubgate/pull/352))
+- githubgate now keeps for one minute the answer that an installation does not reach a repository ID. Before, each refused request for such an ID cost one call to GitHub. ([#354](https://github.com/solidDoWant/githubgate/pull/354))
+- The audit line of a refused request now cuts long query parameter names. Before, a caller could make the line very long. ([#351](https://github.com/solidDoWant/githubgate/pull/351))
+
+Internal work: fixes to the project's agent scheduler and faster, more stable end-to-end tests in CI ([#345](https://github.com/solidDoWant/githubgate/pull/345), [#346](https://github.com/solidDoWant/githubgate/pull/346), [#357](https://github.com/solidDoWant/githubgate/pull/357)).
+
+### Known issues
+
+None.
+
 ## 0.7.2
 
 githubgate gives Kubernetes workloads limited GitHub access through GitHub Apps. A workload never gets the private key of an App. It proves who it is with the token of its ServiceAccount. This release gives the right reason when githubgate refuses a GraphQL request. It has the same product code as the candidate 0.7.2-rc.1 (a test version before the final release). Install or upgrade with the Helm chart:

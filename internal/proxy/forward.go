@@ -222,6 +222,20 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 
 			return
 		}
+
+		// A repository ID no installation reaches is refused before its
+		// body is read, so one that is reached but that no rule covers is
+		// decided before the body too: otherwise a body refusal would show
+		// that the installation reaches the ID. The body only narrows what
+		// is allowed, so a request denied without it is denied with it.
+		if !anyCovers(rules, classified) && !Decide(rules, Decided{Request: classified}).Allowed() {
+			failure = refuse(http.StatusForbidden, codeDenied, repositoryIDUncovered(classified.RepositoryID))
+			entry.decided = Decided{Request: classified}
+			entry.reason = failure.code
+			writeRefusal(recorder, classified.Host, graphQL, failure)
+
+			return
+		}
 	}
 
 	if classified.AccountID != 0 {

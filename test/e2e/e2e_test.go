@@ -654,7 +654,22 @@ done`, request)
 		pods := strings.Fields(c.kubectl(t, "", "get", "pods", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "-o", "jsonpath={.items[*].metadata.name}"))
 		require.Len(t, pods, 3, "the chart runs three replicas")
 
-		c.kubectl(t, "", "delete", "pod", "-n", gateNamespace, pods[0], "--grace-period=0", "--force", "--wait=false")
+		// A force-deleted leader cannot release its lease, so the leader-elected
+		// controllers would stall until it expires and slow the steps after this
+		// test. Delete a replica that does not hold the lease.
+		victim := pods[0]
+		holder, _ := c.tryKubectl(ctx, "", "get", "lease", "githubgate.githubgate.soliddowant.dev", "-n", gateNamespace, "-o", "jsonpath={.spec.holderIdentity}")
+
+		for _, name := range pods {
+			if !strings.HasPrefix(strings.TrimSpace(holder), name+"_") {
+				victim = name
+
+				break
+			}
+		}
+
+		t.Logf("lease holder %q, deleting %s", strings.TrimSpace(holder), victim)
+		c.kubectl(t, "", "delete", "pod", "-n", gateNamespace, victim, "--grace-period=0", "--force", "--wait=false")
 
 		before := count("ok")
 
@@ -669,7 +684,7 @@ done`, request)
 			}
 
 			for _, line := range lines {
-				if strings.HasPrefix(line, pods[0]+"=") || !strings.HasSuffix(line, "==True") {
+				if strings.HasPrefix(line, victim+"=") || !strings.HasSuffix(line, "==True") {
 					return false
 				}
 			}

@@ -31,7 +31,11 @@ type Token struct {
 	Token        string
 	ExpiresAt    time.Time
 	Repositories []string
-	Permissions  map[string]permissions.Level
+	// RepositoryIDs are the IDs of Repositories. GitHub binds a token to
+	// repository IDs, so it keeps reaching a renamed repository and never
+	// reaches a new one that takes the old name.
+	RepositoryIDs []int64
+	Permissions   map[string]permissions.Level
 }
 
 // accessTokenBody is built by hand rather than with go-github's
@@ -48,6 +52,7 @@ type accessTokenResponse struct {
 	ExpiresAt    time.Time         `json:"expires_at"`
 	Permissions  map[string]string `json:"permissions"`
 	Repositories []struct {
+		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	} `json:"repositories"`
 }
@@ -129,10 +134,12 @@ func checkToken(response accessTokenResponse, request MintRequest) (*Token, bool
 
 	got := make([]string, 0, len(response.Repositories))
 	names := make([]string, 0, len(response.Repositories))
+	ids := make([]int64, 0, len(response.Repositories))
 
 	for _, repository := range response.Repositories {
 		got = append(got, strings.ToLower(repository.Name))
 		names = append(names, repository.Name)
+		ids = append(ids, repository.ID)
 	}
 
 	slices.Sort(want)
@@ -158,7 +165,7 @@ func checkToken(response accessTokenResponse, request MintRequest) (*Token, bool
 		granted[name] = level
 	}
 
-	return &Token{Token: response.Token, ExpiresAt: response.ExpiresAt, Repositories: names, Permissions: granted}, true
+	return &Token{Token: response.Token, ExpiresAt: response.ExpiresAt, Repositories: names, RepositoryIDs: ids, Permissions: granted}, true
 }
 
 // probeRateLimit reads the installation's remaining rate limit with the new

@@ -306,6 +306,18 @@ func (s *Server) ProxyToken(ctx context.Context, caller auth.Identity, decision 
 		}
 	}
 
+	// A request by repository ID was decided as the name cached for the ID.
+	// When the token doesn't reach that ID, the repository was renamed and
+	// another one took its name: the request must not reach that one. The
+	// stale name is dropped so the next request names the ID again.
+	if decision.RepositoryID != 0 && !slices.Contains(token.RepositoryIDs, decision.RepositoryID) {
+		s.repositoryNames.forget(decision.RepositoryID)
+
+		return "", githubStatus, &proxy.TokenError{
+			Status: http.StatusForbidden, Code: reasonDenied, Message: proxy.RepositoryIDUncovered(decision.RepositoryID),
+		}
+	}
+
 	return token.Token, githubStatus, nil
 }
 

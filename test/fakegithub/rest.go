@@ -230,6 +230,7 @@ func (s *Server) handleAccessTokens(writer http.ResponseWriter, request *http.Re
 	slices.Sort(repoNames)
 
 	now := s.nowLocked()
+
 	issued := IssuedToken{
 		Token:          newToken(),
 		InstallationID: inst.ID,
@@ -237,6 +238,10 @@ func (s *Server) handleAccessTokens(writer http.ResponseWriter, request *http.Re
 		Permissions:    perms,
 		ExpiresAt:      now.Add(s.tokenLifetime).UTC(),
 	}
+	for _, name := range repoNames {
+		issued.RepositoryIDs = append(issued.RepositoryIDs, s.repos[inst.Owner+"/"+name].ID)
+	}
+
 	s.tokens = append(s.tokens, issued)
 	s.mints = append(s.mints, MintEntry{InstallationID: inst.ID, Repositories: issued.Repositories, Permissions: perms, Time: now})
 
@@ -277,10 +282,12 @@ type need struct{ perm, level string }
 type tokenContext struct {
 	issued IssuedToken
 	owner  string
+	// repos are the current names of the repositories the token reaches.
+	repos []string
 }
 
 func (c tokenContext) hasRepo(owner, name string) bool {
-	return owner == c.owner && slices.Contains(c.issued.Repositories, name)
+	return owner == c.owner && slices.Contains(c.repos, name)
 }
 
 func (c tokenContext) hasPermission(perm, level string) bool {
@@ -301,7 +308,15 @@ func (s *Server) lookupToken(raw string) (tokenContext, bool) {
 				return tokenContext{}, false
 			}
 
-			return tokenContext{issued: issued, owner: inst.Owner}, true
+			var repos []string
+
+			for _, repo := range s.repos {
+				if repo.Owner == inst.Owner && slices.Contains(issued.RepositoryIDs, repo.ID) {
+					repos = append(repos, repo.Name)
+				}
+			}
+
+			return tokenContext{issued: issued, owner: inst.Owner, repos: repos}, true
 		}
 	}
 

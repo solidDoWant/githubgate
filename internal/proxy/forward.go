@@ -69,6 +69,9 @@ type RepositoryResolver interface {
 	// as one of installations sees it, or ErrRepositoryNotFound when none of
 	// them reaches it. Any other error means it can't be decided now.
 	RepositoryName(ctx context.Context, installations []*model.Installation, id int64) (owner, name string, err error)
+	// RepositoryNameNow is RepositoryName asked of GitHub rather than a
+	// cache, for a request no installation token checks the ID of.
+	RepositoryNameNow(ctx context.Context, installations []*model.Installation, id int64) (owner, name string, err error)
 }
 
 // ErrAccountNotFound is an account ID that none of the installations given
@@ -229,7 +232,7 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		// that the installation reaches the ID. The body only narrows what
 		// is allowed, so a request denied without it is denied with it.
 		if !anyCovers(rules, classified) && !Decide(rules, Decided{Request: classified}).Allowed() {
-			failure = refuse(http.StatusForbidden, codeDenied, repositoryIDUncovered(classified.RepositoryID))
+			failure = refuse(http.StatusForbidden, codeDenied, RepositoryIDUncovered(classified.RepositoryID))
 			entry.decided = Decided{Request: classified}
 			entry.reason = failure.code
 			writeRefusal(recorder, classified.Host, graphQL, failure)
@@ -270,7 +273,7 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		if classified.RepositoryID != 0 && !anyCovers(rules, classified) {
 			// The caller asked by ID: don't tell it the name of a
 			// repository none of its rules names.
-			decision.Message = repositoryIDUncovered(classified.RepositoryID)
+			decision.Message = RepositoryIDUncovered(classified.RepositoryID)
 		}
 
 		if decided.push != nil {
@@ -292,11 +295,19 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 	}
 
 	if decision.Access == AccessUser {
+		if failure := f.confirmRepositoryID(request.Context(), rules, classified); failure != nil {
+			entry.reason = failure.code
+			writeRefusal(recorder, classified.Host, graphQL, failure)
+
+			return
+		}
+
 		f.forwardAsUser(recorder, request, classified, decision, entry)
 
 		return
 	}
 
+	decision.RepositoryID = classified.RepositoryID
 	token, githubStatus, err := f.options.Tokens.ProxyToken(request.Context(), caller, decision)
 	entry.githubStatus = githubStatus
 
@@ -326,7 +337,7 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 // forwarded, so GitHub gets exactly the request that was decided. A
 // repository no installation reaches is refused like one no rule covers.
 func (f *HTTPForwarder) resolveRepositoryID(ctx context.Context, rules []*model.Rule, classified Request) (Request, *refusal) {
-	uncovered := refuse(http.StatusForbidden, codeDenied, repositoryIDUncovered(classified.RepositoryID))
+	uncovered := refuse(http.StatusForbidden, codeDenied, RepositoryIDUncovered(classified.RepositoryID))
 	installations := rulesInstallations(rules)
 
 	if f.options.Repositories == nil || len(installations) == 0 {
@@ -348,6 +359,30 @@ func (f *HTTPForwarder) resolveRepositoryID(ctx context.Context, rules []*model.
 	classified.Path = "/repos/" + classified.Owner + "/" + classified.Repo + strings.TrimPrefix(classified.Path, prefix)
 
 	return classified, nil
+}
+
+// confirmRepositoryID checks with GitHub that a /repositories/{id}/...
+// request's ID still names the repository it was decided as. A user access
+// token reaches every repository the user can, so unlike an installation
+// token it can't show that a cached name is stale: a renamed repository's
+// old name may since name another repository.
+func (f *HTTPForwarder) confirmRepositoryID(ctx context.Context, rules []*model.Rule, classified Request) *refusal {
+	if classified.RepositoryID == 0 {
+		return nil
+	}
+
+	owner, name, err := f.options.Repositories.RepositoryNameNow(ctx, rulesInstallations(rules), classified.RepositoryID)
+
+	switch {
+	case errors.Is(err, ErrRepositoryNotFound):
+	case err != nil || owner == "" || name == "":
+		return refuse(http.StatusServiceUnavailable, codeGitHubUnavailable,
+			fmt.Sprintf("repository ID %d can't be looked up now; try again", classified.RepositoryID))
+	case strings.EqualFold(url.PathEscape(owner), classified.Owner) && strings.EqualFold(url.PathEscape(name), classified.Repo):
+		return nil
+	}
+
+	return refuse(http.StatusForbidden, codeDenied, RepositoryIDUncovered(classified.RepositoryID))
 }
 
 // resolveAccountID turns a /organizations/{id}/... or /user/{id}/...
@@ -395,7 +430,9 @@ func rulesInstallations(rules []*model.Rule) []*model.Installation {
 	return installations
 }
 
-func repositoryIDUncovered(id int64) string {
+// RepositoryIDUncovered is the refusal message of a repository ID no rule
+// covers; it names only the ID.
+func RepositoryIDUncovered(id int64) string {
 	return fmt.Sprintf("repository ID %d: it is not covered by any of your proxy rules", id)
 }
 

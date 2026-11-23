@@ -451,12 +451,13 @@ func newForwarder(config Config, store *model.Store, srv *server.Server, userTok
 
 			return snapshot.Rules(namespace, serviceAccount)
 		},
-		Tokens:     srv,
-		UserTokens: userTokens,
-		Upstreams:  upstreams,
-		Transport:  transport,
-		Audit:      audit,
-		Count:      srv.CountProxy,
+		Tokens:       srv,
+		UserTokens:   userTokens,
+		Repositories: srv,
+		Upstreams:    upstreams,
+		Transport:    transport,
+		Audit:        audit,
+		Count:        srv.CountProxy,
 	})
 }
 

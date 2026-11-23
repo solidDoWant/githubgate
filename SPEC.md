@@ -174,6 +174,8 @@ githubgate also serves `api.github.com` (REST and GraphQL), `uploads.github.com`
 - **GraphQL mutations**, by name, `allowMutations` / `denyMutations` (queries are allowed within the permissions); documents are parsed with a maintained GraphQL parser, and one that can't be parsed is denied;
 - **git pushes**: `pushRefs` globs that every ref update in a `git-receive-pack` request must match (e.g. `refs/heads/agent/**`), checked from the pkt-line command list before any pack data is forwarded.
 
+GitHub's pagination links name a repository by its numeric ID, in the form `/repositories/{id}/...`. githubgate looks the ID up through the installations of the caller's rules, keeps the name for a short time, and then decides and forwards the request as the `/repos/{owner}/{repo}/...` request of the same operation. An ID that no installation of the caller reaches, or that no rule covers, is refused like a repository that no rule covers. The refusal does not name the repository.
+
 Responses are streamed back unchanged except for headers that would leak the installation token.
 
 Two opt-in fields of a rule's `proxy` block serve data that needs no credential, for VM workspaces under interception. With `publicRead`, a read-only REST or git fetch request for an owner outside the caller's installations, or a read-only REST request that names no repository and that the rules refuse, is sent with an installation token that has only `metadata: read`. That token reads public data and no private repository contents. With `webPaths`, a `GET` or `HEAD` on `github.com` that is not git smart HTTP is sent with no credential. Writes outside the installation, and the installation's own repositories, keep the rules above. `docs/design/phase-3.md` gives the details.

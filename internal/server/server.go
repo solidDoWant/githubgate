@@ -62,6 +62,9 @@ type Server struct {
 	tokens   *tokenCache
 	draining atomic.Bool
 
+	// repositoryNames names the repository IDs of proxy requests.
+	repositoryNames repositoryNames
+
 	// publicReadNames remembers, per caller and installation, the one
 	// repository a public-read token was last minted for after the mint for
 	// all of them was refused.

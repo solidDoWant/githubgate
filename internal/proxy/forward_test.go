@@ -102,6 +102,13 @@ type forwardingProxy struct {
 func newForwardingProxy(t *testing.T, rules ...*model.Rule) *forwardingProxy {
 	t.Helper()
 
+	return newForwardingProxyWith(t, nil, rules...)
+}
+
+// newForwardingProxyWith is newForwardingProxy with a repository resolver.
+func newForwardingProxyWith(t *testing.T, repositories proxy.RepositoryResolver, rules ...*model.Rule) *forwardingProxy {
+	t.Helper()
+
 	upstream := &fakeUpstream{}
 	server := httptest.NewTLSServer(upstream)
 	t.Cleanup(server.Close)
@@ -121,11 +128,12 @@ func newForwardingProxy(t *testing.T, rules ...*model.Rule) *forwardingProxy {
 	logger := slog.New(slog.NewJSONHandler(&lockedWriter{writer: audit}, nil))
 
 	forwarder, err := proxy.NewForwarder(proxy.ForwarderOptions{
-		Rules:     func(string, string) []*model.Rule { return rules },
-		Tokens:    tokens,
-		Upstreams: proxy.Upstreams{API: at("/api"), Uploads: at("/uploads"), Git: at("/git")},
-		Transport: server.Client().Transport,
-		Audit:     logger,
+		Rules:        func(string, string) []*model.Rule { return rules },
+		Tokens:       tokens,
+		Repositories: repositories,
+		Upstreams:    proxy.Upstreams{API: at("/api"), Uploads: at("/uploads"), Git: at("/git")},
+		Transport:    server.Client().Transport,
+		Audit:        logger,
 	})
 	require.NoError(t, err)
 

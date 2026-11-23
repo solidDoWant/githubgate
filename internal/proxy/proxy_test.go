@@ -387,6 +387,21 @@ func TestProxyRefusesAmbiguousPaths(t *testing.T) {
 		"*",
 		"/repos/o/foo?a=%zz",
 		"/repos/o/foo?a=1;b=2",
+		"/repos/o/foo/issues/1%2F2",
+		"/repos/o/foo%2Fcontents/a",
+		"/repos/o%2Ffoo/contents/a%2Fb",
+		"/repos/o/foo/contents/a%2F..%2Fb",
+		"/repos/o/foo/contents/a%2F.%2Fb",
+		"/repos/o/foo/contents/a%2F%2e%2e%2Fb",
+		"/repos/o/foo/contents/a%2F%2Fb",
+		"/repos/o/foo/contents/a%2F",
+		"/repos/o/foo/contents/%2Fa",
+		"/repos/o/foo/contents/a%5Cb",
+		"/repos/o/foo/contents/a%2Fb%5Cc",
+		"/repos/o/foo/contents/a%2Fb%",
+		"/repos/o/foo/contents/a%2Fb%2",
+		"/repos/o/foo/contents/a%%2Fb",
+		"/repos/o/foo/branches/main%2Fprotection",
 	}
 
 	for _, target := range refused {
@@ -397,6 +412,78 @@ func TestProxyRefusesAmbiguousPaths(t *testing.T) {
 
 			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 			assert.Zero(t, forwarder.count())
+		})
+	}
+}
+
+func TestProxyRefusesEncodedSlashesInGitHubComPaths(t *testing.T) {
+	for _, target := range []string{"/acme%2Ffoo.git/info/refs?service=git-upload-pack", "/acme/foo%2Fbar", "/repos/o/foo/contents/a%2Fb"} {
+		t.Run(target, func(t *testing.T) {
+			handler, forwarder := newHandler(t)
+
+			response := serve(handler, authenticated(http.MethodGet, proxy.HostGit, target))
+
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Zero(t, forwarder.count())
+		})
+	}
+}
+
+func TestProxyDecodesEncodedSlashesInASlashParameter(t *testing.T) {
+	tests := []struct {
+		name      string
+		host      string
+		method    string
+		target    string
+		operation string
+		path      string
+	}{
+		{
+			name: "a ref deleted by gh pr merge --delete-branch", host: proxy.HostAPI, method: http.MethodDelete,
+			target: "/repos/o/foo/git/refs/heads%2Frenovate%2Fgo-modules", operation: "git/delete-ref",
+			path: "/repos/o/foo/git/refs/heads/renovate/go-modules",
+		},
+		{
+			name: "lower-case hex", host: proxy.HostAPI, method: http.MethodPatch,
+			target: "/repos/o/foo/git/refs/heads%2fagent%2fx", operation: "git/update-ref",
+			path: "/repos/o/foo/git/refs/heads/agent/x",
+		},
+		{
+			name: "some slashes encoded", host: proxy.HostAPI, method: http.MethodGet,
+			target: "/repos/o/foo/git/ref/heads/agent%2Fx", operation: "git/get-ref",
+			path: "/repos/o/foo/git/ref/heads/agent/x",
+		},
+		{
+			name: "a file path keeps its other escapes", host: proxy.HostAPI, method: http.MethodGet,
+			target: "/repos/o/foo/contents/docs%2Fa%20b.md?ref=main", operation: "repos/get-content",
+			path: "/repos/o/foo/contents/docs/a%20b.md",
+		},
+		{
+			name: "a double-encoded slash next to an encoded one is left encoded", host: proxy.HostAPI, method: http.MethodDelete,
+			target: "/repos/o/foo/git/refs/heads%2Fa%252Fb", operation: "git/delete-ref",
+			path: "/repos/o/foo/git/refs/heads/a%252Fb",
+		},
+		{
+			name: "a double-encoded slash is decoded once by GitHub only", host: proxy.HostAPI, method: http.MethodDelete,
+			target: "/repos/o/foo/git/refs/heads%252Fagent", operation: "git/delete-ref",
+			path: "/repos/o/foo/git/refs/heads%252Fagent",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler, forwarder := newHandler(t)
+
+			response := serve(handler, authenticated(test.method, test.host, test.target))
+
+			require.Equal(t, http.StatusTeapot, response.Code, response.Body.String())
+
+			classified := forwarder.requests[0]
+			assert.Equal(t, proxy.KindREST, classified.Kind)
+			assert.Equal(t, test.operation, classified.Operation)
+			assert.Equal(t, "o", classified.Owner)
+			assert.Equal(t, "foo", classified.Repo)
+			assert.Equal(t, test.path, classified.Path)
 		})
 	}
 }

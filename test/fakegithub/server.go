@@ -311,6 +311,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/commits/{sha}", s.withToken(contentsRead, s.handleGetCommit))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/git/refs", s.withToken(contentsWrite, s.handleCreateRef))
 	mux.HandleFunc("PATCH /repos/{owner}/{repo}/git/refs/{ref...}", s.withToken(contentsWrite, s.handleUpdateRef))
+	mux.HandleFunc("DELETE /repos/{owner}/{repo}/git/refs/{ref...}", s.withToken(contentsWrite, s.handleDeleteRef))
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/{ref...}", s.withToken(contentsRead, s.handleGetRef))
 	mux.HandleFunc("POST /graphql", s.withToken(nil, s.handleGraphQL))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", s.withToken(&need{perm: "issues", level: "write"}, s.handleIssueComment))

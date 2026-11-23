@@ -109,7 +109,8 @@ func classify(host string, request *http.Request) (Request, *refusal) {
 
 	rawPath, rawQuery, _ := strings.Cut(request.RequestURI, "?")
 
-	if err := checkPath(rawPath); err != nil {
+	rawPath, err := requestPath(host, request.Method, rawPath)
+	if err != nil {
 		return Request{}, refuse(http.StatusBadRequest, codeInvalidRequest, "the request path is not accepted: "+err.Error())
 	}
 
@@ -283,6 +284,74 @@ func refuseGzippedBody(request *http.Request, classified Request) *refusal {
 	return nil
 }
 
+var (
+	errEncodedSlash = errors.New("it has an encoded slash or backslash")
+	errSlashMoved   = errors.New("its encoded slashes change how it is read")
+)
+
+// requestPath checks an escaped request path and returns the path the proxy
+// decides on and forwards. Clients such as gh and go-github escape the "/"
+// in a ref or a file path, and GitHub accepts that. So a REST path may have
+// an encoded "/" inside the value of its operation's slash parameter, and
+// nowhere else; those slashes are decoded, and the decoded path must pass
+// every check again and match the same operation with the same other
+// parameters. The rules, the audit line and GitHub then all see one path.
+func requestPath(host, method, rawPath string) (string, error) {
+	err := checkPath(rawPath)
+	if !errors.Is(err, errEncodedSlash) || host == HostGit {
+		return rawPath, err
+	}
+
+	match, ok := operations.MatchREST(method, rawPath)
+	if !ok || match.SlashParam == "" {
+		return "", errEncodedSlash
+	}
+
+	for name, value := range match.Params {
+		if name != match.SlashParam && decodeSlashes(value) != value {
+			return "", errEncodedSlash
+		}
+	}
+
+	decoded := decodeSlashes(rawPath)
+	if err := checkPath(decoded); err != nil {
+		return "", err
+	}
+
+	again, ok := operations.MatchREST(method, decoded)
+	if !ok || again.ID != match.ID || len(again.Params) != len(match.Params) {
+		return "", errSlashMoved
+	}
+
+	for name, value := range match.Params {
+		if again.Params[name] != decodeSlashes(value) {
+			return "", errSlashMoved
+		}
+	}
+
+	return decoded, nil
+}
+
+// decodeSlashes replaces each "%2F" of an escaped path with "/" and leaves
+// every other byte, "%25" included, as it is: nothing is decoded twice.
+func decodeSlashes(path string) string {
+	var decoded strings.Builder
+
+	for index := 0; index < len(path); index++ {
+		if path[index] == '%' && index+2 < len(path) && path[index+1] == '2' && (path[index+2] == 'F' || path[index+2] == 'f') {
+			decoded.WriteByte('/')
+
+			index += 2
+
+			continue
+		}
+
+		decoded.WriteByte(path[index])
+	}
+
+	return decoded.String()
+}
+
 // checkPath accepts an escaped absolute path only when it has no "." or
 // ".." segment, no empty segment, no encoded "/" or "\", and no encoded
 // unreserved character, so every reader of it sees the same segments.
@@ -325,7 +394,7 @@ func checkSegment(segment string) error {
 
 			switch {
 			case decoded == '/' || decoded == '\\':
-				return errors.New("it has an encoded slash or backslash")
+				return errEncodedSlash
 			case isUnreserved(decoded):
 				return errors.New("it has an encoded character that needs no encoding")
 			}

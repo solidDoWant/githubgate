@@ -27,6 +27,9 @@ type RESTMatch struct {
 	// Params holds each path parameter's value as it appeared in the path
 	// (still percent-encoded); a slash parameter's value keeps its "/".
 	Params map[string]string
+	// SlashParam names the parameter whose value may contain "/", or is
+	// empty when the template has none.
+	SlashParam string
 }
 
 // Owner returns the {owner} path parameter and whether the template names it.
@@ -132,7 +135,7 @@ func MatchREST(method, path string) (RESTMatch, bool) {
 		return RESTMatch{}, false
 	}
 
-	return RESTMatch{ID: best.ID, Template: best.Template, Params: best.params(parts)}, true
+	return RESTMatch{ID: best.ID, Template: best.Template, Params: best.params(parts), SlashParam: best.SlashParam}, true
 }
 
 // span returns where the template's segment index lies in parts: a slash

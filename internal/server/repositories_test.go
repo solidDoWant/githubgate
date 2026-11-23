@@ -1,14 +1,20 @@
 package server_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,4 +168,110 @@ func TestProxyRefusesRepositoryIDsOutsideTheCallersRules(t *testing.T) {
 			assert.NotContains(t, refused.Body.String(), `private`)
 		})
 	}
+}
+
+// repositoryLookups counts the one-repository token requests the server
+// sends the fake GitHub to name a repository ID, and answers them with
+// GitHub's rate-limit response while rateLimited is set.
+type repositoryLookups struct {
+	count       atomic.Int64
+	rateLimited atomic.Bool
+}
+
+func countRepositoryLookups(t *testing.T, f *fixture) *repositoryLookups {
+	t.Helper()
+
+	lookups := &repositoryLookups{}
+	next := f.api.Config.Handler
+	f.api.Config.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || !strings.HasSuffix(request.URL.Path, "/access_tokens") {
+			next.ServeHTTP(writer, request)
+
+			return
+		}
+
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		request.Body = io.NopCloser(bytes.NewReader(body))
+
+		var mint struct {
+			Permissions map[string]string `json:"permissions"`
+		}
+		if json.Unmarshal(body, &mint) == nil && len(mint.Permissions) == 1 && mint.Permissions["metadata"] == "read" {
+			lookups.count.Add(1)
+
+			if lookups.rateLimited.Load() {
+				// GitHub's primary rate limit answer. The reset time is in the
+				// past so the client doesn't hold back the next call itself.
+				writer.Header().Set("Content-Type", "application/json")
+				writer.Header().Set("X-RateLimit-Limit", "5000")
+				writer.Header().Set("X-RateLimit-Remaining", "0")
+				writer.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10))
+				writer.WriteHeader(http.StatusForbidden)
+				_, _ = writer.Write([]byte(`{"message":"API rate limit exceeded"}`))
+
+				return
+			}
+		}
+
+		next.ServeHTTP(writer, request)
+	})
+
+	return lookups
+}
+
+func TestProxyLooksUpAnUnreachedRepositoryIDOnceWhileCached(t *testing.T) {
+	f, handler := repositoryIDFixture(t)
+	lookups := countRepositoryLookups(t, f)
+
+	for index := range 50 {
+		_, _, refused := paginate(t, handler, tenantNamespace+"/ci-build", fmt.Sprintf("/repositories/%d/issues", 900000+index%5))
+		require.NotNil(t, refused, "the request was allowed")
+		require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	}
+
+	assert.Equal(t, int64(5), lookups.count.Load(), "each unreached ID is looked up once")
+
+	f.clock.advance(time.Minute - time.Second)
+
+	_, _, refused := paginate(t, handler, tenantNamespace+"/ci-build", "/repositories/900000/issues")
+	require.NotNil(t, refused, "the request was allowed")
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	assert.Equal(t, int64(5), lookups.count.Load(), "an unreached ID is kept for a minute")
+
+	f.clock.advance(time.Second)
+
+	_, _, refused = paginate(t, handler, tenantNamespace+"/ci-build", "/repositories/900000/issues")
+	require.NotNil(t, refused, "the request was allowed")
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+
+	assert.Equal(t, int64(6), lookups.count.Load(), "an unreached ID is looked up again once its entry expires")
+}
+
+func TestProxyRefusesWithUnavailableWhileTheRepositoryLookupIsRateLimited(t *testing.T) {
+	f, handler := repositoryIDFixture(t)
+	lookups := countRepositoryLookups(t, f)
+
+	id, ok := f.fake.RepositoryID(owner, "foo")
+	require.True(t, ok)
+
+	lookups.rateLimited.Store(true)
+
+	for range 3 {
+		_, _, refused := paginate(t, handler, tenantNamespace+"/ci-build", fmt.Sprintf("/repositories/%d/issues", id))
+		require.NotNil(t, refused, "the request was allowed")
+		assert.Equal(t, http.StatusServiceUnavailable, refused.Code, refused.Body.String())
+	}
+
+	assert.Equal(t, int64(3), lookups.count.Load(), "a rate-limited lookup is not cached")
+
+	lookups.rateLimited.Store(false)
+
+	_, _, refused := paginate(t, handler, tenantNamespace+"/ci-build", fmt.Sprintf("/repositories/%d/issues/comments", id))
+	require.Nil(t, refused, "the request was refused once the rate limit lifted: %v", refused)
 }

@@ -15,7 +15,13 @@ const (
 	// repositoryNamesTTL is how long a repository ID's name is kept. A
 	// renamed or moved repository is named again after it.
 	repositoryNamesTTL = 10 * time.Minute
-	// maxRepositoryNames bounds the names kept at once.
+	// unreachedRepositoriesTTL is how long GitHub's answer that an
+	// installation doesn't reach a repository ID is kept. It spares GitHub a
+	// lookup, paid from the App's rate limit, for each refused request, and
+	// is short so a repository newly added to the installation is soon
+	// named.
+	unreachedRepositoriesTTL = time.Minute
+	// maxRepositoryNames bounds the entries each cache keeps at once.
 	maxRepositoryNames = 4096
 )
 
@@ -29,7 +35,8 @@ type repositoryName struct {
 	expires     time.Time
 }
 
-// repositoryNames caches the repository names of IDs per installation.
+// repositoryNames caches the repository names of IDs per installation, or,
+// for the unreached cache, the IDs an installation doesn't reach.
 type repositoryNames struct {
 	mu      sync.Mutex
 	entries map[repositoryNameKey]repositoryName
@@ -89,6 +96,10 @@ func (s *Server) RepositoryName(ctx context.Context, installations []*model.Inst
 			return entry.owner, entry.name, nil
 		}
 
+		if _, ok := s.unreachedRepositories.get(key, s.options.Now()); ok {
+			continue
+		}
+
 		owner, name, err := s.lookUpRepositoryName(ctx, installation, id)
 
 		switch {
@@ -97,6 +108,11 @@ func (s *Server) RepositoryName(ctx context.Context, installations []*model.Inst
 
 			return owner, name, nil
 		case errors.Is(err, github.ErrRepositoryNotReached):
+			// Only GitHub's own answer is kept: a rate limit or any other
+			// failure is asked again next time, and fails closed now.
+			if installation.App != nil {
+				s.unreachedRepositories.put(key, repositoryName{expires: s.options.Now().Add(unreachedRepositoriesTTL)}, s.options.Now())
+			}
 		default:
 			failure = err
 		}

@@ -64,6 +64,10 @@ type Server struct {
 
 	// repositoryNames names the repository IDs of proxy requests.
 	repositoryNames repositoryNames
+	// unreachedRepositories keeps the repository IDs GitHub said an
+	// installation doesn't reach, apart from the names so that many unknown
+	// IDs can't evict them.
+	unreachedRepositories repositoryNames
 
 	// publicReadNames remembers, per caller and installation, the one
 	// repository a public-read token was last minted for after the mint for

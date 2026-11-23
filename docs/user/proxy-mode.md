@@ -103,7 +103,7 @@ To fix this, do one of these:
 
 ## Lists with more than one page
 
-GitHub sends the link to the next page of a list with the repository ID instead of its name, for example `https://api.github.com/repositories/1446188295/issues/comments?page=2`. githubgate finds the repository for the ID and applies your rules to it as if you used the name. So `gh api --paginate` and other clients that follow these links work as usual. If no rule covers the repository, githubgate refuses the request with `denied`, and the message gives only the ID.
+GitHub sends the link to the next page of a list with the repository ID instead of its name, for example `https://api.github.com/repositories/1446188295/issues/comments?page=2`. githubgate finds the repository for the ID and applies your rules to it as if you used the name. So `gh api --paginate` and other clients that follow these links work as usual. If no rule covers the repository, githubgate refuses the request with `denied`, and the message gives only the ID. If an admin adds a repository to the installation, githubgate can refuse its ID for up to one minute after the change.
 
 ## Read a refusal
 

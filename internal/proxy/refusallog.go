@@ -13,6 +13,9 @@ const (
 	maxLoggedPath = 512
 	// maxLoggedQueryNames bounds the query parameter names it holds.
 	maxLoggedQueryNames = 20
+	// maxLoggedQueryName bounds the length of each query parameter name it
+	// holds, so the names together stay under a fixed size.
+	maxLoggedQueryName = 64
 	// redacted replaces a path segment or parameter name that looks like a
 	// credential.
 	redacted = "REDACTED"
@@ -50,6 +53,8 @@ func refusedTarget(requestURI string) (string, []string) {
 	for name := range query {
 		if looksLikeCredential(name) {
 			name = redacted
+		} else if len(name) > maxLoggedQueryName {
+			name = name[:maxLoggedQueryName]
 		}
 
 		names = append(names, name)

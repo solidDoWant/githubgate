@@ -62,6 +62,11 @@ type Request struct {
 	// path of the same operation, and has no Owner and Repo until the ID is
 	// resolved.
 	RepositoryID int64
+	// AccountID is the account ID a /organizations/{id}/... or
+	// /user/{id}/... path names, 0 otherwise. Such a request is matched as
+	// the /orgs/{org}/... or /users/{username}/... path of the same
+	// operation, and has no Accounts until the ID is resolved.
+	AccountID int64
 	// Path is the checked, still escaped request path.
 	Path string
 	// RawQuery is the query, parsed and encoded again.
@@ -163,6 +168,18 @@ func classifyKind(classified Request, method string, query url.Values) (Request,
 		ok = ok && hasOwner && hasRepo
 	}
 
+	var accountID int64
+
+	if !ok && !byID {
+		// A path that matches an operation as sent keeps that meaning; only
+		// one that matches none is read as an account ID link.
+		if accountPath, id, param, found := accountIDPath(classified.Host, rawPath); found {
+			match, ok = operations.MatchREST(method, accountPath)
+			ok = ok && match.Params[param] == "{"+param+"}"
+			accountID = id
+		}
+	}
+
 	if !ok {
 		return Request{}, refuse(http.StatusForbidden, codeUnknownOperation,
 			"the request matches no operation of GitHub's REST API description")
@@ -172,6 +189,12 @@ func classifyKind(classified Request, method string, query url.Values) (Request,
 
 	if byID {
 		classified.RepositoryID = repositoryID
+
+		return classified, nil
+	}
+
+	if accountID != 0 {
+		classified.AccountID = accountID
 
 		return classified, nil
 	}
@@ -206,22 +229,81 @@ func repositoryIDPath(host, rawPath string) (string, int64, bool) {
 		return rawPath, 0, false
 	}
 
-	digits, tail, _ := strings.Cut(rest, "/")
-	if digits == "" || strings.Trim(digits, "0123456789") != "" || digits[0] == '0' {
+	id, tail, ok := idSegment(rest)
+	if !ok {
 		return rawPath, 0, false
+	}
+
+	return "/repos/" + idOwnerPlaceholder + "/" + idRepoPlaceholder + tail, id, true
+}
+
+// accountIDForms are the paths GitHub's pagination Link headers name an
+// account by its ID with, the canonical path prefix each stands for, and
+// the parameter that names the account there.
+var accountIDForms = []struct{ prefix, canonical, param string }{
+	{prefix: "/organizations/", canonical: "/orgs/", param: "org"},
+	{prefix: "/user/", canonical: "/users/", param: "username"},
+}
+
+// accountIDPath returns the canonical path an API request in GitHub's
+// /organizations/{id}/... or /user/{id}/... form is matched with, with a
+// placeholder for the account, the account ID, and the parameter the
+// placeholder must land in.
+func accountIDPath(host, rawPath string) (string, int64, string, bool) {
+	if host != HostAPI {
+		return "", 0, "", false
+	}
+
+	for _, form := range accountIDForms {
+		rest, found := strings.CutPrefix(rawPath, form.prefix)
+		if !found {
+			continue
+		}
+
+		id, tail, ok := idSegment(rest)
+		if !ok {
+			return "", 0, "", false
+		}
+
+		return form.canonical + "{" + form.param + "}" + tail, id, form.param, true
+	}
+
+	return "", 0, "", false
+}
+
+// canonicalAccountPath returns path, in an account ID form, with the ID
+// replaced by the canonical prefix and the escaped login.
+func canonicalAccountPath(path, escapedLogin string) string {
+	for _, form := range accountIDForms {
+		if rest, found := strings.CutPrefix(path, form.prefix); found {
+			if _, tail, ok := idSegment(rest); ok {
+				return form.canonical + escapedLogin + tail
+			}
+		}
+	}
+
+	return path
+}
+
+// idSegment reads the decimal ID that starts rest, without a leading zero,
+// and returns it with the rest of the path after it, "" or starting with
+// "/".
+func idSegment(rest string) (int64, string, bool) {
+	digits, tail, slash := strings.Cut(rest, "/")
+	if digits == "" || strings.Trim(digits, "0123456789") != "" || digits[0] == '0' {
+		return 0, "", false
 	}
 
 	id, err := strconv.ParseInt(digits, 10, 64)
 	if err != nil {
-		return rawPath, 0, false
+		return 0, "", false
 	}
 
-	path := "/repos/" + idOwnerPlaceholder + "/" + idRepoPlaceholder
-	if tail != "" || strings.HasSuffix(rest, "/") {
-		path += "/" + tail
+	if slash {
+		tail = "/" + tail
 	}
 
-	return path, id, true
+	return id, tail, true
 }
 
 // refuseOutright refuses methods, upgrades, method overrides and encodings

@@ -98,7 +98,9 @@ type Server struct {
 	pulls         map[string][]PullRequest
 	comments      map[string][]map[string]any
 	nextID        int64
-	users         *userState
+	// accounts are the account IDs of owners, given at first use.
+	accounts map[string]int64
+	users    *userState
 }
 
 // New returns a Server that keeps bare repositories under gitRoot (a new
@@ -316,6 +318,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /graphql", s.withToken(nil, s.handleGraphQL))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", s.withToken(&need{perm: "issues", level: "write"}, s.handleIssueComment))
 	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/comments", s.withToken(&need{perm: "issues", level: "read"}, s.handleListIssueComments))
+	mux.HandleFunc("GET /orgs/{org}/repos", s.withToken(nil, s.handleListOrganizationRepositories))
+	mux.HandleFunc("GET /organizations/{id}/repos", s.byOrganizationID(s.withToken(nil, s.handleListOrganizationRepositories)))
 	mux.HandleFunc("GET /repositories/{id}/issues/comments", s.byRepositoryID(s.withToken(&need{perm: "issues", level: "read"}, s.handleListIssueComments)))
 	mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
 	mux.HandleFunc("POST /login/oauth/access_token", s.handleOAuthAccessToken)

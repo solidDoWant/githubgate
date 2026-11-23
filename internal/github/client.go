@@ -188,6 +188,8 @@ func (c *AppClient) installationID(ctx context.Context, owner string, refresh bo
 // InstallationInfo is what GitHub says about one installation of the App.
 type InstallationInfo struct {
 	ID int64
+	// AccountID is the ID of the account the installation is on.
+	AccountID int64
 	// Permissions is the installation's grant.
 	Permissions map[string]string
 	Suspended   bool
@@ -288,7 +290,9 @@ func (c *AppClient) listInstallations(ctx context.Context) error {
 
 		for _, installation := range page {
 			if login := installation.GetAccount().GetLogin(); login != "" {
-				info := InstallationInfo{ID: installation.GetID(), Suspended: installation.SuspendedAt != nil}
+				info := InstallationInfo{
+					ID: installation.GetID(), AccountID: installation.GetAccount().GetID(), Suspended: installation.SuspendedAt != nil,
+				}
 				if granted := installation.GetPermissions(); granted != nil {
 					info.Permissions = grantedPermissions(granted)
 				}

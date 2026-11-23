@@ -109,6 +109,14 @@ func newForwardingProxy(t *testing.T, rules ...*model.Rule) *forwardingProxy {
 func newForwardingProxyWith(t *testing.T, repositories proxy.RepositoryResolver, rules ...*model.Rule) *forwardingProxy {
 	t.Helper()
 
+	return newForwardingProxyWithResolvers(t, repositories, nil, rules...)
+}
+
+// newForwardingProxyWithResolvers is newForwardingProxyWith that also
+// names accounts by ID through accounts.
+func newForwardingProxyWithResolvers(t *testing.T, repositories proxy.RepositoryResolver, accounts proxy.AccountResolver, rules ...*model.Rule) *forwardingProxy {
+	t.Helper()
+
 	upstream := &fakeUpstream{}
 	server := httptest.NewTLSServer(upstream)
 	t.Cleanup(server.Close)
@@ -131,6 +139,7 @@ func newForwardingProxyWith(t *testing.T, repositories proxy.RepositoryResolver,
 		Rules:        func(string, string) []*model.Rule { return rules },
 		Tokens:       tokens,
 		Repositories: repositories,
+		Accounts:     accounts,
 		Upstreams:    proxy.Upstreams{API: at("/api"), Uploads: at("/uploads"), Git: at("/git")},
 		Transport:    server.Client().Transport,
 		Audit:        logger,

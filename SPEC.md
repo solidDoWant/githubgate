@@ -194,7 +194,7 @@ A native sidecar (`githubgate-client intercept`) listens on the pod's loopback f
 
 ### Audit, metrics, admission
 
-- **Audit:** one JSON line per request: time, namespace, ServiceAccount, pod, installation, mode, repositories, permissions, operation (proxy), decision and reason, GitHub status, duration. Never a header value, key or token.
+- **Audit:** one JSON line per request: time, namespace, ServiceAccount, pod, installation, mode, repositories, permissions, operation (proxy), decision and reason, GitHub status, duration. A refused proxy request's line also names its host, method, path and query parameter names, so an operator can find it. Never a header value, query value, key or token.
 - **Metrics:** request counts by mode, decision and status class; GitHub latency; token cache hits; token review results; GitHub rate-limit remaining per installation (the only object-name labels are an installation's or, from phase 4, a user authorization's `<namespace>/<name>`; admins create few).
 - **Admission webhook** (optional, `--webhook`): rejects `GitHubApp`/`GitHubInstallation` outside admin namespaces, unknown permission names or levels, a rule outside its installation's ceiling, and proxy limits on a rule with `token.enabled: true` (also enforced by CEL).
 

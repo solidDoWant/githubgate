@@ -22,7 +22,7 @@ githubgate writes one JSON line to its log for each token request. The line neve
 - `github_status`: `minted` when GitHub made a new token, `cached` when githubgate gave out a token it already had, `not_called` when GitHub was not asked, or the GitHub error code.
 - `duration` and `request_id`.
 
-githubgate also writes one JSON line for each request to the proxy, when the response ends. The line never holds a token, a key, a header value, the path or the query. It has the fields above, with `mode` set to `proxy`, and these fields:
+githubgate also writes one JSON line for each request to the proxy, when the response ends. The line never holds a token, a key, a header value or a query value. Only the line of a refused request holds the path and the names of the query parameters. It has the fields above, with `mode` set to `proxy`, and these fields:
 
 - `host` and `method`: the GitHub host and the HTTP method of the request.
 - `kind`: `rest`, `graphql`, `git-info-refs`, `git-upload-pack`, `git-receive-pack` or `web` (a `github.com` web path).
@@ -33,6 +33,7 @@ githubgate also writes one JSON line for each request to the proxy, when the res
 - `refs`: the git refs that the request writes, when githubgate read them.
 - `github_status`: the HTTP status from GitHub, `not_called` when githubgate did not send the request, or the GitHub error code when githubgate could not get a token.
 - `bytes`: the size of the response body that the caller got.
+- `path` and `query`: only when `decision` is `refused`. `path` is the request path as the client sent it, with percent-encoding, cut to 512 bytes. githubgate writes `REDACTED` in place of a path segment that looks like a token. `query` lists the names of the query parameters in sorted order, and never their values. Use these two fields to find which request githubgate refused. [Find a refused request](proxy-mode-setup.md#find-a-refused-request) tells you how.
 
 ## The metrics
 

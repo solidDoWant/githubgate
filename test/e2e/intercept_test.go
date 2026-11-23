@@ -677,7 +677,17 @@ webhooks:
 			assert.Equal(t, []string{"githubgate-intercept", "first-init", "second-init"}, names)
 
 			for _, container := range []string{"first-init", "second-init", "one", "two"} {
-				logs := c.kubectl(t, "", "logs", "-n", interceptNamespace, "multi", "-c", container)
+				// A pod can be ready before its main containers' requests finish,
+				// so wait until the request has printed its status line.
+				var logs string
+
+				eventually(t, "container "+container+" finishes its request", func() bool {
+					out, err := c.tryKubectl(ctx, "", "logs", "-n", interceptNamespace, "multi", "-c", container)
+					logs = out
+
+					return err == nil && strings.Contains(out, "status=")
+				}, 2*time.Minute, time.Second)
+
 				if !assert.Contains(t, logs, "status=200", "container %s made its request through the interceptor", container) {
 					// The refusal's source is in the proxy's or the fake's log.
 					t.Logf("githubgate log:\n%s", c.kubectl(t, "", "logs", "-n", gateNamespace, "-l", "app.kubernetes.io/name=githubgate", "--all-containers", "--tail=50", "--prefix"))

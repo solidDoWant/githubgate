@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/solidDoWant/githubgate/internal/operations"
@@ -56,6 +57,11 @@ type Request struct {
 	// Contents is the contents level a git request needs; empty otherwise
 	// (GitHub enforces the permissions of REST and GraphQL requests).
 	Contents permissions.Level
+	// RepositoryID is the repository ID a /repositories/{id}/... path names,
+	// 0 otherwise. Such a request is matched as the /repos/{owner}/{repo}/...
+	// path of the same operation, and has no Owner and Repo until the ID is
+	// resolved.
+	RepositoryID int64
 	// Path is the checked, still escaped request path.
 	Path string
 	// RawQuery is the query, parsed and encoded again.
@@ -147,13 +153,28 @@ func classifyKind(classified Request, method string, query url.Values) (Request,
 		}
 	}
 
-	match, ok := operations.MatchREST(method, rawPath)
+	matchPath, repositoryID, byID := repositoryIDPath(classified.Host, rawPath)
+
+	match, ok := operations.MatchREST(method, matchPath)
+	if byID {
+		_, hasOwner := match.Owner()
+		_, hasRepo := match.Repo()
+		ok = ok && hasOwner && hasRepo
+	}
+
 	if !ok {
 		return Request{}, refuse(http.StatusForbidden, codeUnknownOperation,
 			"the request matches no operation of GitHub's REST API description")
 	}
 
 	classified.Kind, classified.Operation = KindREST, match.ID
+
+	if byID {
+		classified.RepositoryID = repositoryID
+
+		return classified, nil
+	}
+
 	classified.Owner, _ = match.Owner()
 	classified.Repo, _ = match.Repo()
 
@@ -164,6 +185,42 @@ func classifyKind(classified Request, method string, query url.Values) (Request,
 	}
 
 	return classified, nil
+}
+
+// The placeholders a /repositories/{id}/... path is matched with. Braces
+// never appear in a checked path, so no template literal matches them.
+const (
+	idOwnerPlaceholder = "{owner}"
+	idRepoPlaceholder  = "{repo}"
+)
+
+// repositoryIDPath returns the path an API request is matched with, and
+// the repository ID when the path is GitHub's /repositories/{id}/... form,
+// which its pagination Link headers use. That form is matched as the
+// /repos/{owner}/{repo}/... path of the same operation; GitHub's REST
+// description has no operations of its own for it.
+func repositoryIDPath(host, rawPath string) (string, int64, bool) {
+	rest, found := strings.CutPrefix(rawPath, "/repositories/")
+	if host != HostAPI || !found {
+		return rawPath, 0, false
+	}
+
+	digits, tail, _ := strings.Cut(rest, "/")
+	if digits == "" || strings.Trim(digits, "0123456789") != "" || digits[0] == '0' {
+		return rawPath, 0, false
+	}
+
+	id, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return rawPath, 0, false
+	}
+
+	path := "/repos/" + idOwnerPlaceholder + "/" + idRepoPlaceholder
+	if tail != "" || strings.HasSuffix(rest, "/") {
+		path += "/" + tail
+	}
+
+	return path, id, true
 }
 
 // refuseOutright refuses methods, upgrades, method overrides and encodings

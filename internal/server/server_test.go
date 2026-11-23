@@ -96,6 +96,7 @@ func (c *clock) advance(d time.Duration) {
 type fixture struct {
 	clock   *clock
 	fake    *fakegithub.Server
+	api     *httptest.Server
 	store   *model.Store
 	server  *server.Server
 	metrics *server.Metrics
@@ -142,6 +143,7 @@ func newFixture(t *testing.T) *fixture {
 	id := int64(appID)
 	f := &fixture{
 		fake:    fake,
+		api:     api,
 		clock:   &clock{},
 		store:   &model.Store{},
 		metrics: server.NewMetrics(),

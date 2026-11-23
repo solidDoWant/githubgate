@@ -54,6 +54,9 @@ type Installation struct {
 
 // Repository is a repository with a bare git repository on disk.
 type Repository struct {
+	// ID is the repository's numeric ID, which GitHub's pagination links
+	// name it by.
+	ID      int64
 	Owner   string
 	Name    string
 	Private bool
@@ -93,6 +96,7 @@ type Server struct {
 	signed        map[string]bool
 	releases      map[string]*Release
 	pulls         map[string][]PullRequest
+	comments      map[string][]map[string]any
 	nextID        int64
 	users         *userState
 }
@@ -118,6 +122,7 @@ func New(gitRoot string) (*Server, error) {
 		signed:        map[string]bool{},
 		releases:      map[string]*Release{},
 		pulls:         map[string][]PullRequest{},
+		comments:      map[string][]map[string]any{},
 		nextID:        100,
 		users:         newUserState(),
 	}, nil
@@ -217,7 +222,8 @@ func (s *Server) CreateRepository(owner, name string, public bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.repos[owner+"/"+name] = &Repository{Owner: owner, Name: name, Private: !public}
+	s.nextID++
+	s.repos[owner+"/"+name] = &Repository{ID: s.nextID, Owner: owner, Name: name, Private: !public}
 
 	return nil
 }
@@ -308,6 +314,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/{ref...}", s.withToken(contentsRead, s.handleGetRef))
 	mux.HandleFunc("POST /graphql", s.withToken(nil, s.handleGraphQL))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", s.withToken(&need{perm: "issues", level: "write"}, s.handleIssueComment))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/comments", s.withToken(&need{perm: "issues", level: "read"}, s.handleListIssueComments))
+	mux.HandleFunc("GET /repositories/{id}/issues/comments", s.byRepositoryID(s.withToken(&need{perm: "issues", level: "read"}, s.handleListIssueComments)))
 	mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
 	mux.HandleFunc("POST /login/oauth/access_token", s.handleOAuthAccessToken)
 	mux.HandleFunc("GET /user", s.userHandler(s.handleUser))
@@ -318,4 +326,26 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/{owner}/{repo}/", s.handleGit)
 
 	return mux
+}
+
+// RepositoryID returns the ID of owner/name, and whether it exists.
+func (s *Server) RepositoryID(owner, name string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repo := s.repos[owner+"/"+name]
+	if repo == nil {
+		return 0, false
+	}
+
+	return repo.ID, true
+}
+
+// AddIssueComment adds an issue comment to owner/name, as if a user wrote it.
+func (s *Server) AddIssueComment(owner, name, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.nextID++
+	s.comments[owner+"/"+name] = append(s.comments[owner+"/"+name], map[string]any{"id": s.nextID, "body": body})
 }

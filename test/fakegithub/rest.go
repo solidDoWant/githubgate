@@ -2,7 +2,9 @@ package fakegithub
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"time"
@@ -116,8 +118,9 @@ func withMetadata(perms map[string]string) map[string]string {
 }
 
 type accessTokenRequest struct {
-	Repositories []string          `json:"repositories"`
-	Permissions  map[string]string `json:"permissions"`
+	Repositories  []string          `json:"repositories"`
+	RepositoryIDs []int64           `json:"repository_ids"`
+	Permissions   map[string]string `json:"permissions"`
 }
 
 type accessTokenResponse struct {
@@ -186,6 +189,21 @@ func (s *Server) handleAccessTokens(writer http.ResponseWriter, request *http.Re
 		}
 	}
 
+	if body.RepositoryIDs != nil {
+		// Repositories can also be named by ID; an ID the installation
+		// doesn't reach is refused like such a name.
+		for _, id := range body.RepositoryIDs {
+			repo := s.repoByIDLocked(id)
+			if repo == nil || repo.Owner != inst.Owner {
+				writeJSONError(writer, http.StatusUnprocessableEntity, "There is at least one repository that does not exist or is not accessible to the parent installation.")
+
+				return
+			}
+
+			body.Repositories = append(body.Repositories, repo.Name)
+		}
+	}
+
 	var repoNames []string
 
 	if body.Repositories != nil {
@@ -230,7 +248,10 @@ func (s *Server) handleAccessTokens(writer http.ResponseWriter, request *http.Re
 	}
 
 	for _, name := range repoNames {
-		response.Repositories = append(response.Repositories, map[string]any{"name": name, "full_name": inst.Owner + "/" + name})
+		response.Repositories = append(response.Repositories, map[string]any{
+			"id": s.repos[inst.Owner+"/"+name].ID, "name": name, "full_name": inst.Owner + "/" + name,
+			"owner": map[string]any{"login": inst.Owner},
+		})
 	}
 
 	writeJSON(writer, http.StatusCreated, response)
@@ -361,7 +382,7 @@ func (s *Server) handleGetRepo(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	writeJSON(writer, http.StatusOK, map[string]any{"name": name, "full_name": owner + "/" + name, "private": repo.Private})
+	writeJSON(writer, http.StatusOK, map[string]any{"id": repo.ID, "name": name, "full_name": owner + "/" + name, "private": repo.Private})
 }
 
 func (s *Server) handleIssueComment(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
@@ -374,5 +395,88 @@ func (s *Server) handleIssueComment(writer http.ResponseWriter, request *http.Re
 		return
 	}
 
-	writeJSON(writer, http.StatusCreated, map[string]any{"id": 1, "body": body.Body})
+	owner, name := request.PathValue("owner"), request.PathValue("repo")
+
+	s.mu.Lock()
+	s.nextID++
+	comment := map[string]any{"id": s.nextID, "body": body.Body}
+	s.comments[owner+"/"+name] = append(s.comments[owner+"/"+name], comment)
+	s.mu.Unlock()
+
+	writeJSON(writer, http.StatusCreated, comment)
+}
+
+// handleListIssueComments lists a repository's issue comments a page at a
+// time. Like GitHub, its next-page link names the repository by ID, in the
+// /repositories/{id}/... form, not by name:
+// https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
+func (s *Server) handleListIssueComments(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
+	owner, name := request.PathValue("owner"), request.PathValue("repo")
+
+	perPage, page := 30, 1
+	if value, err := strconv.Atoi(request.URL.Query().Get("per_page")); err == nil && value > 0 {
+		perPage = min(value, 100)
+	}
+
+	if value, err := strconv.Atoi(request.URL.Query().Get("page")); err == nil && value > 0 {
+		page = value
+	}
+
+	s.mu.Lock()
+	repo := s.repos[owner+"/"+name]
+	all := append([]map[string]any{}, s.comments[owner+"/"+name]...)
+	s.mu.Unlock()
+
+	if repo == nil {
+		writeJSONError(writer, http.StatusNotFound, "Not Found")
+
+		return
+	}
+
+	start := min((page-1)*perPage, len(all))
+	end := min(start+perPage, len(all))
+
+	if end < len(all) {
+		query := request.URL.Query()
+		query.Set("page", strconv.Itoa(page+1))
+		query.Set("per_page", strconv.Itoa(perPage))
+		next := url.URL{Scheme: "http", Host: request.Host, Path: fmt.Sprintf("/repositories/%d/issues/comments", repo.ID), RawQuery: query.Encode()}
+		writer.Header().Set("Link", `<`+next.String()+`>; rel="next"`)
+	}
+
+	writeJSON(writer, http.StatusOK, all[start:end])
+}
+
+// byRepositoryID serves a /repositories/{id}/... path as the
+// /repos/{owner}/{repo}/... path of the repository with that ID.
+func (s *Server) byRepositoryID(next http.HandlerFunc) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+
+		s.mu.Lock()
+		repo := s.repoByIDLocked(id)
+		s.mu.Unlock()
+
+		if err != nil || repo == nil {
+			writeJSONError(writer, http.StatusNotFound, "Not Found")
+
+			return
+		}
+
+		request.SetPathValue("owner", repo.Owner)
+		request.SetPathValue("repo", repo.Name)
+		next(writer, request)
+	}
+}
+
+// repoByIDLocked returns the repository with id, or nil. The caller holds
+// the lock.
+func (s *Server) repoByIDLocked(id int64) *Repository {
+	for _, repo := range s.repos {
+		if repo.ID == id {
+			return repo
+		}
+	}
+
+	return nil
 }

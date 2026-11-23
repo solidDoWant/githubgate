@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +56,19 @@ type UserTokens interface {
 // refreshes and must not block the response.
 type UserTokenRefuser interface {
 	UserTokenRefused(ctx context.Context, authorization *model.UserAuthorization)
+}
+
+// ErrRepositoryNotFound is a repository ID that none of the installations
+// given to a RepositoryResolver reaches, or that doesn't exist.
+var ErrRepositoryNotFound = errors.New("no installation reaches the repository")
+
+// RepositoryResolver names the repository a /repositories/{id}/... request
+// is for.
+type RepositoryResolver interface {
+	// RepositoryName returns the owner and name of the repository with id,
+	// as one of installations sees it, or ErrRepositoryNotFound when none of
+	// them reaches it. Any other error means it can't be decided now.
+	RepositoryName(ctx context.Context, installations []*model.Installation, id int64) (owner, name string, err error)
 }
 
 // TokenError is a token that couldn't be had, as the caller sees it. Message
@@ -124,7 +139,10 @@ type ForwarderOptions struct {
 	// UserTokens gives user rules their access token; with none, every
 	// request a user rule allows is refused with 503.
 	UserTokens UserTokens
-	Upstreams  Upstreams
+	// Repositories names the repository of a /repositories/{id}/...
+	// request; with none, every such request is refused.
+	Repositories RepositoryResolver
+	Upstreams    Upstreams
 	// Transport sends requests upstream; NewTransport(nil) when nil.
 	Transport http.RoundTripper
 	// Audit receives one line per forwarded or refused request; discarded
@@ -175,6 +193,20 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 	}()
 
 	graphQL := classified.Kind == KindGraphQL
+	rules := f.options.Rules(caller.Namespace, caller.ServiceAccount)
+
+	if classified.RepositoryID != 0 {
+		var failure *refusal
+
+		classified, failure = f.resolveRepositoryID(request.Context(), rules, classified)
+		if failure != nil {
+			entry.decided = Decided{Request: classified}
+			entry.reason = failure.code
+			writeRefusal(recorder, classified.Host, graphQL, failure)
+
+			return
+		}
+	}
 
 	decided, failure := readBody(request, classified)
 	entry.decided = decided
@@ -186,12 +218,17 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	rules := f.options.Rules(caller.Namespace, caller.ServiceAccount)
 	decision := Decide(rules, decided)
 	entry.decisionResult = &decision
 
 	if !decision.Allowed() {
 		entry.reason = decision.Code
+
+		if classified.RepositoryID != 0 && !anyCovers(rules, classified) {
+			// The caller asked by ID: don't tell it the name of a
+			// repository none of its rules names.
+			decision.Message = repositoryIDUncovered(classified.RepositoryID)
+		}
 
 		if decided.push != nil {
 			writePushRefusal(recorder, request.Body, decided.push, decision.Message, refusedRefs(rules, decided))
@@ -238,6 +275,59 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 
 	entry.reason = "allowed"
 	f.reverseProxy(classified, token, entry).ServeHTTP(recorder, request)
+}
+
+// resolveRepositoryID turns a /repositories/{id}/... request into the
+// /repos/{owner}/{repo}/... request it stands for, looking the ID up through
+// the installations of the caller's rules. The rewritten path is decided and
+// forwarded, so GitHub gets exactly the request that was decided. A
+// repository no installation reaches is refused like one no rule covers.
+func (f *HTTPForwarder) resolveRepositoryID(ctx context.Context, rules []*model.Rule, classified Request) (Request, *refusal) {
+	uncovered := refuse(http.StatusForbidden, codeDenied, repositoryIDUncovered(classified.RepositoryID))
+
+	installations := []*model.Installation{}
+
+	for _, rule := range rules {
+		if rule.Installation != nil && !slices.Contains(installations, rule.Installation) {
+			installations = append(installations, rule.Installation)
+		}
+	}
+
+	if f.options.Repositories == nil || len(installations) == 0 {
+		return classified, uncovered
+	}
+
+	owner, name, err := f.options.Repositories.RepositoryName(ctx, installations, classified.RepositoryID)
+
+	switch {
+	case errors.Is(err, ErrRepositoryNotFound):
+		return classified, uncovered
+	case err != nil || owner == "" || name == "":
+		return classified, refuse(http.StatusServiceUnavailable, codeGitHubUnavailable,
+			fmt.Sprintf("repository ID %d can't be looked up now; try again", classified.RepositoryID))
+	}
+
+	prefix := "/repositories/" + strconv.FormatInt(classified.RepositoryID, 10)
+	classified.Owner, classified.Repo = url.PathEscape(owner), url.PathEscape(name)
+	classified.Path = "/repos/" + classified.Owner + "/" + classified.Repo + strings.TrimPrefix(classified.Path, prefix)
+
+	return classified, nil
+}
+
+func repositoryIDUncovered(id int64) string {
+	return fmt.Sprintf("repository ID %d: it is not covered by any of your proxy rules", id)
+}
+
+// anyCovers reports whether one of the rules names the request's repository.
+func anyCovers(rules []*model.Rule, request Request) bool {
+	for _, rule := range rules {
+		if rule.Installation != nil && strings.EqualFold(rule.Installation.Owner, unescaped(request.Owner)) &&
+			covers(rule, unescaped(request.Repo)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // forwardAsUser forwards a request a user rule allows with its

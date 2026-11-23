@@ -101,6 +101,10 @@ To fix this, do one of these:
 - Put the read-only repositories in a rule that uses a `*` pattern, for example `toolgate*`. GraphQL ignores that rule.
 - Give all the exact repositories the same permissions.
 
+## Lists with more than one page
+
+GitHub sends the link to the next page of a list with the repository ID instead of its name, for example `https://api.github.com/repositories/1446188295/issues/comments?page=2`. githubgate finds the repository for the ID and applies your rules to it as if you used the name. So `gh api --paginate` and other clients that follow these links work as usual. If no rule covers the repository, githubgate refuses the request with `denied`, and the message gives only the ID.
+
 ## Read a refusal
 
 When your policy does not allow a request, githubgate answers with a status and a reason. The reason names the repository, the operation, the mutation or the ref. For an API request, the body is JSON with `message` and `error`.

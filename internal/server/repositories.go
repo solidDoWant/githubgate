@@ -83,6 +83,18 @@ func (c *repositoryNames) put(key repositoryNameKey, entry repositoryName, now t
 	c.entries[key] = entry
 }
 
+// forget drops the entries of id in every installation.
+func (c *repositoryNames) forget(id int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key := range c.entries {
+		if key.id == id {
+			delete(c.entries, key)
+		}
+	}
+}
+
 // RepositoryName names the repository with id for the proxy, through the
 // first of installations that reaches it. Names are cached per installation,
 // so a caller paging through a list costs one GitHub call per repository.
@@ -123,6 +135,14 @@ func (s *Server) RepositoryName(ctx context.Context, installations []*model.Inst
 	}
 
 	return "", "", proxy.ErrRepositoryNotFound
+}
+
+// RepositoryNameNow is RepositoryName asked of GitHub: the cached names of
+// id are dropped first, and the answer is cached again.
+func (s *Server) RepositoryNameNow(ctx context.Context, installations []*model.Installation, id int64) (string, string, error) {
+	s.repositoryNames.forget(id)
+
+	return s.RepositoryName(ctx, installations, id)
 }
 
 func (s *Server) lookUpRepositoryName(ctx context.Context, installation *model.Installation, id int64) (string, string, error) {

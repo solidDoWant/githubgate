@@ -72,11 +72,15 @@ type MintEntry struct {
 
 // IssuedToken is an installation token the fake handed out.
 type IssuedToken struct {
-	Token          string            `json:"token"`
-	InstallationID int64             `json:"installation_id"`
-	Repositories   []string          `json:"repositories"`
-	Permissions    map[string]string `json:"permissions"`
-	ExpiresAt      time.Time         `json:"expires_at"`
+	Token          string   `json:"token"`
+	InstallationID int64    `json:"installation_id"`
+	Repositories   []string `json:"repositories"`
+	// RepositoryIDs are what the token reaches: GitHub binds a token to
+	// repository IDs, so it keeps reaching a renamed repository and never
+	// reaches a new one that takes the old name.
+	RepositoryIDs []int64           `json:"repository_ids"`
+	Permissions   map[string]string `json:"permissions"`
+	ExpiresAt     time.Time         `json:"expires_at"`
 }
 
 // Server is the fake. Its API handler answers like api.github.com and
@@ -353,4 +357,29 @@ func (s *Server) AddIssueComment(owner, name, body string) {
 
 	s.nextID++
 	s.comments[owner+"/"+name] = append(s.comments[owner+"/"+name], map[string]any{"id": s.nextID, "body": body})
+}
+
+// RenameRepository renames owner/from to owner/to, keeping its ID, as
+// GitHub's repository rename does. Its issue comments move with it.
+func (s *Server) RenameRepository(owner, from, to string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repo := s.repos[owner+"/"+from]
+	if repo == nil || s.repos[owner+"/"+to] != nil || !validName(to) {
+		return errors.New("no such repository, or the new name is taken")
+	}
+
+	if err := os.Rename(filepath.Join(s.gitRoot, owner, from+".git"), filepath.Join(s.gitRoot, owner, to+".git")); err != nil {
+		return err
+	}
+
+	delete(s.repos, owner+"/"+from)
+
+	repo.Name = to
+	s.repos[owner+"/"+to] = repo
+	s.comments[owner+"/"+to] = s.comments[owner+"/"+from]
+	delete(s.comments, owner+"/"+from)
+
+	return nil
 }

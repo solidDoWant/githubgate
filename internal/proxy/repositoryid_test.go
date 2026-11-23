@@ -15,12 +15,39 @@ import (
 )
 
 // fakeRepositoryResolver names repositories by ID and records the
-// installations it was asked through.
+// installations it was asked through. RepositoryNameNow answers from
+// current, standing for GitHub, when set, and from names otherwise.
 type fakeRepositoryResolver struct {
-	mu            sync.Mutex
-	names         map[int64][2]string
-	failure       error
-	installations [][]*model.Installation
+	mu             sync.Mutex
+	names          map[int64][2]string
+	current        map[int64][2]string
+	failure        error
+	currentFailure error
+	installations  [][]*model.Installation
+	currentAsked   int
+}
+
+func (f *fakeRepositoryResolver) RepositoryNameNow(_ context.Context, _ []*model.Installation, id int64) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.currentAsked++
+
+	if f.currentFailure != nil {
+		return "", "", f.currentFailure
+	}
+
+	names := f.names
+	if f.current != nil {
+		names = f.current
+	}
+
+	name, ok := names[id]
+	if !ok {
+		return "", "", proxy.ErrRepositoryNotFound
+	}
+
+	return name[0], name[1], nil
 }
 
 func (f *fakeRepositoryResolver) RepositoryName(_ context.Context, installations []*model.Installation, id int64) (string, string, error) {
@@ -63,7 +90,12 @@ func TestProxyTreatsARepositoryIDPathAsTheNamedRepositoryPath(t *testing.T) {
 	assert.Equal(t, []string{"token " + installationToken}, received[1].header.Values("Authorization"))
 
 	require.Len(t, forwarding.tokens.decisions, 2)
-	assert.Equal(t, forwarding.tokens.decisions[0], forwarding.tokens.decisions[1], "the ID form gets another token")
+	// The ID form gets the same token, and the ID goes with it so the
+	// token is checked to reach the repository with that ID.
+	byIDDecision := forwarding.tokens.decisions[1]
+	assert.Equal(t, int64(42), byIDDecision.RepositoryID)
+	byIDDecision.RepositoryID = 0
+	assert.Equal(t, forwarding.tokens.decisions[0], byIDDecision, "the ID form gets another token")
 
 	lines := forwarding.auditLines(t)
 	require.Len(t, lines, 2)

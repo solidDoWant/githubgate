@@ -66,6 +66,10 @@ type Decision struct {
 	// UserAuthorization is the authorization whose access token an allowed
 	// user request is forwarded with; set only with AccessUser.
 	UserAuthorization *model.UserAuthorization
+	// RepositoryID is the ID a /repositories/{id}/... request named its
+	// repository by, or 0. The name it was decided as may be stale, so the
+	// token must reach this ID.
+	RepositoryID int64
 }
 
 // Access is the credential an allowed request is forwarded with.

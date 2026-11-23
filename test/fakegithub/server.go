@@ -354,3 +354,27 @@ func (s *Server) AddIssueComment(owner, name, body string) {
 	s.nextID++
 	s.comments[owner+"/"+name] = append(s.comments[owner+"/"+name], map[string]any{"id": s.nextID, "body": body})
 }
+
+// RenameRepository renames owner/from to owner/to, keeping its ID, as
+// GitHub's repository rename does. Its issue comments move with it.
+func (s *Server) RenameRepository(owner, from, to string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repo := s.repos[owner+"/"+from]
+	if repo == nil || s.repos[owner+"/"+to] != nil || !validName(to) {
+		return errors.New("no such repository, or the new name is taken")
+	}
+
+	if err := os.Rename(filepath.Join(s.gitRoot, owner, from+".git"), filepath.Join(s.gitRoot, owner, to+".git")); err != nil {
+		return err
+	}
+
+	delete(s.repos, owner+"/"+from)
+	repo.Name = to
+	s.repos[owner+"/"+to] = repo
+	s.comments[owner+"/"+to] = s.comments[owner+"/"+from]
+	delete(s.comments, owner+"/"+from)
+
+	return nil
+}

@@ -71,6 +71,19 @@ type RepositoryResolver interface {
 	RepositoryName(ctx context.Context, installations []*model.Installation, id int64) (owner, name string, err error)
 }
 
+// ErrAccountNotFound is an account ID that none of the installations given
+// to an AccountResolver is on.
+var ErrAccountNotFound = errors.New("no installation is on the account")
+
+// AccountResolver names the account a /organizations/{id}/... or
+// /user/{id}/... request is for.
+type AccountResolver interface {
+	// AccountLogin returns the login of the account with id when one of
+	// installations is on it, or ErrAccountNotFound when none is. Any other
+	// error means it can't be decided now.
+	AccountLogin(ctx context.Context, installations []*model.Installation, id int64) (string, error)
+}
+
 // TokenError is a token that couldn't be had, as the caller sees it. Message
 // never contains a credential.
 type TokenError struct {
@@ -142,7 +155,10 @@ type ForwarderOptions struct {
 	// Repositories names the repository of a /repositories/{id}/...
 	// request; with none, every such request is refused.
 	Repositories RepositoryResolver
-	Upstreams    Upstreams
+	// Accounts names the account of a /organizations/{id}/... or
+	// /user/{id}/... request; with none, every such request is refused.
+	Accounts  AccountResolver
+	Upstreams Upstreams
 	// Transport sends requests upstream; NewTransport(nil) when nil.
 	Transport http.RoundTripper
 	// Audit receives one line per forwarded or refused request; discarded
@@ -199,6 +215,19 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 		var failure *refusal
 
 		classified, failure = f.resolveRepositoryID(request.Context(), rules, classified)
+		if failure != nil {
+			entry.decided = Decided{Request: classified}
+			entry.reason = failure.code
+			writeRefusal(recorder, classified.Host, graphQL, failure)
+
+			return
+		}
+	}
+
+	if classified.AccountID != 0 {
+		var failure *refusal
+
+		classified, failure = f.resolveAccountID(request.Context(), rules, classified)
 		if failure != nil {
 			entry.decided = Decided{Request: classified}
 			entry.reason = failure.code
@@ -284,14 +313,7 @@ func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Reques
 // repository no installation reaches is refused like one no rule covers.
 func (f *HTTPForwarder) resolveRepositoryID(ctx context.Context, rules []*model.Rule, classified Request) (Request, *refusal) {
 	uncovered := refuse(http.StatusForbidden, codeDenied, repositoryIDUncovered(classified.RepositoryID))
-
-	installations := []*model.Installation{}
-
-	for _, rule := range rules {
-		if rule.Installation != nil && !slices.Contains(installations, rule.Installation) {
-			installations = append(installations, rule.Installation)
-		}
-	}
+	installations := rulesInstallations(rules)
 
 	if f.options.Repositories == nil || len(installations) == 0 {
 		return classified, uncovered
@@ -312,6 +334,51 @@ func (f *HTTPForwarder) resolveRepositoryID(ctx context.Context, rules []*model.
 	classified.Path = "/repos/" + classified.Owner + "/" + classified.Repo + strings.TrimPrefix(classified.Path, prefix)
 
 	return classified, nil
+}
+
+// resolveAccountID turns a /organizations/{id}/... or /user/{id}/...
+// request into the /orgs/{org}/... or /users/{username}/... request it
+// stands for, looking the ID up through the installations of the caller's
+// rules. The rewritten request is decided and forwarded, so GitHub gets
+// exactly the request that was decided. An account no installation of the
+// caller is on is refused like one no rule covers, without its login.
+func (f *HTTPForwarder) resolveAccountID(ctx context.Context, rules []*model.Rule, classified Request) (Request, *refusal) {
+	uncovered := refuse(http.StatusForbidden, codeDenied,
+		fmt.Sprintf("account ID %d: it is not covered by any of your proxy rules", classified.AccountID))
+	installations := rulesInstallations(rules)
+
+	if f.options.Accounts == nil || len(installations) == 0 {
+		return classified, uncovered
+	}
+
+	login, err := f.options.Accounts.AccountLogin(ctx, installations, classified.AccountID)
+
+	switch {
+	case errors.Is(err, ErrAccountNotFound):
+		return classified, uncovered
+	case err != nil || login == "":
+		return classified, refuse(http.StatusServiceUnavailable, codeGitHubUnavailable,
+			fmt.Sprintf("account ID %d can't be looked up now; try again", classified.AccountID))
+	}
+
+	escaped := url.PathEscape(login)
+	classified.Path = canonicalAccountPath(classified.Path, escaped)
+	classified.Accounts = []string{escaped}
+
+	return classified, nil
+}
+
+// rulesInstallations returns the installations of rules, each once.
+func rulesInstallations(rules []*model.Rule) []*model.Installation {
+	installations := []*model.Installation{}
+
+	for _, rule := range rules {
+		if rule.Installation != nil && !slices.Contains(installations, rule.Installation) {
+			installations = append(installations, rule.Installation)
+		}
+	}
+
+	return installations
 }
 
 func repositoryIDUncovered(id int64) string {

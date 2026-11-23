@@ -48,9 +48,12 @@ func (s *Server) handleListInstallations(writer http.ResponseWriter, request *ht
 
 	var all []*Installation
 
+	accountIDs := map[string]int64{}
+
 	for _, inst := range s.installations {
 		if inst.AppID == app.ID {
 			all = append(all, inst)
+			accountIDs[inst.Owner] = s.accountIDLocked(inst.Owner)
 		}
 	}
 	s.mu.Unlock()
@@ -75,7 +78,7 @@ func (s *Server) handleListInstallations(writer http.ResponseWriter, request *ht
 		out = append(out, map[string]any{
 			"id":                   inst.ID,
 			"app_id":               inst.AppID,
-			"account":              map[string]any{"login": inst.Owner},
+			"account":              map[string]any{"login": inst.Owner, "id": accountIDs[inst.Owner]},
 			"permissions":          withMetadata(inst.Permissions),
 			"repository_selection": selection(inst),
 			"suspended_at":         suspendedAt(inst),

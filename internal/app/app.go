@@ -454,6 +454,7 @@ func newForwarder(config Config, store *model.Store, srv *server.Server, userTok
 		Tokens:       srv,
 		UserTokens:   userTokens,
 		Repositories: srv,
+		Accounts:     srv,
 		Upstreams:    upstreams,
 		Transport:    transport,
 		Audit:        audit,

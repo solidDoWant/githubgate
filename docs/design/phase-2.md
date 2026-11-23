@@ -106,7 +106,7 @@ Clients do not always send the documented REST path. This table lists the other 
 | Form | Who sends it | Result |
 |---|---|---|
 | `/repositories/{id}/…` next-page and redirect links | GitHub's `Link` headers, its `301` for a renamed or moved repository, every client that follows them | Fixed. The ID is resolved through the caller's installations (`SPEC.md`). |
-| `/organizations/{id}/…` and `/user/{id}/…` next-page links | GitHub's `Link` headers for organization and user lists, such as `/orgs/{org}/repos` | Refused (`unknown_operation`). Fixing it needs an account-ID lookup like the repository one, so it is tracked as its own defect. |
+| `/organizations/{id}/…` and `/user/{id}/…` next-page links | GitHub's `Link` headers for organization and user lists, such as `/orgs/{org}/repos` | Fixed, when the path matches no operation as it is sent. The ID is resolved to the account of one of the caller's installations (`SPEC.md`). An ID that no installation of the caller is on is refused (`denied`), and the refusal does not name the account. |
 | `Location` to `codeload.github.com` or `objects.githubusercontent.com` | archive and release-asset downloads | Not applicable. The proxy passes the redirect back unchanged. The client follows it to GitHub directly, with a signed URL and no credential. |
 | `*_url` fields in responses | every client | Not applicable. They use the canonical `/repos/{owner}/{repo}/…` and `uploads.github.com` paths. |
 | `%2F` in a ref, branch, tag, file path or `base...head` | `gh`, go-github, octokit | Fixed, inside the operation's slash parameter only (path hygiene above). |

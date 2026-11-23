@@ -22,7 +22,7 @@ import (
 // reader splits the same way, and a query that is already in canonical form.
 func FuzzProxyRequestTarget(f *testing.F) {
 	for _, seed := range []string{
-		"/repos/o/foo", "/repos/o/foo/git/refs/heads/a/b", "/repos/o/foo/./x", "/repos/o%2Ffoo",
+		"/repos/o/foo", "/repos/o/foo/git/refs/heads/a/b", "/repos/o/foo/./x", "/repos/o%2Ffoo", "/repos/o/foo/contents/a%2Fb", "/repos/o/foo/git/refs/heads%2F..%2Fb",
 		"/repos/o/%41", "/o/foo.git/info/refs?service=git-upload-pack", "/repos/o/foo?a=b&c=%20", "//x", "/%",
 	} {
 		f.Add(seed)

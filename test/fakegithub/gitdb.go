@@ -535,6 +535,31 @@ func (s *Server) handleUpdateRef(writer http.ResponseWriter, request *http.Reque
 	writeJSON(writer, http.StatusOK, refJSON(request, owner, name, ref, body.SHA))
 }
 
+// handleDeleteRef deletes a reference, as gh pr merge --delete-branch does.
+// GitHub answers 204, or 422 when the ref doesn't exist:
+// https://docs.github.com/en/rest/git/refs#delete-a-reference
+// The ref may arrive with its slashes escaped ("heads%2Fa%2Fb"); the mux
+// decodes the wildcard, as GitHub accepts both forms.
+func (s *Server) handleDeleteRef(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
+	owner, name := request.PathValue("owner"), request.PathValue("repo")
+	ref := "refs/" + request.PathValue("ref")
+	dir := s.repoDir(owner, name)
+
+	if _, err := runGit(dir, nil, nil, "rev-parse", "--verify", "--quiet", ref); err != nil {
+		writeJSONError(writer, http.StatusUnprocessableEntity, "Reference does not exist")
+
+		return
+	}
+
+	if _, err := runGit(dir, nil, nil, "update-ref", "-d", ref); err != nil {
+		writeJSONError(writer, http.StatusInternalServerError, "Server Error")
+
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleGetRef(writer http.ResponseWriter, request *http.Request, _ tokenContext) {
 	owner, name := request.PathValue("owner"), request.PathValue("repo")
 	ref := "refs/" + request.PathValue("ref")

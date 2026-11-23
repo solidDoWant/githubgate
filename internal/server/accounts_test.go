@@ -93,6 +93,7 @@ func TestProxyRefusesAccountIDsNoInstallationOfTheCallerIsOn(t *testing.T) {
 
 			assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
 			assert.Contains(t, refused.Body.String(), `"error":"denied"`)
+
 			var body struct {
 				Message string `json:"message"`
 			}

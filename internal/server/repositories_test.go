@@ -275,3 +275,53 @@ func TestProxyRefusesWithUnavailableWhileTheRepositoryLookupIsRateLimited(t *tes
 	_, _, refused := paginate(t, handler, tenantNamespace+"/ci-build", fmt.Sprintf("/repositories/%d/issues/comments", id))
 	require.Nil(t, refused, "the request was refused once the rate limit lifted: %v", refused)
 }
+
+func TestProxyAnswersAnUncoveredRepositoryIDTheSameWhetherOrNotItIsReached(t *testing.T) {
+	f, handler := repositoryIDFixture(t)
+
+	require.NoError(t, f.fake.CreateRepository("other", "private", false))
+
+	barID, ok := f.fake.RepositoryID(owner, "bar")
+	require.True(t, ok)
+
+	otherID, ok := f.fake.RepositoryID("other", "private")
+	require.True(t, ok)
+
+	bodies := []struct {
+		name string
+		body string
+	}{
+		{name: "a body that is not JSON", body: "not json"},
+		{name: "a body larger than the limit", body: `{"ref":"refs/heads/x","sha":"` + strings.Repeat("a", 2<<20) + `"}`},
+		{name: "a valid body", body: `{"ref":"refs/heads/x","sha":"aaaa"}`},
+	}
+
+	ids := map[string]int64{
+		"reached by the installation, no rule covers it": barID,
+		"not reached by the installation":                otherID,
+		"not existing":                                   999999,
+	}
+
+	for _, body := range bodies {
+		t.Run(body.name, func(t *testing.T) {
+			answers := map[string]string{}
+
+			for name, id := range ids {
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/repositories/%d/git/refs", id), strings.NewReader(body.body))
+				request.Host = proxy.HostAPI
+				request.Header.Set("Authorization", "Bearer "+tenantNamespace+"/ci-build")
+
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+
+				assert.Equal(t, http.StatusForbidden, response.Code, "%s: %s", name, response.Body.String())
+
+				answers[name] = fmt.Sprintf("%d %s", response.Code, strings.ReplaceAll(response.Body.String(), strconv.FormatInt(id, 10), "N"))
+			}
+
+			assert.Equal(t, answers["not existing"], answers["reached by the installation, no rule covers it"])
+			assert.Equal(t, answers["not existing"], answers["not reached by the installation"])
+			assert.Contains(t, answers["not existing"], `"error":"denied"`)
+		})
+	}
+}

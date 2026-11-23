@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -126,6 +127,50 @@ func TestProxyCutsTheLoggedPathOfARefusedRequest(t *testing.T) {
 	path, ok := lines[0]["path"].(string)
 	require.True(t, ok)
 	assert.Len(t, path, 512)
+}
+
+func TestProxyCutsTheLoggedQueryNamesOfARefusedRequest(t *testing.T) {
+	names := []string{}
+	for index := 0; index < 20; index++ {
+		names = append(names, strings.Repeat(string(rune('a'+index)), 45000)+"=1")
+	}
+
+	target := "/repos/acme/foo?" + strings.Join(names, "&")
+
+	tests := []struct {
+		name    string
+		request func() *http.Request
+	}{
+		{"unauthenticated", func() *http.Request {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+			request.Host = proxy.HostAPI
+
+			return request
+		}},
+		{"authenticated", func() *http.Request { return authenticated(http.MethodGet, proxy.HostAPI, target) }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			forwarding := newForwardingProxy(t)
+
+			serve(forwarding.handler, test.request())
+
+			lines := forwarding.auditLines(t)
+			require.Len(t, lines, 1)
+
+			query, ok := lines[0]["query"].([]any)
+			require.True(t, ok)
+			require.NotEmpty(t, query)
+
+			total := 0
+			for _, name := range query {
+				total += len(name.(string))
+			}
+
+			assert.LessOrEqual(t, total, 20*64)
+		})
+	}
 }
 
 func TestProxyLogsNoPathOfAnAllowedRequest(t *testing.T) {

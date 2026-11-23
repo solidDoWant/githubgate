@@ -17,9 +17,12 @@ import (
 )
 
 // auditEntry is what one proxied request's audit line says. It never holds
-// a credential, a header value, the path or the query.
+// a credential, a header value or a query value. Only a refused request's
+// line names its path and query parameters, cleaned by refusedTarget, so an
+// operator can tell which request a client sent that the proxy refused.
 type auditEntry struct {
 	started        time.Time
+	requestURI     string
 	caller         auth.Identity
 	host           string
 	method         string
@@ -99,7 +102,7 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 		mutations = []string{}
 	}
 
-	logger.LogAttrs(ctx, slog.LevelInfo, "proxy request",
+	attributes := []slog.Attr{
 		slog.String("request_id", requestID()),
 		slog.String("mode", "proxy"),
 		slog.String("namespace", e.caller.Namespace),
@@ -124,7 +127,14 @@ func (e *auditEntry) write(ctx context.Context, logger *slog.Logger) {
 		slog.String("github_status", e.githubStatus),
 		slog.Int64("bytes", e.bytes),
 		slog.Duration("duration", time.Since(e.started)),
-	)
+	}
+
+	if e.decision() == "refused" {
+		path, names := refusedTarget(e.requestURI)
+		attributes = append(attributes, slog.String("path", path), slog.Any("query", names))
+	}
+
+	logger.LogAttrs(ctx, slog.LevelInfo, "proxy request", attributes...)
 }
 
 func installationName(installation *model.Installation) string {
@@ -161,7 +171,7 @@ func systemPoolWith(pem []byte) (*x509.CertPool, error) {
 // before it reached the forwarder.
 func auditRefusal(ctx context.Context, logger *slog.Logger, started time.Time, caller auth.Identity, host string, request *http.Request, failure *refusal) {
 	entry := &auditEntry{
-		started: started, caller: caller, host: host, method: request.Method,
+		started: started, caller: caller, host: host, method: request.Method, requestURI: request.RequestURI,
 		reason: failure.code, githubStatus: "not_called", status: failure.status,
 	}
 	entry.write(ctx, logger)

@@ -99,6 +99,29 @@ Before anything is forwarded:
 
 Result: the owner and repository (if any), the operation id or mutation names, the refs written, and the level the request needs (git fetch: `contents: read`; push: `contents: write`; REST/GraphQL: left to GitHub).
 
+#### Request forms outside the canonical model
+
+Clients do not always send the documented REST path. This table lists the other forms that reach the proxy and what the proxy does with each. "Fixed" means the proxy accepts the form and decides it as the canonical request of the same repository, ref and operation. No form widens what a rule allows.
+
+| Form | Who sends it | Result |
+|---|---|---|
+| `/repositories/{id}/…` next-page and redirect links | GitHub's `Link` headers, its `301` for a renamed or moved repository, every client that follows them | Fixed. The ID is resolved through the caller's installations (`SPEC.md`). |
+| `/organizations/{id}/…` and `/user/{id}/…` next-page links | GitHub's `Link` headers for organization and user lists, such as `/orgs/{org}/repos` | Refused (`unknown_operation`). Fixing it needs an account-ID lookup like the repository one, so it is tracked as its own defect. |
+| `Location` to `codeload.github.com` or `objects.githubusercontent.com` | archive and release-asset downloads | Not applicable. The proxy passes the redirect back unchanged. The client follows it to GitHub directly, with a signed URL and no credential. |
+| `*_url` fields in responses | every client | Not applicable. They use the canonical `/repos/{owner}/{repo}/…` and `uploads.github.com` paths. |
+| `%2F` in a ref, branch, tag, file path or `base...head` | `gh`, go-github, octokit | Fixed, inside the operation's slash parameter only (path hygiene above). |
+| A branch name with `/` as `git/trees/{tree_sha}` | clients that read a tree by branch | Refused (`invalid_request` for `%2F`, `unknown_operation` for `/`). The catalogue reviews `tree_sha` as one segment. It is not clear that GitHub resolves a branch with `/` there, so the proxy does not guess. |
+| Lowercase percent escapes (`%2f`) | some clients | Fixed. The proxy reads escapes in either case. |
+| Percent-encoding of an unreserved character (`%41`, `%7E`) | no client in use | Refused on purpose (`invalid_request`). Two spellings of one path could be read differently by githubgate and by GitHub. |
+| `+` and `%20` | clients that encode spaces | Fixed. In a path both stay as sent. A query is parsed and encoded again, and GitHub reads `+` and `%20` the same in a query. |
+| An owner or repository name in another case | users who type names by hand | Fixed. Owners and repository names are compared without case, as GitHub does. |
+| A literal path segment in another case (`/Repos/…`) | no client in use | Refused on purpose (`unknown_operation`). The catalogue matches literal segments exactly. |
+| A trailing slash or an empty segment | no client in use | Refused on purpose (`invalid_request`). An empty segment can be read differently by githubgate and by GitHub. |
+| `HEAD` | `gh`, caches, `curl -I` | Fixed. `HEAD` is decided as the `GET` of the same path. |
+| Conditional requests (`If-None-Match`, `If-Modified-Since`) and `304` | `gh`, octokit, Renovate caches | Fixed. The headers go to GitHub, and its `304` goes back unchanged. |
+| `go get` of a `github.com` module | Go modules with `GOPROXY=direct` | Fixed. `go` knows `github.com` and uses git smart HTTP without a `?go-get=1` web request. |
+| A web path on `github.com` (release downloads, archives, pages) | CI builds that download files | Refused (`not_found`) unless a rule's `webPaths` allows it (`docs/design/phase-3.md`). This is a policy choice. The audit line's `path` shows which web path a build asked for. |
+
 ### Deciding
 
 The candidate rules are the caller's accepted rules with `proxy.enabled`.
@@ -159,7 +182,7 @@ A refusal is answered so git shows it:
 
 ### Audit and metrics
 
-One audit line per proxied request, written when the response finishes or the client disconnects: `mode=proxy`, namespace, ServiceAccount, pod, `host`, `method`, `operation` or `mutations[]`, `refs[]`, `repositories`, `permissions`, installation, `decision`, `reason`, `github_status`, `bytes`, `duration`. The path and query are not logged (they may hold user data). `githubgate_requests_total` gets `mode="proxy"`.
+One audit line per proxied request, written when the response finishes or the client disconnects: `mode=proxy`, namespace, ServiceAccount, pod, `host`, `method`, `operation` or `mutations[]`, `refs[]`, `repositories`, `permissions`, installation, `decision`, `reason`, `github_status`, `bytes`, `duration`. An allowed request's path and query are not logged (they can hold user data). A refused request's line also has `path` (the escaped path, cut to 512 bytes, with each segment that holds a GitHub token prefix or a JWT prefix replaced by `REDACTED`) and `query` (the sorted parameter names, never the values). Without them an operator can not tell which request a client sent that the proxy refused. `githubgate_requests_total` gets `mode="proxy"`.
 
 ### Interaction table
 

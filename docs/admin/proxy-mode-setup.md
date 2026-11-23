@@ -97,3 +97,16 @@ See [the field reference](../user/crd-reference.md) for every field.
 ## What the audit log shows
 
 Each proxied request writes one line. See [the audit log](README.md#the-audit-log) for the fields.
+
+## Find a refused request
+
+If a tool fails through the proxy, find the audit line of the refused request. Each refused line has `"decision":"refused"`, the error code in `reason`, and the `host`, `method`, `path` and `query` of the request.
+
+1. Read the logs of the githubgate pods in the namespace that githubgate runs in, for example `kubectl -n githubgate logs -l app.kubernetes.io/name=githubgate`.
+2. Keep the lines that have `"mode":"proxy"` and `"decision":"refused"`, for example with `jq 'select(.mode == "proxy" and .decision == "refused")'`.
+3. Use `namespace`, `service_account` and `pod` to find the caller.
+4. Read `reason`:
+   - `unknown_operation`: the path matches no operation of the GitHub REST API. Compare `method` and `path` with the GitHub REST API documentation.
+   - `invalid_request`: githubgate does not accept the form of the path, the query or the method. For example, the path has an empty segment or an encoded character that needs no encoding.
+   - `not_found`: on `github.com`, the request is not git and no rule allows web paths. Add the path to the rule's `webPaths` if the caller needs it.
+   - `denied`: the request is outside the caller's rules. Change the policy if the caller needs it.

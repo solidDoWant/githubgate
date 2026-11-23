@@ -180,7 +180,7 @@ func NewForwarder(options ForwarderOptions) (*HTTPForwarder, error) {
 // Forward decides the request and forwards it when allowed. It writes the
 // request's audit line when the response is finished.
 func (f *HTTPForwarder) Forward(writer http.ResponseWriter, request *http.Request, caller auth.Identity, classified Request) {
-	entry := &auditEntry{started: time.Now(), caller: caller, host: classified.Host, method: request.Method, githubStatus: "not_called"}
+	entry := &auditEntry{started: time.Now(), caller: caller, host: classified.Host, method: request.Method, requestURI: request.RequestURI, githubStatus: "not_called"}
 	recorder := &responseRecorder{ResponseWriter: writer}
 
 	defer func() {

@@ -22,7 +22,7 @@ import (
 
 // descriptionCommit pins github/rest-api-description; Renovate updates it.
 // renovate: depName=github/rest-api-description
-const descriptionCommit = "c9c95fe34ced05fe076001f5c55704742bc8e7f8"
+const descriptionCommit = "d560905bbf50d79e40d6a006ce2e5834cfd86a31"
 
 // schemaCommit pins octokit/graphql-schema; Renovate updates it.
 // renovate: depName=octokit/graphql-schema
